@@ -15,22 +15,19 @@ struct CodexUsageMenuBarApp: App {
     MenuBarExtra {
       MenuContentView(store: store)
     } label: {
-      Image(systemName: menuBarSymbol)
-        .accessibilityLabel("Codex 주간 사용량")
+      MenuBarUsageLabel(indicator: menuBarIndicator)
     }
     .menuBarExtraStyle(.window)
   }
 
-  private var menuBarSymbol: String {
+  private var menuBarIndicator: MenuBarIndicator {
     switch store.state {
-    case .loaded(let snapshot) where snapshot.usedPercent >= 90:
-      return "chart.bar.fill"
-    case .loaded:
-      return "chart.bar"
+    case .loaded(let snapshot):
+      return .remaining(snapshot.remainingPercent)
     case .loading:
-      return "arrow.triangle.2.circlepath"
+      return .loading
     case .missingCLI, .failed:
-      return "exclamationmark.circle"
+      return .unavailable
     }
   }
 }

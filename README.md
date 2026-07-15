@@ -5,6 +5,7 @@ Codex CLI의 주간 사용량을 macOS 메뉴 바에서 바로 확인하는 작�
 ## 주요 기능
 
 - 주간 사용률, 남은 비율, 초기화 시각 표시
+- Codex를 연상시키는 둥근 메뉴 바 테두리 안에 남은 비율 표시
 - 5분마다 자동 갱신 및 수동 새로고침
 - Finder에서 실행한 경우에도 Homebrew, npm, nvm, mise, asdf, Volta, Bun 설치 경로 탐색
 - Codex CLI 미설치·미로그인·업데이트 필요 상태별 안내
