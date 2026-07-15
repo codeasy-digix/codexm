@@ -13,8 +13,8 @@ struct MenuContentView: View {
         loadingView
       case .loaded(let snapshot):
         usageView(snapshot)
-      case .missingCLI:
-        missingCLIView
+      case .missingRuntime:
+        missingRuntimeView
       case .failed(let error):
         errorView(error)
       }
@@ -115,31 +115,19 @@ struct MenuContentView: View {
       "Codex 주간 사용량 \(snapshot.usedPercent)퍼센트, \(snapshot.remainingPercent)퍼센트 남음")
   }
 
-  private var missingCLIView: some View {
+  private var missingRuntimeView: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Label("Codex CLI 설치가 필요합니다", systemImage: "exclamationmark.triangle.fill")
+      Label("Codex 런타임이 없습니다", systemImage: "exclamationmark.triangle.fill")
         .font(.callout.weight(.semibold))
         .foregroundStyle(.orange)
 
-      Text("터미널에서 아래 공식 npm 명령으로 설치한 뒤 Codex Usage를 새로고침하세요.")
+      Text("앱 번들이 손상되었을 수 있습니다. App Store에서 Codex Usage를 다시 설치하세요.")
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
-      Text("npm install -g @openai/codex")
-        .font(.system(.caption, design: .monospaced))
-        .textSelection(.enabled)
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-
-      HStack {
-        Button("명령 복사") { store.copyInstallCommand() }
-        Button("Terminal 열기") { store.openTerminal() }
-        Spacer()
-        Link("공식 안내", destination: URL(string: "https://developers.openai.com/codex/cli/")!)
-      }
-      .controlSize(.small)
+      Button("다시 확인") { store.refresh() }
+        .controlSize(.small)
     }
   }
 
@@ -154,15 +142,13 @@ struct MenuContentView: View {
 
       switch error {
       case .notAuthenticated:
-        Text("터미널에서 `codex login`을 실행한 뒤 새로고침하세요.")
+        authenticationView
+      case .unsupportedRuntime:
+        Text("App Store에서 Codex Usage를 최신 버전으로 업데이트한 뒤 다시 시도하세요.")
           .font(.caption)
           .foregroundStyle(.secondary)
-        commandButtons(copyTitle: "로그인 명령 복사", action: store.copyLoginCommand)
-      case .unsupportedCLI:
-        Text("Codex CLI를 최신 버전으로 업데이트한 뒤 다시 시도하세요.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        commandButtons(copyTitle: "업데이트 명령 복사", action: store.copyUpdateCommand)
+        Button("다시 시도") { store.refresh() }
+          .controlSize(.small)
       default:
         Button("다시 시도") { store.refresh() }
           .controlSize(.small)
@@ -171,12 +157,46 @@ struct MenuContentView: View {
     .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
   }
 
-  private func commandButtons(copyTitle: String, action: @escaping () -> Void) -> some View {
-    HStack {
-      Button(copyTitle, action: action)
-      Button("Terminal 열기") { store.openTerminal() }
+  @ViewBuilder
+  private var authenticationView: some View {
+    Text("Codex CLI에 이미 로그인했다면 계정 로그인 없이 기존 .codex 폴더를 한 번만 연결할 수 있습니다.")
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+
+    if let info = store.deviceLoginInfo {
+      VStack(alignment: .leading, spacing: 7) {
+        Text("브라우저에서 아래 코드를 입력하세요")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Text(info.userCode)
+          .font(.system(.title3, design: .monospaced, weight: .bold))
+          .textSelection(.enabled)
+        HStack {
+          Button("코드 복사") { store.copyDeviceLoginCode() }
+          Button("인증 페이지 열기") { store.reopenDeviceLoginPage() }
+        }
+        .controlSize(.small)
+      }
+    } else if store.isAuthenticating {
+      HStack(spacing: 8) {
+        ProgressView().controlSize(.small)
+        Text("로그인 준비 중…").font(.caption)
+      }
+    } else {
+      HStack {
+        Button("기존 Codex 로그인 연결") { store.connectExistingCodexLogin() }
+        Button("새로 로그인") { store.startDeviceLogin() }
+      }
+      .controlSize(.small)
     }
-    .controlSize(.small)
+
+    if let authenticationError = store.authenticationError {
+      Text(authenticationError)
+        .font(.caption2)
+        .foregroundStyle(.red)
+        .fixedSize(horizontal: false, vertical: true)
+    }
   }
 
   private var preferences: some View {

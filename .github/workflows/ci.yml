@@ -11,9 +11,18 @@ jobs:
       - uses: actions/checkout@v7
       - name: Test
         run: swift test
-      - name: Build app bundle
-        run: ./scripts/build-app.sh
+      - name: Build and verify the node-free runtime
+        run: |
+          ./scripts/build-app.sh
+          env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+            'dist/Codex Usage.app/Contents/MacOS/CodexRuntime' --version | grep 'codex-cli'
+      - name: Build App Store sandbox bundle
+        run: APP_STORE_BUILD=1 ./scripts/build-app.sh
       - name: Verify menu bar bundle settings
         run: |
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' 'dist/Codex Usage.app/Contents/Info.plist')" = "true"
           codesign --verify --deep --strict 'dist/Codex Usage.app'
+          codesign -d --entitlements :- 'dist/Codex Usage.app' 2>/dev/null > "$RUNNER_TEMP/app-entitlements.plist"
+          codesign -d --entitlements :- 'dist/Codex Usage.app/Contents/MacOS/CodexRuntime' 2>/dev/null > "$RUNNER_TEMP/runtime-entitlements.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$RUNNER_TEMP/app-entitlements.plist")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.inherit' "$RUNNER_TEMP/runtime-entitlements.plist")" = "true"

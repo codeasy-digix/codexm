@@ -16,6 +16,10 @@ struct MenuBarUsageLabelTests {
 
   @Test("Renders the compact Codex-inspired indicator")
   func rendersIndicator() throws {
+    let nativeImage = CodexMenuBarIconRenderer.image(for: .remaining(18))
+    #expect(nativeImage.isTemplate)
+    #expect(nativeImage.size == CodexMenuBarIconRenderer.size)
+
     let content = MenuBarUsageLabel(indicator: .remaining(18))
       .padding(10)
       .background(Color.white)
@@ -39,11 +43,12 @@ struct MenuBarUsageLabelTests {
   @Test("Keeps the cloud outline inside its menu bar bounds")
   func outlineBounds() {
     let target = CGRect(x: 0, y: 0, width: 42, height: 22)
-    let bounds = CodexCloudOutline().path(in: target).boundingRect
+    let bounds = CodexMenuBarIconRenderer.outlinePath(in: target).bounds
+    let strokeInset = CodexMenuBarIconRenderer.outlineLineWidth / 2
 
-    #expect(bounds.minX >= target.minX)
-    #expect(bounds.minY >= target.minY)
-    #expect(bounds.maxX <= target.maxX)
-    #expect(bounds.maxY <= target.maxY)
+    #expect(bounds.minX >= target.minX + strokeInset)
+    #expect(bounds.minY >= target.minY + strokeInset)
+    #expect(bounds.maxX <= target.maxX - strokeInset)
+    #expect(bounds.maxY <= target.maxY - strokeInset)
   }
 }

@@ -45,4 +45,28 @@ struct CodexLocatorTests {
     let locator = CodexLocator(environment: ["PATH": ""], homeDirectory: home)
     #expect(locator.locate()?.path == newer.path)
   }
+
+  @Test("Preserves an nvm launcher symlink so adjacent node stays discoverable")
+  func preservesNvmSymlink() throws {
+    let home = FileManager.default.temporaryDirectory
+      .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let bin = home.appending(path: ".nvm/versions/node/v25.9.0/bin")
+    let script = home.appending(
+      path: ".nvm/versions/node/v25.9.0/lib/node_modules/@openai/codex/bin/codex.js"
+    )
+    let launcher = bin.appending(path: "codex")
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    try FileManager.default.createDirectory(
+      at: script.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    try Data("#!/usr/bin/env node\n".utf8).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: script)
+
+    let locator = CodexLocator(environment: ["PATH": ""], homeDirectory: home)
+    #expect(locator.locate()?.path == launcher.path)
+  }
 }

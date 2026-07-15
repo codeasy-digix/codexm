@@ -17,12 +17,15 @@ struct CodexLocator: @unchecked Sendable {
 
   func locate() -> URL? {
     for candidate in directCandidates() where fileManager.isExecutableFile(atPath: candidate.path) {
-      return candidate.resolvingSymlinksInPath()
+      // Keep the launcher path intact. npm/nvm commonly install `codex` as a
+      // symlink to a JavaScript file whose `#!/usr/bin/env node` shebang needs
+      // the adjacent version-manager `bin` directory on PATH.
+      return candidate.standardizedFileURL
     }
 
     for candidate in versionManagerCandidates()
     where fileManager.isExecutableFile(atPath: candidate.path) {
-      return candidate.resolvingSymlinksInPath()
+      return candidate.standardizedFileURL
     }
 
     return nil

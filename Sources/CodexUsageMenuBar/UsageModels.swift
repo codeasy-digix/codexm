@@ -99,10 +99,9 @@ struct UsageSnapshot: Equatable, Sendable {
 }
 
 enum CodexUsageError: LocalizedError, Equatable {
-  case cliNotFound
   case launchFailed(String)
   case notAuthenticated(String)
-  case unsupportedCLI(String)
+  case unsupportedRuntime(String)
   case serverError(String)
   case invalidResponse
   case noWeeklyLimit
@@ -110,14 +109,12 @@ enum CodexUsageError: LocalizedError, Equatable {
 
   var errorDescription: String? {
     switch self {
-    case .cliNotFound:
-      return "Codex CLI를 찾을 수 없습니다."
     case .launchFailed(let message):
-      return "Codex CLI를 실행하지 못했습니다. \(message)"
+      return "앱에 포함된 Codex 런타임을 실행하지 못했습니다. \(message)"
     case .notAuthenticated:
-      return "Codex CLI 로그인이 필요합니다."
-    case .unsupportedCLI:
-      return "이 Codex CLI 버전에서는 사용량 조회를 지원하지 않습니다."
+      return "Codex 계정 연결이 필요합니다."
+    case .unsupportedRuntime:
+      return "앱에 포함된 Codex 런타임에서 사용량 조회를 지원하지 않습니다."
     case .serverError(let message):
       return message.isEmpty ? "Codex에서 사용량을 가져오지 못했습니다." : message
     case .invalidResponse:

@@ -26,7 +26,7 @@ struct CodexUsageMenuBarApp: App {
       return .remaining(snapshot.remainingPercent)
     case .loading:
       return .loading
-    case .missingCLI, .failed:
+    case .missingRuntime, .failed:
       return .unavailable
     }
   }

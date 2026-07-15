@@ -7,26 +7,22 @@ Codex CLI의 주간 사용량을 macOS 메뉴 바에서 바로 확인하는 작�
 - 주간 사용률, 남은 비율, 초기화 시각 표시
 - Codex를 연상시키는 둥근 메뉴 바 테두리 안에 남은 비율 표시
 - 5분마다 자동 갱신 및 수동 새로고침
-- Finder에서 실행한 경우에도 Homebrew, npm, nvm, mise, asdf, Volta, Bun 설치 경로 탐색
-- Codex CLI 미설치·미로그인·업데이트 필요 상태별 안내
+- Node.js나 별도 Codex CLI 설치 없이 동작하는 네이티브 Codex 런타임 내장
+- 기존 `~/.codex` 로그인을 자동 재사용해 중복 로그인 방지
+- 기존 로그인이 없는 경우에만 브라우저 기기 코드 로그인 지원
 - macOS의 표준 로그인 항목(`SMAppService`) 선택 지원
 - Dock에 나타나지 않는 표준 메뉴 바 앱(`LSUIElement`)
 
-앱은 Codex의 공식 로컬 app-server 프로토콜인 `account/rateLimits/read`를 사용합니다. `~/.codex/auth.json`을 직접 읽지 않으며 인증 토큰을 저장하거나 외부 서버로 전송하지 않습니다.
+앱은 함께 배포되는 Codex 네이티브 실행 파일과 공식 로컬 app-server 프로토콜인 `account/rateLimits/read`를 사용합니다. 앱 자체는 `~/.codex/auth.json`의 인증 토큰을 파싱하거나 복사하지 않습니다.
 
 ## 요구 사항
 
 - macOS 13 Ventura 이상
-- [Codex CLI](https://developers.openai.com/codex/cli/) 및 ChatGPT 로그인
+- ChatGPT 계정
 
-Codex CLI가 없다면 터미널에서 설치하고 로그인하세요.
+Node.js와 Codex CLI는 필요하지 않습니다. Codex CLI에 이미 로그인된 Mac에서는 해당 로그인을 그대로 사용하며, 로그인되지 않은 Mac에서만 앱이 계정 연결을 안내합니다.
 
-```sh
-npm install -g @openai/codex
-codex login
-```
-
-CLI가 없을 때 앱 안에서도 설치 명령 복사와 공식 안내 링크를 제공합니다.
+Mac App Store 빌드는 App Sandbox 정책 때문에 다른 앱이 만든 `~/.codex` 폴더를 자동으로 읽을 수 없습니다. 이 경우 최초 한 번 **기존 Codex 로그인 연결**을 눌러 `.codex` 폴더 접근을 승인합니다. 이것은 ChatGPT 재로그인이 아니며, 이후에는 보안 범위 북마크로 권한을 유지합니다.
 
 ## 설치 및 실행
 
@@ -61,12 +57,22 @@ swift test
 CODEX_LIVE_TEST=1 swift test --filter LiveCodexIntegrationTests
 ```
 
-빌드 결과는 `dist/Codex Usage.app`에 생성됩니다. 로컬 빌드는 ad-hoc 서명되며 배포용 Developer ID 공증은 포함하지 않습니다.
+빌드 결과는 `dist/Codex Usage.app`에 생성됩니다. 빌드 시 현재 CPU 아키텍처에 맞는 공식 Codex 네이티브 런타임을 앱에 포함합니다. 로컬에 런타임이 없으면 빌드 시에만 고정 버전 패키지를 내려받고 SHA-512 무결성을 검사합니다. 최종 사용자의 Mac에서는 다운로드나 Node.js 설치가 일어나지 않습니다.
+
+App Sandbox 권한을 포함한 App Store용 번들은 다음과 같이 확인할 수 있습니다.
+
+```sh
+APP_STORE_BUILD=1 ./scripts/build-app.sh
+```
+
+이 명령은 개발 확인용 ad-hoc 서명을 사용합니다. 실제 App Store 제출 시에는 Apple Developer의 배포 인증서, 프로비저닝 프로파일 및 App Store Connect 메타데이터로 다시 서명·패키징해야 합니다.
 
 ## 참고
 
-Codex app-server는 현재 실험적 인터페이스이므로 향후 CLI 버전에서 프로토콜이 바뀔 수 있습니다. 조회 오류가 발생하면 먼저 `codex update`로 CLI를 업데이트하세요.
+Codex app-server는 현재 실험적 인터페이스이므로 프로토콜이 바뀌면 앱 업데이트가 필요할 수 있습니다. 런타임은 앱 버전과 함께 고정되어 App Store 업데이트로 교체됩니다.
 
 ## 라이선스
 
 MIT
+
+앱에 포함된 OpenAI Codex 런타임은 Apache License 2.0을 따릅니다. 자세한 내용은 `THIRD_PARTY_NOTICES.md`와 앱 번들의 라이선스 파일을 참고하세요.

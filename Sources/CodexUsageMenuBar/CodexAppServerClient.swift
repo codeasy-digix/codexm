@@ -2,20 +2,61 @@ import Foundation
 
 struct CodexAppServerClient: Sendable {
   let timeout: Duration
+  let environment: [String: String]
 
-  init(timeout: Duration = .seconds(15)) {
+  init(
+    timeout: Duration = .seconds(15),
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) {
     self.timeout = timeout
+    self.environment = environment
   }
 
   func fetchUsage(codexURL: URL) async throws -> UsageSnapshot {
-    let session = AppServerSession(codexURL: codexURL, timeout: timeout)
+    try await fetchUsage(codexURL: codexURL, environmentOverride: nil)
+  }
+
+  func fetchUsage(
+    codexURL: URL,
+    environmentOverride: [String: String]?
+  ) async throws -> UsageSnapshot {
+    let session = AppServerSession(
+      codexURL: codexURL,
+      timeout: timeout,
+      environment: Self.processEnvironment(
+        for: codexURL,
+        base: environmentOverride ?? environment
+      )
+    )
     return try await session.execute()
+  }
+
+  static func processEnvironment(
+    for codexURL: URL,
+    base: [String: String]
+  ) -> [String: String] {
+    var environment = base
+    let fallbackPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+    let existingPath = base["PATH"] ?? fallbackPath
+    let preferredDirectories = [
+      codexURL.deletingLastPathComponent().standardizedFileURL.path,
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+    ]
+
+    var seen = Set<String>()
+    let path = (preferredDirectories + existingPath.split(separator: ":").map(String.init))
+      .filter { !$0.isEmpty && seen.insert($0).inserted }
+      .joined(separator: ":")
+    environment["PATH"] = path
+    return environment
   }
 }
 
 private final class AppServerSession: @unchecked Sendable {
   private let codexURL: URL
   private let timeout: Duration
+  private let environment: [String: String]
   private let process = Process()
   private let standardInput = Pipe()
   private let standardOutput = Pipe()
@@ -28,9 +69,10 @@ private final class AppServerSession: @unchecked Sendable {
   private var continuation: CheckedContinuation<UsageSnapshot, any Error>?
   private var timeoutTask: Task<Void, Never>?
 
-  init(codexURL: URL, timeout: Duration) {
+  init(codexURL: URL, timeout: Duration, environment: [String: String]) {
     self.codexURL = codexURL
     self.timeout = timeout
+    self.environment = environment
   }
 
   func execute() async throws -> UsageSnapshot {
@@ -50,7 +92,11 @@ private final class AppServerSession: @unchecked Sendable {
 
     process.executableURL = codexURL
     process.arguments = ["app-server", "--listen", "stdio://"]
-    process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+    process.environment = environment
+    process.currentDirectoryURL =
+      environment["CODEX_HOME"].map {
+        URL(fileURLWithPath: $0, isDirectory: true)
+      } ?? FileManager.default.homeDirectoryForCurrentUser
     process.standardInput = standardInput
     process.standardOutput = standardOutput
     process.standardError = standardError
@@ -92,7 +138,7 @@ private final class AppServerSession: @unchecked Sendable {
           "clientInfo": [
             "name": "codex_usage_menubar",
             "title": "Codex Usage",
-            "version": "1.0.0",
+            "version": "1.0.1",
           ],
           "capabilities": ["experimentalApi": true],
         ],
@@ -180,7 +226,7 @@ private final class AppServerSession: @unchecked Sendable {
       || lowercased.contains("method not found")
       || lowercased.contains("account/ratelimits/read")
     {
-      return .unsupportedCLI(message)
+      return .unsupportedRuntime(message)
     }
 
     return .serverError(message)

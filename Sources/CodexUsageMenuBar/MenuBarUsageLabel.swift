@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum MenuBarIndicator: Equatable {
@@ -32,40 +33,60 @@ struct MenuBarUsageLabel: View {
   let indicator: MenuBarIndicator
 
   var body: some View {
-    ZStack {
-      CodexCloudOutline()
-        .strokeBorder(
-          style: StrokeStyle(lineWidth: 1.35, lineCap: .round, lineJoin: .round)
-        )
-
-      Text(indicator.text)
-        .font(.system(size: 9, weight: .bold, design: .rounded))
-        .monospacedDigit()
-        .minimumScaleFactor(0.75)
-        .lineLimit(1)
-        .padding(.horizontal, 5)
-    }
-    .frame(width: 42, height: 22)
-    .foregroundStyle(.primary)
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(indicator.accessibilityLabel)
+    Image(nsImage: CodexMenuBarIconRenderer.image(for: indicator))
+      .renderingMode(.template)
+      .accessibilityLabel(indicator.accessibilityLabel)
   }
 }
 
-/// A compact looped outline inspired by Codex's rounded, interwoven mark.
-/// It remains a simple original outline so the percentage stays legible at
-/// macOS menu bar sizes.
-struct CodexCloudOutline: InsettableShape {
-  var insetAmount: CGFloat = 0
+/// Renders the outline and percentage into one native template image. Keeping
+/// them in one image prevents macOS menu bar label simplification from dropping
+/// the custom outline while preserving the text.
+enum CodexMenuBarIconRenderer {
+  static let size = NSSize(width: 42, height: 22)
+  static let outlineLineWidth: CGFloat = 1.35
 
-  func path(in rect: CGRect) -> Path {
-    let drawingRect = rect.insetBy(dx: insetAmount + 1.5, dy: insetAmount + 1.5)
+  static func image(for indicator: MenuBarIndicator) -> NSImage {
+    let image = NSImage(size: size, flipped: false) { rect in
+      NSGraphicsContext.current?.shouldAntialias = true
+
+      let outline = outlinePath(in: rect)
+      outline.lineWidth = outlineLineWidth
+      outline.lineCapStyle = .round
+      outline.lineJoinStyle = .round
+      NSColor.black.setStroke()
+      outline.stroke()
+
+      let paragraph = NSMutableParagraphStyle()
+      paragraph.alignment = .center
+      let attributes: [NSAttributedString.Key: Any] = [
+        .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold),
+        .foregroundColor: NSColor.black,
+        .paragraphStyle: paragraph,
+      ]
+      let text = NSAttributedString(string: indicator.text, attributes: attributes)
+      let textSize = text.size()
+      let textRect = NSRect(
+        x: 5,
+        y: ((rect.height - textSize.height) / 2) + 0.5,
+        width: rect.width - 10,
+        height: textSize.height
+      )
+      text.draw(in: textRect)
+      return true
+    }
+    image.isTemplate = true
+    return image
+  }
+
+  static func outlinePath(in rect: NSRect) -> NSBezierPath {
+    let drawingRect = rect.insetBy(dx: 2.5, dy: 2.5)
     let center = CGPoint(x: drawingRect.midX, y: drawingRect.midY)
     let radiusX = drawingRect.width / 2
     let radiusY = drawingRect.height / 2
     let sampleCount = 120
+    let path = NSBezierPath()
 
-    var path = Path()
     for index in 0...sampleCount {
       let angle = (Double(index) / Double(sampleCount)) * 2 * Double.pi
       let lobe = 1 + 0.07 * cos(8 * angle)
@@ -77,16 +98,10 @@ struct CodexCloudOutline: InsettableShape {
       if index == 0 {
         path.move(to: point)
       } else {
-        path.addLine(to: point)
+        path.line(to: point)
       }
     }
-    path.closeSubpath()
+    path.close()
     return path
-  }
-
-  func inset(by amount: CGFloat) -> CodexCloudOutline {
-    var shape = self
-    shape.insetAmount += amount
-    return shape
   }
 }
