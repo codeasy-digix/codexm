@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: swift test
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+      - name: Verify menu bar bundle settings
+        run: |
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' 'dist/Codex Usage.app/Contents/Info.plist')" = "true"
+          codesign --verify --deep --strict 'dist/Codex Usage.app'
