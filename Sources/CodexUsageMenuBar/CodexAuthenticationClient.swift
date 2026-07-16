@@ -104,7 +104,7 @@ private final class DeviceLoginSession: @unchecked Sendable {
           "clientInfo": [
             "name": "codex_usage_menubar",
             "title": "Codex Usage",
-            "version": "1.0.3",
+            "version": "1.0.4",
           ],
           "capabilities": ["experimentalApi": true],
         ],

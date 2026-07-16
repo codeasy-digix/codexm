@@ -47,7 +47,7 @@ struct MenuBarUsageLabel: View {
 
 /// Renders a compact terminal-style usage value into one native template image.
 enum CodexMenuBarIconRenderer {
-  static let size = NSSize(width: 32, height: 18)
+  static let size = NSSize(width: 36, height: 20)
 
   static func image(for indicator: MenuBarIndicator) -> NSImage {
     let image = NSImage(size: size, flipped: false) { rect in
@@ -74,7 +74,7 @@ enum CodexMenuBarIconRenderer {
     let text = NSMutableAttributedString(
       string: indicator.terminalText,
       attributes: [
-        .font: NSFont.monospacedSystemFont(ofSize: 8.5, weight: .semibold),
+        .font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .semibold),
         .foregroundColor: NSColor.black,
         .paragraphStyle: paragraph,
       ]

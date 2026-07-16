@@ -28,6 +28,17 @@ struct MenuBarUsageLabelTests {
     #expect(underlineRange == NSRange(location: 0, length: 4))
   }
 
+  @Test("Uses the enlarged font for the prompt and the percentage")
+  func enlargedPromptAndPercentage() throws {
+    let text = CodexMenuBarIconRenderer.attributedText(for: .remaining(100))
+    let promptFont = try #require(text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+    let percentageFont = try #require(text.attribute(.font, at: 1, effectiveRange: nil) as? NSFont)
+
+    #expect(promptFont.pointSize == 10.5)
+    #expect(percentageFont.pointSize == 10.5)
+    #expect(text.size().width <= CodexMenuBarIconRenderer.size.width - 2)
+  }
+
   @Test("Renders the compact Codex-inspired indicator")
   func rendersIndicator() throws {
     let nativeImage = CodexMenuBarIconRenderer.image(for: .remaining(18))
@@ -42,8 +53,8 @@ struct MenuBarUsageLabelTests {
     renderer.scale = 2
 
     let image = try #require(renderer.nsImage)
-    #expect(image.size.width == 52)
-    #expect(image.size.height == 38)
+    #expect(image.size.width == 56)
+    #expect(image.size.height == 40)
 
     if let outputPath = ProcessInfo.processInfo.environment["CODEX_ICON_PREVIEW_PATH"],
       let tiff = image.tiffRepresentation,
