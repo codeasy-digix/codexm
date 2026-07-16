@@ -138,7 +138,7 @@ private final class AppServerSession: @unchecked Sendable {
           "clientInfo": [
             "name": "codex_usage_menubar",
             "title": "Codex Usage",
-            "version": "1.0.1",
+            "version": "1.0.2",
           ],
           "capabilities": ["experimentalApi": true],
         ],

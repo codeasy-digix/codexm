@@ -10,8 +10,22 @@ struct MenuBarUsageLabelTests {
   @Test("Shows the remaining percentage inside the outline")
   func remainingPercentageText() {
     #expect(MenuBarIndicator.remaining(18).text == "18%")
+    #expect(MenuBarIndicator.remaining(18).terminalText == "> 18%")
     #expect(MenuBarIndicator.remaining(100).text == "100%")
     #expect(MenuBarIndicator.remaining(-2).text == "0%")
+  }
+
+  @Test("Underlines only the remaining usage value after the terminal prompt")
+  func terminalPromptUnderline() throws {
+    let text = CodexMenuBarIconRenderer.attributedText(for: .remaining(18))
+    let underlineRange = try #require(MenuBarIndicator.remaining(18).usageUnderlineRange)
+
+    #expect(text.string == "> 18%")
+    #expect(
+      text.attribute(.underlineStyle, at: underlineRange.location, effectiveRange: nil) as? Int
+        == NSUnderlineStyle.single.rawValue
+    )
+    #expect(text.attribute(.underlineStyle, at: 0, effectiveRange: nil) == nil)
   }
 
   @Test("Renders the compact Codex-inspired indicator")
@@ -28,7 +42,7 @@ struct MenuBarUsageLabelTests {
     renderer.scale = 2
 
     let image = try #require(renderer.nsImage)
-    #expect(image.size.width == 62)
+    #expect(image.size.width == 66)
     #expect(image.size.height == 42)
 
     if let outputPath = ProcessInfo.processInfo.environment["CODEX_ICON_PREVIEW_PATH"],
@@ -42,7 +56,7 @@ struct MenuBarUsageLabelTests {
 
   @Test("Keeps the cloud outline inside its menu bar bounds")
   func outlineBounds() {
-    let target = CGRect(x: 0, y: 0, width: 42, height: 22)
+    let target = CGRect(origin: .zero, size: CodexMenuBarIconRenderer.size)
     let bounds = CodexMenuBarIconRenderer.outlinePath(in: target).bounds
     let strokeInset = CodexMenuBarIconRenderer.outlineLineWidth / 2
 

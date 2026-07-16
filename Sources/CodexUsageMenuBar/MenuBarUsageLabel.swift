@@ -17,6 +17,13 @@ enum MenuBarIndicator: Equatable {
     }
   }
 
+  var terminalText: String { "> \(text)" }
+
+  var usageUnderlineRange: NSRange? {
+    guard case .remaining = self else { return nil }
+    return NSRange(location: 2, length: (text as NSString).length)
+  }
+
   var accessibilityLabel: String {
     switch self {
     case .remaining(let percent):
@@ -43,8 +50,8 @@ struct MenuBarUsageLabel: View {
 /// them in one image prevents macOS menu bar label simplification from dropping
 /// the custom outline while preserving the text.
 enum CodexMenuBarIconRenderer {
-  static let size = NSSize(width: 42, height: 22)
-  static let outlineLineWidth: CGFloat = 1.35
+  static let size = NSSize(width: 46, height: 22)
+  static let outlineLineWidth: CGFloat = 1.2
 
   static func image(for indicator: MenuBarIndicator) -> NSImage {
     let image = NSImage(size: size, flipped: false) { rect in
@@ -57,19 +64,12 @@ enum CodexMenuBarIconRenderer {
       NSColor.black.setStroke()
       outline.stroke()
 
-      let paragraph = NSMutableParagraphStyle()
-      paragraph.alignment = .center
-      let attributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold),
-        .foregroundColor: NSColor.black,
-        .paragraphStyle: paragraph,
-      ]
-      let text = NSAttributedString(string: indicator.text, attributes: attributes)
+      let text = attributedText(for: indicator)
       let textSize = text.size()
       let textRect = NSRect(
-        x: 5,
+        x: 4,
         y: ((rect.height - textSize.height) / 2) + 0.5,
-        width: rect.width - 10,
+        width: rect.width - 8,
         height: textSize.height
       )
       text.draw(in: textRect)
@@ -79,8 +79,31 @@ enum CodexMenuBarIconRenderer {
     return image
   }
 
+  static func attributedText(for indicator: MenuBarIndicator) -> NSAttributedString {
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = .center
+    let text = NSMutableAttributedString(
+      string: indicator.terminalText,
+      attributes: [
+        .font: NSFont.monospacedSystemFont(ofSize: 8.5, weight: .semibold),
+        .foregroundColor: NSColor.black,
+        .paragraphStyle: paragraph,
+      ]
+    )
+    if let range = indicator.usageUnderlineRange {
+      text.addAttributes(
+        [
+          .underlineStyle: NSUnderlineStyle.single.rawValue,
+          .underlineColor: NSColor.black,
+        ],
+        range: range
+      )
+    }
+    return text
+  }
+
   static func outlinePath(in rect: NSRect) -> NSBezierPath {
-    let drawingRect = rect.insetBy(dx: 2.5, dy: 2.5)
+    let drawingRect = rect.insetBy(dx: 2, dy: 2)
     let center = CGPoint(x: drawingRect.midX, y: drawingRect.midY)
     let radiusX = drawingRect.width / 2
     let radiusY = drawingRect.height / 2
@@ -89,7 +112,7 @@ enum CodexMenuBarIconRenderer {
 
     for index in 0...sampleCount {
       let angle = (Double(index) / Double(sampleCount)) * 2 * Double.pi
-      let lobe = 1 + 0.07 * cos(8 * angle)
+      let lobe = 1 + 0.04 * cos(8 * angle)
       let point = CGPoint(
         x: center.x + CGFloat(cos(angle) * lobe) * radiusX,
         y: center.y + CGFloat(sin(angle) * lobe) * radiusY
