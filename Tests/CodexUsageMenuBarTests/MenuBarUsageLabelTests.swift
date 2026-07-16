@@ -34,8 +34,8 @@ struct MenuBarUsageLabelTests {
     let promptFont = try #require(text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
     let percentageFont = try #require(text.attribute(.font, at: 1, effectiveRange: nil) as? NSFont)
 
-    #expect(promptFont.pointSize == 10.5)
-    #expect(percentageFont.pointSize == 10.5)
+    #expect(abs(promptFont.pointSize - 12.6) < 0.001)
+    #expect(abs(percentageFont.pointSize - 12.6) < 0.001)
     #expect(text.size().width <= CodexMenuBarIconRenderer.size.width - 2)
   }
 
@@ -53,8 +53,8 @@ struct MenuBarUsageLabelTests {
     renderer.scale = 2
 
     let image = try #require(renderer.nsImage)
-    #expect(image.size.width == 56)
-    #expect(image.size.height == 40)
+    #expect(image.size.width == 63)
+    #expect(image.size.height == 42)
 
     if let outputPath = ProcessInfo.processInfo.environment["CODEX_ICON_PREVIEW_PATH"],
       let tiff = image.tiffRepresentation,
