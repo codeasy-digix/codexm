@@ -81,4 +81,31 @@ struct UsageModelsTests {
     #expect(snapshot.usedPercent == 100)
     #expect(snapshot.remainingPercent == 0)
   }
+
+  @Test("Formats the time remaining until the weekly limit resets")
+  func formatsResetCountdown() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+
+    #expect(
+      snapshot(resetAfter: 2 * 86_400 + 3 * 3_600, from: now)
+        .resetCountdown(relativeTo: now) == "2일 3시간"
+    )
+    #expect(
+      snapshot(resetAfter: 5 * 3_600 + 25 * 60, from: now)
+        .resetCountdown(relativeTo: now) == "5시간 25분"
+    )
+    #expect(snapshot(resetAfter: 45, from: now).resetCountdown(relativeTo: now) == "1분")
+    #expect(snapshot(resetAfter: -1, from: now).resetCountdown(relativeTo: now) == "곧 초기화")
+  }
+
+  private func snapshot(resetAfter seconds: TimeInterval, from date: Date) -> UsageSnapshot {
+    UsageSnapshot(
+      usedPercent: 72,
+      windowDurationMinutes: 10_080,
+      resetsAt: date.addingTimeInterval(seconds),
+      planType: "plus",
+      availableResetCredits: nil,
+      fetchedAt: date
+    )
+  }
 }

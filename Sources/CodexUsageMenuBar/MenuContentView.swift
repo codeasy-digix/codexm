@@ -76,11 +76,11 @@ struct MenuContentView: View {
 
   private func usageView(_ snapshot: UsageSnapshot) -> some View {
     HStack(spacing: 18) {
-      UsageRing(progress: Double(snapshot.usedPercent) / 100) {
+      UsageRing(progress: Double(snapshot.remainingPercent) / 100) {
         VStack(spacing: 0) {
-          Text("\(snapshot.usedPercent)%")
+          Text("\(snapshot.remainingPercent)%")
             .font(.system(size: 22, weight: .bold, design: .rounded))
-          Text("사용")
+          Text("남음")
             .font(.caption2)
             .foregroundStyle(.secondary)
         }
@@ -93,21 +93,26 @@ struct MenuContentView: View {
             .font(.callout.weight(.medium))
         }
 
-        Label("\(snapshot.remainingPercent)% 남음", systemImage: "battery.75percent")
-          .font(.callout)
-
         if let resetsAt = snapshot.resetsAt {
           Label {
             VStack(alignment: .leading, spacing: 1) {
-              Text("초기화")
+              Text("초기화까지")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+              Text(snapshot.resetCountdown() ?? "곧 초기화")
+                .font(.callout.weight(.semibold))
               Text(resetsAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.caption.weight(.medium))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
           } icon: {
             Image(systemName: "clock.arrow.circlepath")
           }
+        }
+
+        if let credits = snapshot.availableResetCredits, credits > 0 {
+          Label("리셋 크레딧 \(credits)개", systemImage: "arrow.counterclockwise.circle")
+            .font(.caption)
         }
       }
       .labelStyle(.titleAndIcon)
@@ -115,7 +120,7 @@ struct MenuContentView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "Codex 주간 사용량 \(snapshot.usedPercent)퍼센트, \(snapshot.remainingPercent)퍼센트 남음")
+      "Codex 주간 한도 \(snapshot.remainingPercent)퍼센트 남음, \(snapshot.usedPercent)퍼센트 사용")
   }
 
   private var missingRuntimeView: some View {
@@ -255,7 +260,7 @@ private struct UsageRing<Content: View>: View {
       Circle()
         .trim(from: 0, to: progress)
         .stroke(
-          progress >= 0.9 ? Color.red : (progress >= 0.7 ? Color.orange : Color.accentColor),
+          progress <= 0.1 ? Color.red : (progress <= 0.3 ? Color.orange : Color.accentColor),
           style: StrokeStyle(lineWidth: 9, lineCap: .round)
         )
         .rotationEffect(.degrees(-90))

@@ -81,6 +81,25 @@ struct UsageSnapshot: Equatable, Sendable {
 
   var remainingPercent: Int { max(0, 100 - usedPercent) }
 
+  func resetCountdown(relativeTo date: Date = Date()) -> String? {
+    guard let resetsAt else { return nil }
+    let totalSeconds = Int(resetsAt.timeIntervalSince(date).rounded(.down))
+    guard totalSeconds > 0 else { return "곧 초기화" }
+
+    let totalMinutes = max(1, totalSeconds / 60)
+    let days = totalMinutes / (24 * 60)
+    let hours = (totalMinutes % (24 * 60)) / 60
+    let minutes = totalMinutes % 60
+
+    if days > 0 {
+      return hours > 0 ? "\(days)일 \(hours)시간" : "\(days)일"
+    }
+    if hours > 0 {
+      return minutes > 0 ? "\(hours)시간 \(minutes)분" : "\(hours)시간"
+    }
+    return "\(totalMinutes)분"
+  }
+
   var planDisplayName: String? {
     guard let planType else { return nil }
     switch planType {
