@@ -7,25 +7,25 @@ import Testing
 @Suite("Menu bar usage label")
 @MainActor
 struct MenuBarUsageLabelTests {
-  @Test("Shows the remaining percentage inside the outline")
+  @Test("Shows the remaining percentage after a terminal prompt")
   func remainingPercentageText() {
     #expect(MenuBarIndicator.remaining(18).text == "18%")
-    #expect(MenuBarIndicator.remaining(18).terminalText == "> 18%")
+    #expect(MenuBarIndicator.remaining(18).terminalText == ">18%")
     #expect(MenuBarIndicator.remaining(100).text == "100%")
     #expect(MenuBarIndicator.remaining(-2).text == "0%")
   }
 
-  @Test("Underlines only the remaining usage value after the terminal prompt")
+  @Test("Underlines the terminal prompt and usage as one continuous value")
   func terminalPromptUnderline() throws {
     let text = CodexMenuBarIconRenderer.attributedText(for: .remaining(18))
-    let underlineRange = try #require(MenuBarIndicator.remaining(18).usageUnderlineRange)
+    let underlineRange = MenuBarIndicator.remaining(18).terminalUnderlineRange
 
-    #expect(text.string == "> 18%")
+    #expect(text.string == ">18%")
     #expect(
-      text.attribute(.underlineStyle, at: underlineRange.location, effectiveRange: nil) as? Int
+      text.attribute(.underlineStyle, at: 0, effectiveRange: nil) as? Int
         == NSUnderlineStyle.single.rawValue
     )
-    #expect(text.attribute(.underlineStyle, at: 0, effectiveRange: nil) == nil)
+    #expect(underlineRange == NSRange(location: 0, length: 4))
   }
 
   @Test("Renders the compact Codex-inspired indicator")
@@ -42,8 +42,8 @@ struct MenuBarUsageLabelTests {
     renderer.scale = 2
 
     let image = try #require(renderer.nsImage)
-    #expect(image.size.width == 66)
-    #expect(image.size.height == 42)
+    #expect(image.size.width == 52)
+    #expect(image.size.height == 38)
 
     if let outputPath = ProcessInfo.processInfo.environment["CODEX_ICON_PREVIEW_PATH"],
       let tiff = image.tiffRepresentation,
@@ -54,15 +54,4 @@ struct MenuBarUsageLabelTests {
     }
   }
 
-  @Test("Keeps the cloud outline inside its menu bar bounds")
-  func outlineBounds() {
-    let target = CGRect(origin: .zero, size: CodexMenuBarIconRenderer.size)
-    let bounds = CodexMenuBarIconRenderer.outlinePath(in: target).bounds
-    let strokeInset = CodexMenuBarIconRenderer.outlineLineWidth / 2
-
-    #expect(bounds.minX >= target.minX + strokeInset)
-    #expect(bounds.minY >= target.minY + strokeInset)
-    #expect(bounds.maxX <= target.maxX - strokeInset)
-    #expect(bounds.maxY <= target.maxY - strokeInset)
-  }
 }

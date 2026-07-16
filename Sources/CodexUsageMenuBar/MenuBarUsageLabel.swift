@@ -17,11 +17,10 @@ enum MenuBarIndicator: Equatable {
     }
   }
 
-  var terminalText: String { "> \(text)" }
+  var terminalText: String { ">\(text)" }
 
-  var usageUnderlineRange: NSRange? {
-    guard case .remaining = self else { return nil }
-    return NSRange(location: 2, length: (text as NSString).length)
+  var terminalUnderlineRange: NSRange {
+    NSRange(location: 0, length: (terminalText as NSString).length)
   }
 
   var accessibilityLabel: String {
@@ -46,30 +45,20 @@ struct MenuBarUsageLabel: View {
   }
 }
 
-/// Renders the outline and percentage into one native template image. Keeping
-/// them in one image prevents macOS menu bar label simplification from dropping
-/// the custom outline while preserving the text.
+/// Renders a compact terminal-style usage value into one native template image.
 enum CodexMenuBarIconRenderer {
-  static let size = NSSize(width: 46, height: 22)
-  static let outlineLineWidth: CGFloat = 1.2
+  static let size = NSSize(width: 32, height: 18)
 
   static func image(for indicator: MenuBarIndicator) -> NSImage {
     let image = NSImage(size: size, flipped: false) { rect in
       NSGraphicsContext.current?.shouldAntialias = true
 
-      let outline = outlinePath(in: rect)
-      outline.lineWidth = outlineLineWidth
-      outline.lineCapStyle = .round
-      outline.lineJoinStyle = .round
-      NSColor.black.setStroke()
-      outline.stroke()
-
       let text = attributedText(for: indicator)
       let textSize = text.size()
       let textRect = NSRect(
-        x: 4,
+        x: 1,
         y: ((rect.height - textSize.height) / 2) + 0.5,
-        width: rect.width - 8,
+        width: rect.width - 2,
         height: textSize.height
       )
       text.draw(in: textRect)
@@ -90,41 +79,13 @@ enum CodexMenuBarIconRenderer {
         .paragraphStyle: paragraph,
       ]
     )
-    if let range = indicator.usageUnderlineRange {
-      text.addAttributes(
-        [
-          .underlineStyle: NSUnderlineStyle.single.rawValue,
-          .underlineColor: NSColor.black,
-        ],
-        range: range
-      )
-    }
+    text.addAttributes(
+      [
+        .underlineStyle: NSUnderlineStyle.single.rawValue,
+        .underlineColor: NSColor.black,
+      ],
+      range: indicator.terminalUnderlineRange
+    )
     return text
-  }
-
-  static func outlinePath(in rect: NSRect) -> NSBezierPath {
-    let drawingRect = rect.insetBy(dx: 2, dy: 2)
-    let center = CGPoint(x: drawingRect.midX, y: drawingRect.midY)
-    let radiusX = drawingRect.width / 2
-    let radiusY = drawingRect.height / 2
-    let sampleCount = 120
-    let path = NSBezierPath()
-
-    for index in 0...sampleCount {
-      let angle = (Double(index) / Double(sampleCount)) * 2 * Double.pi
-      let lobe = 1 + 0.04 * cos(8 * angle)
-      let point = CGPoint(
-        x: center.x + CGFloat(cos(angle) * lobe) * radiusX,
-        y: center.y + CGFloat(sin(angle) * lobe) * radiusY
-      )
-
-      if index == 0 {
-        path.move(to: point)
-      } else {
-        path.line(to: point)
-      }
-    }
-    path.close()
-    return path
   }
 }
