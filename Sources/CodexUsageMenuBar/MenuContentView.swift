@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuContentView: View {
   @ObservedObject var store: UsageStore
+  @ObservedObject var preferences: AppPreferences
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -20,7 +21,7 @@ struct MenuContentView: View {
       }
 
       Divider()
-      preferences
+      launchPreferences
       footer
     }
     .padding(16)
@@ -42,6 +43,8 @@ struct MenuContentView: View {
       }
 
       Spacer()
+
+      OptionsMenu(preferences: preferences)
 
       Button {
         store.refresh()
@@ -199,7 +202,7 @@ struct MenuContentView: View {
     }
   }
 
-  private var preferences: some View {
+  private var launchPreferences: some View {
     VStack(alignment: .leading, spacing: 5) {
       Toggle(
         "로그인할 때 자동으로 열기",

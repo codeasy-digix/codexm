@@ -65,4 +65,32 @@ struct MenuBarUsageLabelTests {
     }
   }
 
+  @Test("Renders a circular remaining-usage chart with the percentage")
+  func rendersCircularIndicator() throws {
+    let nativeImage = CodexMenuBarIconRenderer.image(for: .remaining(18), style: .circular)
+    #expect(nativeImage.isTemplate)
+    #expect(nativeImage.size == CodexMenuBarIconRenderer.circularSize)
+    #expect(MenuBarIndicator.remaining(18).remainingFraction == 0.18)
+    #expect(CodexMenuBarIconRenderer.circularAttributedText(for: .remaining(18)).string == "18%")
+
+    let content = MenuBarUsageLabel(indicator: .remaining(18), style: .circular)
+      .padding(10)
+      .background(Color.white)
+      .environment(\.colorScheme, .light)
+    let renderer = ImageRenderer(content: content)
+    renderer.scale = 2
+
+    let image = try #require(renderer.nsImage)
+    #expect(image.size.width == 74)
+    #expect(image.size.height == 42)
+
+    if let outputPath = ProcessInfo.processInfo.environment["CODEX_CIRCULAR_ICON_PREVIEW_PATH"],
+      let tiff = image.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let png = bitmap.representation(using: .png, properties: [:])
+    {
+      try png.write(to: URL(fileURLWithPath: outputPath))
+    }
+  }
+
 }
