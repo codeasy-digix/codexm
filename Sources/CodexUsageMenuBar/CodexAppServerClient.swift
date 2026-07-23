@@ -66,6 +66,7 @@ private final class AppServerSession: @unchecked Sendable {
 
   private var stdoutBuffer = Data()
   private var stderrBuffer = Data()
+  private var accountEmail: String?
   private var continuation: CheckedContinuation<UsageSnapshot, any Error>?
   private var timeoutTask: Task<Void, Never>?
 
@@ -138,7 +139,7 @@ private final class AppServerSession: @unchecked Sendable {
           "clientInfo": [
             "name": "codex_usage_menubar",
             "title": "Codex Usage",
-            "version": "1.1.1",
+            "version": "1.1.2",
           ],
           "capabilities": ["experimentalApi": true],
         ],
@@ -181,6 +182,14 @@ private final class AppServerSession: @unchecked Sendable {
 
     if let error = json["error"] as? [String: Any] {
       let message = error["message"] as? String ?? ""
+      if identifier == 2 {
+        do {
+          try requestRateLimits()
+        } catch {
+          finish(with: .failure(CodexUsageError.serverError(error.localizedDescription)))
+        }
+        return
+      }
       finish(with: .failure(classifyServerError(message)))
       return
     }
@@ -189,11 +198,29 @@ private final class AppServerSession: @unchecked Sendable {
     case 1:
       do {
         try send(["method": "initialized", "params": [:]])
-        try send(["id": 2, "method": "account/rateLimits/read", "params": NSNull()])
+        try send([
+          "id": 2,
+          "method": "account/read",
+          "params": ["refreshToken": false],
+        ])
       } catch {
         finish(with: .failure(CodexUsageError.serverError(error.localizedDescription)))
       }
     case 2:
+      accountEmail = nil
+      if let result = json["result"],
+        let resultData = try? JSONSerialization.data(withJSONObject: result),
+        let response = try? JSONDecoder().decode(GetAccountResponse.self, from: resultData)
+      {
+        accountEmail = response.account?.email
+      }
+
+      do {
+        try requestRateLimits()
+      } catch {
+        finish(with: .failure(CodexUsageError.serverError(error.localizedDescription)))
+      }
+    case 3:
       guard let result = json["result"] else {
         finish(with: .failure(CodexUsageError.invalidResponse))
         return
@@ -202,7 +229,7 @@ private final class AppServerSession: @unchecked Sendable {
       do {
         let resultData = try JSONSerialization.data(withJSONObject: result)
         let response = try JSONDecoder().decode(GetAccountRateLimitsResponse.self, from: resultData)
-        finish(with: .success(try response.usageSnapshot()))
+        finish(with: .success(try response.usageSnapshot(accountEmail: accountEmail)))
       } catch let error as CodexUsageError {
         finish(with: .failure(error))
       } catch {
@@ -211,6 +238,10 @@ private final class AppServerSession: @unchecked Sendable {
     default:
       break
     }
+  }
+
+  private func requestRateLimits() throws {
+    try send(["id": 3, "method": "account/rateLimits/read", "params": NSNull()])
   }
 
   private func classifyServerError(_ message: String) -> CodexUsageError {

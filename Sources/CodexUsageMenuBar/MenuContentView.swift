@@ -88,9 +88,18 @@ struct MenuContentView: View {
       .frame(width: 94, height: 94)
 
       VStack(alignment: .leading, spacing: 7) {
-        if let plan = snapshot.planDisplayName {
-          Label("ChatGPT \(plan)", systemImage: "person.crop.circle")
+        if let email = snapshot.accountEmail, !email.isEmpty {
+          Label(email, systemImage: "person.crop.circle")
             .font(.callout.weight(.medium))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(email)
+        }
+
+        if let plan = snapshot.planDisplayName {
+          Label("ChatGPT \(plan) 플랜", systemImage: "creditcard")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
 
         if let resetsAt = snapshot.resetsAt {

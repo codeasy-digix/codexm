@@ -17,6 +17,17 @@ struct RateLimitResetCredits: Codable, Equatable, Sendable {
   let availableCount: Int64
 }
 
+struct CodexAccount: Codable, Equatable, Sendable {
+  let type: String
+  let email: String?
+  let planType: String?
+}
+
+struct GetAccountResponse: Codable, Equatable, Sendable {
+  let account: CodexAccount?
+  let requiresOpenaiAuth: Bool
+}
+
 struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
   let rateLimits: RateLimitSnapshot
   let rateLimitsByLimitId: [String: RateLimitSnapshot]?
@@ -55,7 +66,10 @@ struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
     return limits.secondary ?? limits.primary
   }
 
-  func usageSnapshot(fetchedAt: Date = Date()) throws -> UsageSnapshot {
+  func usageSnapshot(
+    accountEmail: String? = nil,
+    fetchedAt: Date = Date()
+  ) throws -> UsageSnapshot {
     guard let window = weeklyWindow else {
       throw CodexUsageError.noWeeklyLimit
     }
@@ -66,6 +80,7 @@ struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
       resetsAt: window.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
       planType: codexRateLimits.planType,
       availableResetCredits: rateLimitResetCredits?.availableCount,
+      accountEmail: accountEmail,
       fetchedAt: fetchedAt
     )
   }
@@ -77,6 +92,7 @@ struct UsageSnapshot: Equatable, Sendable {
   let resetsAt: Date?
   let planType: String?
   let availableResetCredits: Int64?
+  let accountEmail: String?
   let fetchedAt: Date
 
   var remainingPercent: Int { max(0, 100 - usedPercent) }

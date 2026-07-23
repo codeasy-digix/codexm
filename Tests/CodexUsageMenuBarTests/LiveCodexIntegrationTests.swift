@@ -29,6 +29,7 @@ struct LiveCodexIntegrationTests {
     #expect((0...100).contains(snapshot.usedPercent))
     #expect(snapshot.windowDurationMinutes == 10_080)
     #expect(snapshot.resetsAt != nil)
+    #expect(snapshot.accountEmail?.contains("@") == true)
   }
 
   @Test("Adds the Codex launcher directory to a Finder-like PATH")

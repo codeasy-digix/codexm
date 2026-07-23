@@ -5,6 +5,27 @@ import Testing
 
 @Suite("Codex rate limit parsing")
 struct UsageModelsTests {
+  @Test("Reads the signed-in ChatGPT account email separately from its plan")
+  func decodesAccountEmail() throws {
+    let data = Data(
+      """
+      {
+        "account": {
+          "type": "chatgpt",
+          "email": "owner@example.com",
+          "planType": "team"
+        },
+        "requiresOpenaiAuth": true
+      }
+      """.utf8
+    )
+
+    let response = try JSONDecoder().decode(GetAccountResponse.self, from: data)
+
+    #expect(response.account?.email == "owner@example.com")
+    #expect(response.account?.planType == "team")
+  }
+
   @Test("Selects the seven-day window regardless of primary/secondary field")
   func selectsWeeklyWindowByDuration() throws {
     let data = Data(
@@ -30,6 +51,9 @@ struct UsageModelsTests {
     #expect(snapshot.windowDurationMinutes == 10_080)
     #expect(snapshot.planDisplayName == "Plus")
     #expect(snapshot.availableResetCredits == 2)
+
+    let accountSnapshot = try response.usageSnapshot(accountEmail: "owner@example.com")
+    #expect(accountSnapshot.accountEmail == "owner@example.com")
   }
 
   @Test("Handles the current single primary weekly payload")
@@ -105,6 +129,7 @@ struct UsageModelsTests {
       resetsAt: date.addingTimeInterval(seconds),
       planType: "plus",
       availableResetCredits: nil,
+      accountEmail: nil,
       fetchedAt: date
     )
   }
