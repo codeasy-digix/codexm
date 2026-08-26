@@ -15,6 +15,26 @@ struct RateLimitSnapshot: Codable, Equatable, Sendable {
 
 struct RateLimitResetCredits: Codable, Equatable, Sendable {
   let availableCount: Int64
+  let credits: [RateLimitResetCredit]?
+}
+
+struct RateLimitResetCredit: Codable, Equatable, Sendable {
+  let id: String?
+  let resetType: String?
+  let status: String?
+  let grantedAt: Int64?
+  let expiresAt: Int64?
+  let title: String?
+  let description: String?
+}
+
+struct ResetCreditDetail: Equatable, Sendable {
+  let id: String?
+  let status: String?
+  let grantedAt: Date?
+  let expiresAt: Date?
+  let title: String?
+  let description: String?
 }
 
 struct CodexAccount: Codable, Equatable, Sendable {
@@ -67,7 +87,7 @@ struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
   }
 
   func usageSnapshot(
-    accountEmail: String? = nil,
+    account: CodexAccount? = nil,
     fetchedAt: Date = Date()
   ) throws -> UsageSnapshot {
     guard let window = weeklyWindow else {
@@ -78,9 +98,19 @@ struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
       usedPercent: min(max(window.usedPercent, 0), 100),
       windowDurationMinutes: window.windowDurationMins,
       resetsAt: window.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-      planType: codexRateLimits.planType,
+      planType: codexRateLimits.planType ?? account?.planType,
       availableResetCredits: rateLimitResetCredits?.availableCount,
-      accountEmail: accountEmail,
+      resetCreditDetails: rateLimitResetCredits?.credits?.map {
+        ResetCreditDetail(
+          id: $0.id,
+          status: $0.status,
+          grantedAt: $0.grantedAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+          expiresAt: $0.expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+          title: $0.title,
+          description: $0.description
+        )
+      },
+      accountEmail: account?.email,
       fetchedAt: fetchedAt
     )
   }
@@ -92,14 +122,61 @@ struct UsageSnapshot: Equatable, Sendable {
   let resetsAt: Date?
   let planType: String?
   let availableResetCredits: Int64?
+  let resetCreditDetails: [ResetCreditDetail]?
   let accountEmail: String?
   let fetchedAt: Date
 
+  init(
+    usedPercent: Int,
+    windowDurationMinutes: Int64?,
+    resetsAt: Date?,
+    planType: String?,
+    availableResetCredits: Int64?,
+    resetCreditDetails: [ResetCreditDetail]? = nil,
+    accountEmail: String?,
+    fetchedAt: Date
+  ) {
+    self.usedPercent = usedPercent
+    self.windowDurationMinutes = windowDurationMinutes
+    self.resetsAt = resetsAt
+    self.planType = planType
+    self.availableResetCredits = availableResetCredits
+    self.resetCreditDetails = resetCreditDetails
+    self.accountEmail = accountEmail
+    self.fetchedAt = fetchedAt
+  }
+
   var remainingPercent: Int { max(0, 100 - usedPercent) }
+
+  var availableResetCreditDetails: [ResetCreditDetail] {
+    resetCreditDetails?.filter { detail in
+      guard let status = detail.status else { return true }
+      return status.caseInsensitiveCompare("available") == .orderedSame
+    } ?? []
+  }
+
+  var earliestResetCreditExpiration: Date? {
+    availableResetCreditDetails.compactMap(\.expiresAt).min()
+  }
+
+  var hasCompleteResetCreditDetails: Bool {
+    guard let availableResetCredits, resetCreditDetails != nil else { return false }
+    return Int64(availableResetCreditDetails.count) >= availableResetCredits
+  }
 
   func resetCountdown(relativeTo date: Date = Date()) -> String? {
     guard let resetsAt else { return nil }
-    let totalSeconds = Int(resetsAt.timeIntervalSince(date).rounded(.down))
+    return Self.countdown(to: resetsAt, relativeTo: date)
+  }
+
+  func resetCreditExpirationCountdown(relativeTo date: Date = Date()) -> String? {
+    guard let earliestResetCreditExpiration else { return nil }
+    let countdown = Self.countdown(to: earliestResetCreditExpiration, relativeTo: date)
+    return countdown == "곧 초기화" ? "곧 소멸" : countdown
+  }
+
+  private static func countdown(to target: Date, relativeTo date: Date) -> String {
+    let totalSeconds = Int(target.timeIntervalSince(date).rounded(.down))
     guard totalSeconds > 0 else { return "곧 초기화" }
 
     let totalMinutes = max(1, totalSeconds / 60)

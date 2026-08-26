@@ -66,7 +66,7 @@ private final class AppServerSession: @unchecked Sendable {
 
   private var stdoutBuffer = Data()
   private var stderrBuffer = Data()
-  private var accountEmail: String?
+  private var account: CodexAccount?
   private var continuation: CheckedContinuation<UsageSnapshot, any Error>?
   private var timeoutTask: Task<Void, Never>?
 
@@ -139,7 +139,7 @@ private final class AppServerSession: @unchecked Sendable {
           "clientInfo": [
             "name": "codex_usage_menubar",
             "title": "Codex Usage",
-            "version": "1.1.2",
+            "version": "1.2.0",
           ],
           "capabilities": ["experimentalApi": true],
         ],
@@ -207,12 +207,12 @@ private final class AppServerSession: @unchecked Sendable {
         finish(with: .failure(CodexUsageError.serverError(error.localizedDescription)))
       }
     case 2:
-      accountEmail = nil
+      account = nil
       if let result = json["result"],
         let resultData = try? JSONSerialization.data(withJSONObject: result),
         let response = try? JSONDecoder().decode(GetAccountResponse.self, from: resultData)
       {
-        accountEmail = response.account?.email
+        account = response.account
       }
 
       do {
@@ -229,7 +229,7 @@ private final class AppServerSession: @unchecked Sendable {
       do {
         let resultData = try JSONSerialization.data(withJSONObject: result)
         let response = try JSONDecoder().decode(GetAccountRateLimitsResponse.self, from: resultData)
-        finish(with: .success(try response.usageSnapshot(accountEmail: accountEmail)))
+        finish(with: .success(try response.usageSnapshot(account: account)))
       } catch let error as CodexUsageError {
         finish(with: .failure(error))
       } catch {

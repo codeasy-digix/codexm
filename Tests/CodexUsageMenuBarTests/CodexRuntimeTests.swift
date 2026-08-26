@@ -18,19 +18,29 @@ struct CodexRuntimeTests {
     #expect(runtime.environment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
   }
 
-  @Test("Uses an app-owned Codex home only when no existing login is available")
-  func usesAppOwnedHomeWithoutLogin() throws {
+  @Test("Keeps the default account disconnected when the machine has no Codex login")
+  func requiresExistingDefaultLogin() throws {
     let fixture = try Fixture(authenticated: false)
     defer { fixture.remove() }
 
-    let runtime = try fixture.locator.locate()
-    let expected = fixture.applicationSupport.appending(
-      path: "CodexHome",
-      directoryHint: .isDirectory
-    )
+    #expect(throws: CodexRuntimeError.defaultCodexHomeUnavailable) {
+      try fixture.locator.locateDefaultAccount()
+    }
+  }
 
-    #expect(runtime.codexHomeURL == expected)
-    #expect(FileManager.default.fileExists(atPath: expected.path))
+  @Test("Uses an explicitly managed Codex home for an added account")
+  func usesManagedAccountHome() throws {
+    let fixture = try Fixture(authenticated: false)
+    defer { fixture.remove() }
+    let registry = UsageAccountRegistry(applicationSupportURL: fixture.applicationSupport)
+    let account = try registry.beginManagedAccount()
+    let home = try registry.pendingCodexHomeURL(for: account)
+
+    let runtime = try fixture.locator.locateManagedAccount(codexHomeURL: home)
+
+    #expect(runtime.codexHomeURL == home)
+    #expect(runtime.environment["CODEX_HOME"] == home.path)
+    #expect(FileManager.default.fileExists(atPath: home.appending(path: "config.toml").path))
   }
 }
 

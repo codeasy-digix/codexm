@@ -36,9 +36,10 @@ final class SecurityScopedAccess: @unchecked Sendable {
   }
 }
 
-enum CodexRuntimeError: LocalizedError {
+enum CodexRuntimeError: LocalizedError, Equatable {
   case bundledRuntimeMissing
   case invalidCodexHome
+  case defaultCodexHomeUnavailable
 
   var errorDescription: String? {
     switch self {
@@ -46,6 +47,8 @@ enum CodexRuntimeError: LocalizedError {
       return "앱에 포함된 Codex 런타임을 찾을 수 없습니다."
     case .invalidCodexHome:
       return "선택한 폴더에서 Codex 로그인 정보를 찾을 수 없습니다."
+    case .defaultCodexHomeUnavailable:
+      return "기본 Codex 로그인 정보를 찾을 수 없습니다."
     }
   }
 }
@@ -85,26 +88,36 @@ struct CodexRuntimeLocator: @unchecked Sendable {
   }
 
   func locate() throws -> CodexRuntime {
-    let executableURL = try bundledRuntimeURL()
-    let selection = selectedCodexHome()
-    let codexHomeURL: URL
-    let access: SecurityScopedAccess?
+    try locateDefaultAccount()
+  }
 
+  func locateDefaultAccount() throws -> CodexRuntime {
     if isAuthenticatedCodexHome(systemCodexHomeURL) {
-      codexHomeURL = systemCodexHomeURL
-      access = nil
-    } else if let selection {
-      codexHomeURL = selection.url
-      access = selection.access
-    } else {
-      codexHomeURL = applicationSupportURL.appending(
-        path: "CodexHome",
-        directoryHint: .isDirectory
-      )
-      access = nil
+      return try makeRuntime(codexHomeURL: systemCodexHomeURL)
     }
+    if let selection = selectedCodexHome() {
+      return try makeRuntime(
+        codexHomeURL: selection.url,
+        securityScopedAccess: selection.access
+      )
+    }
+    throw CodexRuntimeError.defaultCodexHomeUnavailable
+  }
 
-    try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+  func locateManagedAccount(codexHomeURL: URL) throws -> CodexRuntime {
+    try fileManager.createDirectory(
+      at: codexHomeURL,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    return try makeRuntime(codexHomeURL: codexHomeURL)
+  }
+
+  private func makeRuntime(
+    codexHomeURL: URL,
+    securityScopedAccess: SecurityScopedAccess? = nil
+  ) throws -> CodexRuntime {
+    let executableURL = try bundledRuntimeURL()
     var runtimeEnvironment = environment
     runtimeEnvironment["CODEX_HOME"] = codexHomeURL.path
     runtimeEnvironment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -113,7 +126,7 @@ struct CodexRuntimeLocator: @unchecked Sendable {
       executableURL: executableURL,
       environment: runtimeEnvironment,
       codexHomeURL: codexHomeURL,
-      securityScopedAccess: access
+      securityScopedAccess: securityScopedAccess
     )
   }
 

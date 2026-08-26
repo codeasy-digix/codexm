@@ -24,12 +24,12 @@ struct CodexUsageMenuBarApp: App {
   }
 
   private var menuBarIndicator: MenuBarIndicator {
-    switch store.state {
+    switch store.primaryAccountState {
     case .loaded(let snapshot):
       return .remaining(snapshot.remainingPercent)
     case .loading:
       return .loading
-    case .missingRuntime, .failed:
+    case .needsAuthentication, .failed:
       return .unavailable
     }
   }

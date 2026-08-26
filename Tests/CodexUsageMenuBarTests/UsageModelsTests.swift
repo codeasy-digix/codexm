@@ -52,8 +52,103 @@ struct UsageModelsTests {
     #expect(snapshot.planDisplayName == "Plus")
     #expect(snapshot.availableResetCredits == 2)
 
-    let accountSnapshot = try response.usageSnapshot(accountEmail: "owner@example.com")
+    let accountSnapshot = try response.usageSnapshot(
+      account: CodexAccount(type: "chatgpt", email: "owner@example.com", planType: "team")
+    )
     #expect(accountSnapshot.accountEmail == "owner@example.com")
+    #expect(accountSnapshot.planDisplayName == "Plus")
+  }
+
+  @Test("Reads reset credit expiration details from the rate-limit response")
+  func decodesResetCreditExpirations() throws {
+    let data = Data(
+      """
+      {
+        "rateLimits": {
+          "limitId": "codex",
+          "planType": null,
+          "primary": {"usedPercent": 20, "windowDurationMins": 10080, "resetsAt": 1800000000},
+          "secondary": null
+        },
+        "rateLimitsByLimitId": null,
+        "rateLimitResetCredits": {
+          "availableCount": 3,
+          "credits": [
+            {
+              "id": "later",
+              "resetType": "codexRateLimits",
+              "status": "available",
+              "grantedAt": 1790000000,
+              "expiresAt": 1792000000,
+              "title": "Rate-limit reset",
+              "description": "Later credit"
+            },
+            {
+              "id": "earlier",
+              "resetType": "codexRateLimits",
+              "status": "AVAILABLE",
+              "grantedAt": 1790000000,
+              "expiresAt": 1791000000,
+              "title": "Rate-limit reset",
+              "description": "Earlier credit"
+            },
+            {
+              "id": "used",
+              "resetType": "codexRateLimits",
+              "status": "used",
+              "grantedAt": 1790000000,
+              "expiresAt": 1790500000,
+              "title": "Rate-limit reset",
+              "description": "Already used credit"
+            }
+          ]
+        }
+      }
+      """.utf8
+    )
+
+    let response = try JSONDecoder().decode(GetAccountRateLimitsResponse.self, from: data)
+    let snapshot = try response.usageSnapshot(
+      account: CodexAccount(type: "chatgpt", email: "owner@example.com", planType: "business"),
+      fetchedAt: Date(timeIntervalSince1970: 1_790_996_400)
+    )
+
+    #expect(snapshot.availableResetCredits == 3)
+    #expect(snapshot.resetCreditDetails?.count == 3)
+    #expect(snapshot.availableResetCreditDetails.count == 2)
+    #expect(snapshot.earliestResetCreditExpiration == Date(timeIntervalSince1970: 1_791_000_000))
+    #expect(
+      snapshot.resetCreditExpirationCountdown(relativeTo: snapshot.fetchedAt) == "1시간"
+    )
+    #expect(!snapshot.hasCompleteResetCreditDetails)
+    #expect(snapshot.planDisplayName == "Business")
+  }
+
+  @Test("Marks an expired reset credit without appending a duration suffix")
+  func formatsExpiredResetCredit() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let snapshot = UsageSnapshot(
+      usedPercent: 10,
+      windowDurationMinutes: 10_080,
+      resetsAt: nil,
+      planType: "plus",
+      availableResetCredits: 1,
+      resetCreditDetails: [
+        ResetCreditDetail(
+          id: "expired",
+          status: "available",
+          grantedAt: nil,
+          expiresAt: now.addingTimeInterval(-1),
+          title: nil,
+          description: nil
+        )
+      ],
+      accountEmail: nil,
+      fetchedAt: now
+    )
+
+    #expect(snapshot.hasCompleteResetCreditDetails)
+    #expect(snapshot.resetCreditExpirationCountdown(relativeTo: now) == "곧 소멸")
   }
 
   @Test("Handles the current single primary weekly payload")
