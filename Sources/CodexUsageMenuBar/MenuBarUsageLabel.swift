@@ -107,31 +107,46 @@ enum CodexMenuBarIconRenderer {
         height: textSize.height
       )
 
-      if let fraction = indicator.weeklyRemainingFraction, fraction > 0 {
+      if let fraction = indicator.weeklyRemainingFraction {
         let batteryRect = NSRect(
           x: textRect.minX,
           y: textRect.minY + 1,
           width: textRect.width,
           height: max(1, textRect.height - 2)
         )
-        let fillRect = NSRect(
-          x: batteryRect.minX,
-          y: batteryRect.minY,
-          width: batteryRect.width * fraction,
-          height: batteryRect.height
-        )
-        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 2.2, yRadius: 2.2)
-        NSColor.black.setFill()
-        fill.fill()
+        let outlineRect = batteryRect.insetBy(dx: 0.5, dy: 0.5)
+        let outline = NSBezierPath(roundedRect: outlineRect, xRadius: 2.4, yRadius: 2.4)
+        let innerRect = outlineRect.insetBy(dx: 1, dy: 1)
 
-        // The same template glyph is black outside the weekly fill and punched
-        // out inside it, producing the requested positive/negative transition.
+        var fill: NSBezierPath?
+        if fraction > 0 {
+          let fillRect = NSRect(
+            x: innerRect.minX,
+            y: innerRect.minY,
+            width: innerRect.width * fraction,
+            height: innerRect.height
+          )
+          let path = NSBezierPath(roundedRect: fillRect, xRadius: 1.4, yRadius: 1.4)
+          NSColor.black.setFill()
+          path.fill()
+          fill = path
+        }
+
         text.draw(in: textRect)
-        NSGraphicsContext.saveGraphicsState()
-        fill.addClip()
-        NSGraphicsContext.current?.compositingOperation = .clear
-        text.draw(in: textRect)
-        NSGraphicsContext.restoreGraphicsState()
+
+        if let fill {
+          // The same template glyph is black outside the weekly fill and punched
+          // out inside it, producing the requested positive/negative transition.
+          NSGraphicsContext.saveGraphicsState()
+          fill.addClip()
+          NSGraphicsContext.current?.compositingOperation = .clear
+          text.draw(in: textRect)
+          NSGraphicsContext.restoreGraphicsState()
+        }
+
+        outline.lineWidth = 1
+        NSColor.black.setStroke()
+        outline.stroke()
       } else {
         text.draw(in: textRect)
       }

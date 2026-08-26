@@ -88,6 +88,32 @@ struct MenuBarUsageLabelTests {
     #expect(low.tiffRepresentation != high.tiffRepresentation)
   }
 
+  @Test("Keeps the battery capacity outline when weekly usage is empty")
+  func rendersEmptyWeeklyBatteryOutline() throws {
+    let nativeImage = CodexMenuBarIconRenderer.image(
+      for: .limits(fiveHour: 82, weekly: 0)
+    )
+
+    #expect(nativeImage.isTemplate)
+    #expect(nativeImage.tiffRepresentation != nil)
+
+    let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 82, weekly: 0))
+      .padding(10)
+      .background(Color.white)
+      .environment(\.colorScheme, .light)
+    let renderer = ImageRenderer(content: content)
+    renderer.scale = 2
+    let image = try #require(renderer.nsImage)
+
+    if let outputPath = ProcessInfo.processInfo.environment["CODEX_EMPTY_BATTERY_PREVIEW_PATH"],
+      let tiff = image.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let png = bitmap.representation(using: .png, properties: [:])
+    {
+      try png.write(to: URL(fileURLWithPath: outputPath))
+    }
+  }
+
   @Test("Renders a circular remaining-usage chart with the percentage")
   func rendersCircularIndicator() throws {
     let indicator = MenuBarIndicator.limits(fiveHour: 18, weekly: 64)
