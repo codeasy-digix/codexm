@@ -6,6 +6,19 @@ struct RateLimitWindow: Codable, Equatable, Sendable {
   let resetsAt: Int64?
 }
 
+struct UsageLimitWindow: Equatable, Sendable {
+  let usedPercent: Int
+  let windowDurationMinutes: Int64?
+  let resetsAt: Date?
+
+  var remainingPercent: Int { max(0, 100 - usedPercent) }
+
+  func resetCountdown(relativeTo date: Date = Date()) -> String? {
+    guard let resetsAt else { return nil }
+    return usageCountdown(to: resetsAt, relativeTo: date)
+  }
+}
+
 struct RateLimitSnapshot: Codable, Equatable, Sendable {
   let limitId: String?
   let planType: String?
@@ -65,12 +78,13 @@ struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
     return rateLimits
   }
 
-  /// Codex has historically exposed a short rolling window and a weekly window in
-  /// either primary/secondary order. Choose the window whose duration is closest
-  /// to seven days instead of relying on the field name.
+  private var windows: [RateLimitWindow] {
+    [codexRateLimits.primary, codexRateLimits.secondary].compactMap { $0 }
+  }
+
+  /// Primary and secondary have changed shape over time. Identify windows from
+  /// their duration instead of assigning meaning to the field name.
   var weeklyWindow: RateLimitWindow? {
-    let limits = codexRateLimits
-    let windows = [limits.primary, limits.secondary].compactMap { $0 }
     let weekInMinutes: Int64 = 7 * 24 * 60
 
     let dayOrLonger = windows.filter { ($0.windowDurationMins ?? 0) >= 24 * 60 }
@@ -81,23 +95,41 @@ struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
       return closestToWeek
     }
 
-    // Older payloads may omit durations. In that shape secondary was the
-    // long window, while a lone primary window is commonly the weekly limit.
-    return limits.secondary ?? limits.primary
+    // Older payloads sometimes omitted both durations. In that shape secondary
+    // was the long window, while a lone window was the only usable limit.
+    if windows.allSatisfy({ $0.windowDurationMins == nil }) {
+      return codexRateLimits.secondary ?? codexRateLimits.primary
+    }
+    return nil
+  }
+
+  var fiveHourWindow: RateLimitWindow? {
+    let fiveHoursInMinutes: Int64 = 5 * 60
+    let shortWindows = windows.filter { window in
+      guard window != weeklyWindow else { return false }
+      guard let duration = window.windowDurationMins else { return true }
+      return duration < 24 * 60
+    }
+
+    return shortWindows.min {
+      abs(($0.windowDurationMins ?? fiveHoursInMinutes) - fiveHoursInMinutes)
+        < abs(($1.windowDurationMins ?? fiveHoursInMinutes) - fiveHoursInMinutes)
+    }
   }
 
   func usageSnapshot(
     account: CodexAccount? = nil,
     fetchedAt: Date = Date()
   ) throws -> UsageSnapshot {
-    guard let window = weeklyWindow else {
-      throw CodexUsageError.noWeeklyLimit
+    let fiveHourLimit = fiveHourWindow.map(Self.usageLimit)
+    let weeklyLimit = weeklyWindow.map(Self.usageLimit)
+    guard fiveHourLimit != nil || weeklyLimit != nil else {
+      throw CodexUsageError.noUsageLimit
     }
 
     return UsageSnapshot(
-      usedPercent: min(max(window.usedPercent, 0), 100),
-      windowDurationMinutes: window.windowDurationMins,
-      resetsAt: window.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+      fiveHourLimit: fiveHourLimit,
+      weeklyLimit: weeklyLimit,
       planType: codexRateLimits.planType ?? account?.planType,
       availableResetCredits: rateLimitResetCredits?.availableCount,
       resetCreditDetails: rateLimitResetCredits?.credits?.map {
@@ -114,12 +146,19 @@ struct GetAccountRateLimitsResponse: Codable, Equatable, Sendable {
       fetchedAt: fetchedAt
     )
   }
+
+  private static func usageLimit(_ window: RateLimitWindow) -> UsageLimitWindow {
+    UsageLimitWindow(
+      usedPercent: min(max(window.usedPercent, 0), 100),
+      windowDurationMinutes: window.windowDurationMins,
+      resetsAt: window.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    )
+  }
 }
 
 struct UsageSnapshot: Equatable, Sendable {
-  let usedPercent: Int
-  let windowDurationMinutes: Int64?
-  let resetsAt: Date?
+  let fiveHourLimit: UsageLimitWindow?
+  let weeklyLimit: UsageLimitWindow?
   let planType: String?
   let availableResetCredits: Int64?
   let resetCreditDetails: [ResetCreditDetail]?
@@ -127,26 +166,22 @@ struct UsageSnapshot: Equatable, Sendable {
   let fetchedAt: Date
 
   init(
-    usedPercent: Int,
-    windowDurationMinutes: Int64?,
-    resetsAt: Date?,
+    fiveHourLimit: UsageLimitWindow? = nil,
+    weeklyLimit: UsageLimitWindow? = nil,
     planType: String?,
     availableResetCredits: Int64?,
     resetCreditDetails: [ResetCreditDetail]? = nil,
     accountEmail: String?,
     fetchedAt: Date
   ) {
-    self.usedPercent = usedPercent
-    self.windowDurationMinutes = windowDurationMinutes
-    self.resetsAt = resetsAt
+    self.fiveHourLimit = fiveHourLimit
+    self.weeklyLimit = weeklyLimit
     self.planType = planType
     self.availableResetCredits = availableResetCredits
     self.resetCreditDetails = resetCreditDetails
     self.accountEmail = accountEmail
     self.fetchedAt = fetchedAt
   }
-
-  var remainingPercent: Int { max(0, 100 - usedPercent) }
 
   var availableResetCreditDetails: [ResetCreditDetail] {
     resetCreditDetails?.filter { detail in
@@ -164,33 +199,10 @@ struct UsageSnapshot: Equatable, Sendable {
     return Int64(availableResetCreditDetails.count) >= availableResetCredits
   }
 
-  func resetCountdown(relativeTo date: Date = Date()) -> String? {
-    guard let resetsAt else { return nil }
-    return Self.countdown(to: resetsAt, relativeTo: date)
-  }
-
   func resetCreditExpirationCountdown(relativeTo date: Date = Date()) -> String? {
     guard let earliestResetCreditExpiration else { return nil }
-    let countdown = Self.countdown(to: earliestResetCreditExpiration, relativeTo: date)
+    let countdown = usageCountdown(to: earliestResetCreditExpiration, relativeTo: date)
     return countdown == "곧 초기화" ? "곧 소멸" : countdown
-  }
-
-  private static func countdown(to target: Date, relativeTo date: Date) -> String {
-    let totalSeconds = Int(target.timeIntervalSince(date).rounded(.down))
-    guard totalSeconds > 0 else { return "곧 초기화" }
-
-    let totalMinutes = max(1, totalSeconds / 60)
-    let days = totalMinutes / (24 * 60)
-    let hours = (totalMinutes % (24 * 60)) / 60
-    let minutes = totalMinutes % 60
-
-    if days > 0 {
-      return hours > 0 ? "\(days)일 \(hours)시간" : "\(days)일"
-    }
-    if hours > 0 {
-      return minutes > 0 ? "\(hours)시간 \(minutes)분" : "\(hours)시간"
-    }
-    return "\(totalMinutes)분"
   }
 
   var planDisplayName: String? {
@@ -216,7 +228,7 @@ enum CodexUsageError: LocalizedError, Equatable {
   case unsupportedRuntime(String)
   case serverError(String)
   case invalidResponse
-  case noWeeklyLimit
+  case noUsageLimit
   case timedOut
 
   var errorDescription: String? {
@@ -231,10 +243,28 @@ enum CodexUsageError: LocalizedError, Equatable {
       return message.isEmpty ? "Codex에서 사용량을 가져오지 못했습니다." : message
     case .invalidResponse:
       return "Codex가 예상하지 못한 응답을 반환했습니다."
-    case .noWeeklyLimit:
-      return "계정에서 주간 사용량 한도를 찾지 못했습니다."
+    case .noUsageLimit:
+      return "계정에서 Codex 사용량 한도를 찾지 못했습니다."
     case .timedOut:
       return "Codex 사용량 조회 시간이 초과되었습니다."
     }
   }
+}
+
+private func usageCountdown(to target: Date, relativeTo date: Date) -> String {
+  let totalSeconds = Int(target.timeIntervalSince(date).rounded(.down))
+  guard totalSeconds > 0 else { return "곧 초기화" }
+
+  let totalMinutes = max(1, totalSeconds / 60)
+  let days = totalMinutes / (24 * 60)
+  let hours = (totalMinutes % (24 * 60)) / 60
+  let minutes = totalMinutes % 60
+
+  if days > 0 {
+    return hours > 0 ? "\(days)일 \(hours)시간" : "\(days)일"
+  }
+  if hours > 0 {
+    return minutes > 0 ? "\(hours)시간 \(minutes)분" : "\(hours)시간"
+  }
+  return "\(totalMinutes)분"
 }

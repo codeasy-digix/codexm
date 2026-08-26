@@ -26,8 +26,8 @@ struct UsageModelsTests {
     #expect(response.account?.planType == "team")
   }
 
-  @Test("Selects the seven-day window regardless of primary/secondary field")
-  func selectsWeeklyWindowByDuration() throws {
+  @Test("Keeps both the five-hour and seven-day windows")
+  func selectsBothWindowsByDuration() throws {
     let data = Data(
       """
       {
@@ -46,9 +46,12 @@ struct UsageModelsTests {
     let response = try JSONDecoder().decode(GetAccountRateLimitsResponse.self, from: data)
     let snapshot = try response.usageSnapshot(fetchedAt: Date(timeIntervalSince1970: 100))
 
-    #expect(snapshot.usedPercent == 72)
-    #expect(snapshot.remainingPercent == 28)
-    #expect(snapshot.windowDurationMinutes == 10_080)
+    #expect(snapshot.fiveHourLimit?.usedPercent == 31)
+    #expect(snapshot.fiveHourLimit?.remainingPercent == 69)
+    #expect(snapshot.fiveHourLimit?.windowDurationMinutes == 300)
+    #expect(snapshot.weeklyLimit?.usedPercent == 72)
+    #expect(snapshot.weeklyLimit?.remainingPercent == 28)
+    #expect(snapshot.weeklyLimit?.windowDurationMinutes == 10_080)
     #expect(snapshot.planDisplayName == "Plus")
     #expect(snapshot.availableResetCredits == 2)
 
@@ -57,6 +60,33 @@ struct UsageModelsTests {
     )
     #expect(accountSnapshot.accountEmail == "owner@example.com")
     #expect(accountSnapshot.planDisplayName == "Plus")
+  }
+
+  @Test("Identifies both windows when primary and secondary are reversed")
+  func selectsBothWindowsWhenReversed() throws {
+    let response = GetAccountRateLimitsResponse(
+      rateLimits: RateLimitSnapshot(
+        limitId: "codex",
+        planType: "plus",
+        primary: RateLimitWindow(
+          usedPercent: 72,
+          windowDurationMins: 10_080,
+          resetsAt: 1_700_100_000
+        ),
+        secondary: RateLimitWindow(
+          usedPercent: 31,
+          windowDurationMins: 300,
+          resetsAt: 1_700_000_000
+        )
+      ),
+      rateLimitsByLimitId: nil,
+      rateLimitResetCredits: nil
+    )
+
+    let snapshot = try response.usageSnapshot()
+
+    #expect(snapshot.fiveHourLimit?.remainingPercent == 69)
+    #expect(snapshot.weeklyLimit?.remainingPercent == 28)
   }
 
   @Test("Reads reset credit expiration details from the rate-limit response")
@@ -128,9 +158,11 @@ struct UsageModelsTests {
   func formatsExpiredResetCredit() {
     let now = Date(timeIntervalSince1970: 1_000_000)
     let snapshot = UsageSnapshot(
-      usedPercent: 10,
-      windowDurationMinutes: 10_080,
-      resetsAt: nil,
+      weeklyLimit: UsageLimitWindow(
+        usedPercent: 10,
+        windowDurationMinutes: 10_080,
+        resetsAt: nil
+      ),
       planType: "plus",
       availableResetCredits: 1,
       resetCreditDetails: [
@@ -178,9 +210,33 @@ struct UsageModelsTests {
     let response = try JSONDecoder().decode(GetAccountRateLimitsResponse.self, from: data)
     let snapshot = try response.usageSnapshot()
 
-    #expect(snapshot.usedPercent == 82)
-    #expect(snapshot.remainingPercent == 18)
+    #expect(snapshot.fiveHourLimit == nil)
+    #expect(snapshot.weeklyLimit?.usedPercent == 82)
+    #expect(snapshot.weeklyLimit?.remainingPercent == 18)
     #expect(snapshot.planDisplayName == "Pro")
+  }
+
+  @Test("Keeps a five-hour limit usable when the weekly window is absent")
+  func handlesSingleFiveHourWindow() throws {
+    let response = GetAccountRateLimitsResponse(
+      rateLimits: RateLimitSnapshot(
+        limitId: "codex",
+        planType: "team",
+        primary: RateLimitWindow(
+          usedPercent: 10,
+          windowDurationMins: 300,
+          resetsAt: 1_800_000_000
+        ),
+        secondary: nil
+      ),
+      rateLimitsByLimitId: nil,
+      rateLimitResetCredits: nil
+    )
+
+    let snapshot = try response.usageSnapshot()
+
+    #expect(snapshot.fiveHourLimit?.remainingPercent == 90)
+    #expect(snapshot.weeklyLimit == nil)
   }
 
   @Test("Clamps unexpected percentage values")
@@ -197,8 +253,8 @@ struct UsageModelsTests {
     )
 
     let snapshot = try response.usageSnapshot()
-    #expect(snapshot.usedPercent == 100)
-    #expect(snapshot.remainingPercent == 0)
+    #expect(snapshot.weeklyLimit?.usedPercent == 100)
+    #expect(snapshot.weeklyLimit?.remainingPercent == 0)
   }
 
   @Test("Formats the time remaining until the weekly limit resets")
@@ -207,21 +263,28 @@ struct UsageModelsTests {
 
     #expect(
       snapshot(resetAfter: 2 * 86_400 + 3 * 3_600, from: now)
-        .resetCountdown(relativeTo: now) == "2일 3시간"
+        .weeklyLimit?.resetCountdown(relativeTo: now) == "2일 3시간"
     )
     #expect(
       snapshot(resetAfter: 5 * 3_600 + 25 * 60, from: now)
-        .resetCountdown(relativeTo: now) == "5시간 25분"
+        .weeklyLimit?.resetCountdown(relativeTo: now) == "5시간 25분"
     )
-    #expect(snapshot(resetAfter: 45, from: now).resetCountdown(relativeTo: now) == "1분")
-    #expect(snapshot(resetAfter: -1, from: now).resetCountdown(relativeTo: now) == "곧 초기화")
+    #expect(
+      snapshot(resetAfter: 45, from: now).weeklyLimit?.resetCountdown(relativeTo: now) == "1분"
+    )
+    #expect(
+      snapshot(resetAfter: -1, from: now).weeklyLimit?.resetCountdown(relativeTo: now)
+        == "곧 초기화"
+    )
   }
 
   private func snapshot(resetAfter seconds: TimeInterval, from date: Date) -> UsageSnapshot {
     UsageSnapshot(
-      usedPercent: 72,
-      windowDurationMinutes: 10_080,
-      resetsAt: date.addingTimeInterval(seconds),
+      weeklyLimit: UsageLimitWindow(
+        usedPercent: 72,
+        windowDurationMinutes: 10_080,
+        resetsAt: date.addingTimeInterval(seconds)
+      ),
       planType: "plus",
       availableResetCredits: nil,
       accountEmail: nil,

@@ -2,14 +2,23 @@ import AppKit
 import SwiftUI
 
 enum MenuBarIndicator: Equatable {
-  case remaining(Int)
+  case limits(fiveHour: Int?, weekly: Int?)
   case loading
   case unavailable
 
+  private static func clamped(_ percent: Int) -> Int {
+    min(max(percent, 0), 100)
+  }
+
+  var displayedPercent: Int? {
+    guard case .limits(let fiveHour, let weekly) = self else { return nil }
+    return (fiveHour ?? weekly).map(Self.clamped)
+  }
+
   var text: String {
     switch self {
-    case .remaining(let percent):
-      return "\(min(max(percent, 0), 100))%"
+    case .limits:
+      return displayedPercent.map { "\($0)%" } ?? "!"
     case .loading:
       return "•••"
     case .unavailable:
@@ -23,19 +32,27 @@ enum MenuBarIndicator: Equatable {
     NSRange(location: 0, length: (terminalText as NSString).length)
   }
 
-  var remainingFraction: CGFloat? {
-    guard case .remaining(let percent) = self else { return nil }
-    return CGFloat(min(max(percent, 0), 100)) / 100
+  var weeklyRemainingFraction: CGFloat? {
+    guard case .limits(let fiveHour, let weekly) = self,
+      let percent = weekly ?? fiveHour
+    else { return nil }
+    return CGFloat(Self.clamped(percent)) / 100
   }
 
   var accessibilityLabel: String {
     switch self {
-    case .remaining(let percent):
-      return "Codex 주간 사용량 \(min(max(percent, 0), 100))퍼센트 남음"
+    case .limits(let fiveHour?, let weekly?):
+      return "Codex 5시간 사용량 \(Self.clamped(fiveHour))퍼센트, 주간 사용량 \(Self.clamped(weekly))퍼센트 남음"
+    case .limits(let fiveHour?, nil):
+      return "Codex 5시간 사용량 \(Self.clamped(fiveHour))퍼센트 남음"
+    case .limits(nil, let weekly?):
+      return "Codex 주간 사용량 \(Self.clamped(weekly))퍼센트 남음"
+    case .limits(nil, nil):
+      return "Codex 사용량을 확인할 수 없음"
     case .loading:
-      return "Codex 주간 사용량을 불러오는 중"
+      return "Codex 사용량을 불러오는 중"
     case .unavailable:
-      return "Codex 주간 사용량을 확인할 수 없음"
+      return "Codex 사용량을 확인할 수 없음"
     }
   }
 }
@@ -89,7 +106,35 @@ enum CodexMenuBarIconRenderer {
         width: rect.width - 2,
         height: textSize.height
       )
-      text.draw(in: textRect)
+
+      if let fraction = indicator.weeklyRemainingFraction, fraction > 0 {
+        let batteryRect = NSRect(
+          x: textRect.minX,
+          y: textRect.minY + 1,
+          width: textRect.width,
+          height: max(1, textRect.height - 2)
+        )
+        let fillRect = NSRect(
+          x: batteryRect.minX,
+          y: batteryRect.minY,
+          width: batteryRect.width * fraction,
+          height: batteryRect.height
+        )
+        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 2.2, yRadius: 2.2)
+        NSColor.black.setFill()
+        fill.fill()
+
+        // The same template glyph is black outside the weekly fill and punched
+        // out inside it, producing the requested positive/negative transition.
+        text.draw(in: textRect)
+        NSGraphicsContext.saveGraphicsState()
+        fill.addClip()
+        NSGraphicsContext.current?.compositingOperation = .clear
+        text.draw(in: textRect)
+        NSGraphicsContext.restoreGraphicsState()
+      } else {
+        text.draw(in: textRect)
+      }
       return true
     }
     image.isTemplate = true
@@ -106,7 +151,7 @@ enum CodexMenuBarIconRenderer {
       NSColor.black.withAlphaComponent(0.24).setStroke()
       track.stroke()
 
-      let progress = indicator.remainingFraction ?? (indicator == .loading ? 0.28 : 0)
+      let progress = indicator.weeklyRemainingFraction ?? (indicator == .loading ? 0.28 : 0)
       if progress > 0 {
         let progressRing = NSBezierPath()
         progressRing.appendArc(

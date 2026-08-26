@@ -14,6 +14,8 @@ struct AppPreferencesTests {
     let preferences = AppPreferences(defaults: defaults)
 
     #expect(preferences.menuBarIconStyle == .terminal)
+    #expect(MenuBarIconStyle.terminal.title == "5시간 숫자 + 주간 채움")
+    #expect(MenuBarIconStyle.circular.title == "주간 원형 + 5시간 숫자")
   }
 
   @Test("Persists the selected circular icon style")

@@ -64,7 +64,7 @@ struct MenuContentView: View {
       VStack(alignment: .leading, spacing: 1) {
         Text("Codex Usage")
           .font(.headline)
-        Text("계정 \(store.accountStates.count)개 · 주간 남은 사용량")
+        Text("계정 \(store.accountStates.count)개 · 5시간/주간 남은 사용량")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -138,9 +138,16 @@ struct MenuContentView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      Text("주간 한도 \(confirmation.snapshot.remainingPercent)% 남음")
-        .font(.caption)
-        .foregroundStyle(.secondary)
+      HStack(spacing: 10) {
+        if let fiveHour = confirmation.snapshot.fiveHourLimit {
+          Text("5시간 \(fiveHour.remainingPercent)%")
+        }
+        if let weekly = confirmation.snapshot.weeklyLimit {
+          Text("주간 \(weekly.remainingPercent)%")
+        }
+      }
+      .font(.caption.monospacedDigit())
+      .foregroundStyle(.secondary)
 
       HStack {
         Button("계정 추가") { store.confirmPendingAccount() }
@@ -311,17 +318,12 @@ private struct AccountUsageCard: View {
   }
 
   private func usageView(_ snapshot: UsageSnapshot) -> some View {
-    HStack(alignment: .top, spacing: 14) {
-      UsageRing(progress: Double(snapshot.remainingPercent) / 100) {
-        VStack(spacing: 0) {
-          Text("\(snapshot.remainingPercent)%")
-            .font(.system(size: 19, weight: .bold, design: .rounded))
-          Text("남음")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-      }
-      .frame(width: 78, height: 78)
+    HStack(alignment: .top, spacing: 12) {
+      DualUsageRing(
+        fiveHourLimit: snapshot.fiveHourLimit,
+        weeklyLimit: snapshot.weeklyLimit
+      )
+      .frame(width: 98, height: 98)
 
       VStack(alignment: .leading, spacing: 6) {
         if let email = snapshot.accountEmail, !email.isEmpty {
@@ -338,17 +340,12 @@ private struct AccountUsageCard: View {
             .foregroundStyle(.secondary)
         }
 
-        if let resetsAt = snapshot.resetsAt {
-          let countdown = snapshot.resetCountdown() ?? "곧 초기화"
-          Label(
-            countdown == "곧 초기화"
-              ? "곧 초기화 · \(resetsAt.formatted(date: .abbreviated, time: .shortened))"
-              : "초기화 \(countdown) 후 · \(resetsAt.formatted(date: .abbreviated, time: .shortened))",
-            systemImage: "clock.arrow.circlepath"
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        if let fiveHourLimit = snapshot.fiveHourLimit {
+          limitResetView("5시간", limit: fiveHourLimit, color: .accentColor)
+        }
+
+        if let weeklyLimit = snapshot.weeklyLimit {
+          limitResetView("주간", limit: weeklyLimit, color: .purple)
         }
 
         resetCreditsView(snapshot)
@@ -357,9 +354,44 @@ private struct AccountUsageCard: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(
-      "\(viewState.account.title), Codex 주간 한도 \(snapshot.remainingPercent)퍼센트 남음"
-    )
+    .accessibilityLabel(accessibilityUsageLabel(snapshot))
+  }
+
+  private func limitResetView(
+    _ title: String,
+    limit: UsageLimitWindow,
+    color: Color
+  ) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 5) {
+      Circle()
+        .fill(color)
+        .frame(width: 6, height: 6)
+
+      if let resetsAt = limit.resetsAt {
+        let countdown = limit.resetCountdown() ?? "곧 초기화"
+        Text(
+          countdown == "곧 초기화"
+            ? "\(title) 곧 초기화 · \(resetsAt.formatted(date: .abbreviated, time: .shortened))"
+            : "\(title) \(countdown) 후 · \(resetsAt.formatted(date: .abbreviated, time: .shortened))"
+        )
+      } else {
+        Text("\(title) 초기화 시각 정보 없음")
+      }
+    }
+    .font(.caption2)
+    .foregroundStyle(.secondary)
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func accessibilityUsageLabel(_ snapshot: UsageSnapshot) -> String {
+    var limits: [String] = []
+    if let fiveHour = snapshot.fiveHourLimit {
+      limits.append("5시간 한도 \(fiveHour.remainingPercent)퍼센트 남음")
+    }
+    if let weekly = snapshot.weeklyLimit {
+      limits.append("주간 한도 \(weekly.remainingPercent)퍼센트 남음")
+    }
+    return "\(viewState.account.title), Codex " + limits.joined(separator: ", ")
   }
 
   @ViewBuilder
@@ -441,27 +473,66 @@ private struct AccountUsageCard: View {
   }
 }
 
-private struct UsageRing<Content: View>: View {
-  let progress: Double
-  @ViewBuilder let content: Content
-
-  init(progress: Double, @ViewBuilder content: () -> Content) {
-    self.progress = min(max(progress, 0), 1)
-    self.content = content()
-  }
+struct DualUsageRing: View {
+  let fiveHourLimit: UsageLimitWindow?
+  let weeklyLimit: UsageLimitWindow?
 
   var body: some View {
     ZStack {
       Circle()
-        .stroke(.quaternary, lineWidth: 8)
+        .stroke(Color.accentColor.opacity(0.14), lineWidth: 8)
+        .frame(width: 92, height: 92)
+      progressRing(limit: fiveHourLimit, baseColor: .accentColor, size: 92, lineWidth: 8)
+
+      Circle()
+        .stroke(Color.purple.opacity(0.14), lineWidth: 7)
+        .frame(width: 68, height: 68)
+      progressRing(limit: weeklyLimit, baseColor: .purple, size: 68, lineWidth: 7)
+
+      VStack(spacing: 1) {
+        limitValue("5h", limit: fiveHourLimit, color: .accentColor)
+        limitValue("7d", limit: weeklyLimit, color: .purple)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func progressRing(
+    limit: UsageLimitWindow?,
+    baseColor: Color,
+    size: CGFloat,
+    lineWidth: CGFloat
+  ) -> some View {
+    if let limit {
+      let progress = Double(limit.remainingPercent) / 100
       Circle()
         .trim(from: 0, to: progress)
         .stroke(
-          progress <= 0.1 ? Color.red : (progress <= 0.3 ? Color.orange : Color.accentColor),
-          style: StrokeStyle(lineWidth: 8, lineCap: .round)
+          progressColor(base: baseColor, progress: progress),
+          style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
         )
         .rotationEffect(.degrees(-90))
-      content
+        .frame(width: size, height: size)
     }
+  }
+
+  private func limitValue(
+    _ label: String,
+    limit: UsageLimitWindow?,
+    color: Color
+  ) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 3) {
+      Text(label)
+        .foregroundStyle(color)
+      Text(limit.map { "\($0.remainingPercent)%" } ?? "—")
+        .foregroundStyle(.primary)
+    }
+    .font(.system(size: 9.5, weight: .semibold, design: .rounded).monospacedDigit())
+  }
+
+  private func progressColor(base: Color, progress: Double) -> Color {
+    if progress <= 0.1 { return .red }
+    if progress <= 0.3 { return .orange }
+    return base
   }
 }

@@ -7,18 +7,22 @@ import Testing
 @Suite("Menu bar usage label")
 @MainActor
 struct MenuBarUsageLabelTests {
-  @Test("Shows the remaining percentage after a terminal prompt")
-  func remainingPercentageText() {
-    #expect(MenuBarIndicator.remaining(18).text == "18%")
-    #expect(MenuBarIndicator.remaining(18).terminalText == ">18%")
-    #expect(MenuBarIndicator.remaining(100).text == "100%")
-    #expect(MenuBarIndicator.remaining(-2).text == "0%")
+  @Test("Shows the five-hour percentage while retaining weekly fill")
+  func dualLimitText() {
+    let indicator = MenuBarIndicator.limits(fiveHour: 18, weekly: 64)
+    #expect(indicator.text == "18%")
+    #expect(indicator.terminalText == ">18%")
+    #expect(indicator.weeklyRemainingFraction == 0.64)
+    #expect(MenuBarIndicator.limits(fiveHour: 100, weekly: 50).text == "100%")
+    #expect(MenuBarIndicator.limits(fiveHour: -2, weekly: 50).text == "0%")
+    #expect(MenuBarIndicator.limits(fiveHour: nil, weekly: 73).text == "73%")
   }
 
   @Test("Underlines the terminal prompt and usage as one continuous value")
   func terminalPromptUnderline() throws {
-    let text = CodexMenuBarIconRenderer.attributedText(for: .remaining(18))
-    let underlineRange = MenuBarIndicator.remaining(18).terminalUnderlineRange
+    let indicator = MenuBarIndicator.limits(fiveHour: 18, weekly: 64)
+    let text = CodexMenuBarIconRenderer.attributedText(for: indicator)
+    let underlineRange = indicator.terminalUnderlineRange
 
     #expect(text.string == ">18%")
     #expect(
@@ -30,7 +34,9 @@ struct MenuBarUsageLabelTests {
 
   @Test("Uses the enlarged font for the prompt and the percentage")
   func enlargedPromptAndPercentage() throws {
-    let text = CodexMenuBarIconRenderer.attributedText(for: .remaining(100))
+    let text = CodexMenuBarIconRenderer.attributedText(
+      for: .limits(fiveHour: 100, weekly: 50)
+    )
     let promptFont = try #require(text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
     let percentageFont = try #require(text.attribute(.font, at: 1, effectiveRange: nil) as? NSFont)
 
@@ -41,11 +47,13 @@ struct MenuBarUsageLabelTests {
 
   @Test("Renders the compact Codex-inspired indicator")
   func rendersIndicator() throws {
-    let nativeImage = CodexMenuBarIconRenderer.image(for: .remaining(18))
+    let nativeImage = CodexMenuBarIconRenderer.image(
+      for: .limits(fiveHour: 18, weekly: 64)
+    )
     #expect(nativeImage.isTemplate)
     #expect(nativeImage.size == CodexMenuBarIconRenderer.size)
 
-    let content = MenuBarUsageLabel(indicator: .remaining(18))
+    let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 18, weekly: 64))
       .padding(10)
       .background(Color.white)
       .environment(\.colorScheme, .light)
@@ -65,15 +73,31 @@ struct MenuBarUsageLabelTests {
     }
   }
 
+  @Test("Changes the terminal battery fill without adding another number")
+  func rendersWeeklyBatteryFill() throws {
+    let low = CodexMenuBarIconRenderer.image(
+      for: .limits(fiveHour: 82, weekly: 20)
+    )
+    let high = CodexMenuBarIconRenderer.image(
+      for: .limits(fiveHour: 82, weekly: 80)
+    )
+
+    #expect(CodexMenuBarIconRenderer.attributedText(
+      for: .limits(fiveHour: 82, weekly: 20)
+    ).string == ">82%")
+    #expect(low.tiffRepresentation != high.tiffRepresentation)
+  }
+
   @Test("Renders a circular remaining-usage chart with the percentage")
   func rendersCircularIndicator() throws {
-    let nativeImage = CodexMenuBarIconRenderer.image(for: .remaining(18), style: .circular)
+    let indicator = MenuBarIndicator.limits(fiveHour: 18, weekly: 64)
+    let nativeImage = CodexMenuBarIconRenderer.image(for: indicator, style: .circular)
     #expect(nativeImage.isTemplate)
     #expect(nativeImage.size == CodexMenuBarIconRenderer.circularSize)
-    #expect(MenuBarIndicator.remaining(18).remainingFraction == 0.18)
-    #expect(CodexMenuBarIconRenderer.circularAttributedText(for: .remaining(18)).string == "18%")
+    #expect(indicator.weeklyRemainingFraction == 0.64)
+    #expect(CodexMenuBarIconRenderer.circularAttributedText(for: indicator).string == "18%")
 
-    let content = MenuBarUsageLabel(indicator: .remaining(18), style: .circular)
+    let content = MenuBarUsageLabel(indicator: indicator, style: .circular)
       .padding(10)
       .background(Color.white)
       .environment(\.colorScheme, .light)

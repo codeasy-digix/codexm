@@ -9,9 +9,9 @@ enum MenuBarIconStyle: String, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .terminal:
-      return "현재 퍼센트"
+      return "5시간 숫자 + 주간 채움"
     case .circular:
-      return "원형 차트 + 퍼센트"
+      return "주간 원형 + 5시간 숫자"
     }
   }
 

@@ -26,7 +26,10 @@ struct CodexUsageMenuBarApp: App {
   private var menuBarIndicator: MenuBarIndicator {
     switch store.primaryAccountState {
     case .loaded(let snapshot):
-      return .remaining(snapshot.remainingPercent)
+      return .limits(
+        fiveHour: snapshot.fiveHourLimit?.remainingPercent,
+        weekly: snapshot.weeklyLimit?.remainingPercent
+      )
     case .loading:
       return .loading
     case .needsAuthentication, .failed:

@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Live Codex integration")
 struct LiveCodexIntegrationTests {
-  @Test("Reads the signed-in account weekly limit through app-server")
+  @Test("Reads the signed-in account five-hour and weekly limits through app-server")
   func readsLiveUsage() async throws {
     guard ProcessInfo.processInfo.environment["CODEX_LIVE_TEST"] == "1" else {
       return
@@ -26,9 +26,14 @@ struct LiveCodexIntegrationTests {
         environmentOverride: runtime.environment
       )
 
-    #expect((0...100).contains(snapshot.usedPercent))
-    #expect(snapshot.windowDurationMinutes == 10_080)
-    #expect(snapshot.resetsAt != nil)
+    let fiveHourLimit = try #require(snapshot.fiveHourLimit)
+    let weeklyLimit = try #require(snapshot.weeklyLimit)
+    #expect((0...100).contains(fiveHourLimit.usedPercent))
+    #expect(fiveHourLimit.windowDurationMinutes == 300)
+    #expect(fiveHourLimit.resetsAt != nil)
+    #expect((0...100).contains(weeklyLimit.usedPercent))
+    #expect(weeklyLimit.windowDurationMinutes == 10_080)
+    #expect(weeklyLimit.resetsAt != nil)
     #expect(snapshot.accountEmail?.contains("@") == true)
   }
 
