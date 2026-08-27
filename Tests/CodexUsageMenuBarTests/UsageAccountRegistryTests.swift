@@ -61,9 +61,9 @@ struct UsageAccountRegistryTests {
     #expect(exact.matches(fallback))
   }
 
-  @Test("Displays only a short workspace reference from the stored hash")
-  func workspaceReference() {
-    let account = UsageAccount(
+  @Test("Uses a user-defined workspace name while keeping a short local reference")
+  func workspaceDisplayName() {
+    var account = UsageAccount(
       id: UUID().uuidString,
       kind: .managed,
       displayName: nil,
@@ -77,6 +77,11 @@ struct UsageAccountRegistryTests {
     #expect(account.workspaceReference == "ABCDEF12")
     #expect(account.workspaceDisplayLabel == "워크스페이스 #ABCDEF12")
     #expect(account.workspaceReference?.contains("34567890") == false)
+
+    account.workspaceName = "  개발팀  "
+    #expect(account.normalizedWorkspaceName == "개발팀")
+    #expect(account.workspaceDisplayLabel == "워크스페이스 개발팀")
+    #expect(account.workspaceReference == "ABCDEF12")
   }
 
   @Test("Loads account records written before workspace metadata existed")
@@ -97,7 +102,64 @@ struct UsageAccountRegistryTests {
     let account = try JSONDecoder().decode(UsageAccount.self, from: data)
 
     #expect(account.lastKnownWorkspaceFingerprint == nil)
+    #expect(account.workspaceName == nil)
     #expect(account.workspaceReference == nil)
+  }
+
+  @Test("Loads a version-one registry before workspace display names existed")
+  func loadsLegacyRegistryPayload() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data(
+      """
+      {
+        "version": 1,
+        "accounts": [{
+          "id": "00000000-0000-0000-0000-000000000001",
+          "kind": "managed",
+          "displayName": null,
+          "lastKnownEmail": "owner@example.com",
+          "lastKnownPlanType": "business",
+          "createdAt": "2026-08-27T00:00:00Z"
+        }]
+      }
+      """.utf8
+    ).write(to: root.appending(path: "accounts.json"))
+
+    let accounts = try UsageAccountRegistry(applicationSupportURL: root).loadAccounts()
+
+    #expect(accounts.count == 2)
+    #expect(accounts[0].isSystemDefault)
+    #expect(accounts[0].workspaceName == nil)
+    #expect(accounts[1].lastKnownEmail == "owner@example.com")
+    #expect(accounts[1].workspaceName == nil)
+  }
+
+  @Test("Persists workspace names for both default and managed connections")
+  func persistsWorkspaceNames() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = UsageAccountRegistry(applicationSupportURL: root)
+
+    var defaultAccount = try #require(registry.loadAccounts().first)
+    defaultAccount.workspaceName = "  개인  "
+    try registry.updateAccount(defaultAccount)
+
+    var managedAccount = try registry.beginManagedAccount()
+    managedAccount.workspaceName = "개발팀"
+    try registry.commitPendingAccount(managedAccount)
+
+    let restored = try registry.loadAccounts()
+    #expect(restored[0].normalizedWorkspaceName == "개인")
+    #expect(restored[0].workspaceDisplayLabel == "워크스페이스 개인")
+    #expect(restored[1].normalizedWorkspaceName == "개발팀")
+    #expect(restored[1].workspaceDisplayLabel == "워크스페이스 개발팀")
+
+    defaultAccount = restored[0]
+    defaultAccount.workspaceName = "   "
+    try registry.updateAccount(defaultAccount)
+    #expect(try registry.loadAccounts()[0].workspaceName == nil)
   }
 
   @Test("Creates, commits, reloads, and removes an isolated managed Codex home")

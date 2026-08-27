@@ -97,6 +97,7 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
   var displayName: String?
   var lastKnownEmail: String?
   var lastKnownPlanType: String?
+  var workspaceName: String? = nil
   var lastKnownWorkspaceFingerprint: String? = nil
   let createdAt: Date
 
@@ -124,7 +125,15 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
   }
 
   var workspaceDisplayLabel: String? {
-    workspaceReference.map { "워크스페이스 #\($0)" }
+    if let normalizedWorkspaceName {
+      return "워크스페이스 \(normalizedWorkspaceName)"
+    }
+    return workspaceReference.map { "워크스페이스 #\($0)" }
+  }
+
+  var normalizedWorkspaceName: String? {
+    let trimmedName = workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmedName.isEmpty ? nil : trimmedName
   }
 
   var title: String {
@@ -159,6 +168,7 @@ struct UsageAccountRegistry: @unchecked Sendable {
   private struct Payload: Codable {
     let version: Int
     var accounts: [UsageAccount]
+    var systemDefaultWorkspaceName: String? = nil
   }
 
   private let fileManager: FileManager
@@ -191,7 +201,10 @@ struct UsageAccountRegistry: @unchecked Sendable {
     try prepareRootDirectories()
     try discardAbandonedPendingAccounts()
     try migrateLegacyManagedHomeIfNeeded()
-    return [UsageAccount.systemDefault] + (try loadManagedAccounts())
+    let payload = try loadPayload()
+    var systemDefault = UsageAccount.systemDefault
+    systemDefault.workspaceName = payload.systemDefaultWorkspaceName
+    return [systemDefault] + payload.accounts.filter(\.isManaged)
       .sorted { $0.createdAt < $1.createdAt }
   }
 
@@ -265,8 +278,22 @@ struct UsageAccountRegistry: @unchecked Sendable {
     }
   }
 
-  func updateManagedAccount(_ account: UsageAccount) throws {
-    guard account.isManaged else { return }
+  func updateAccount(_ account: UsageAccount) throws {
+    if account.isSystemDefault {
+      guard account.id == UsageAccount.systemDefaultID else {
+        throw UsageAccountRegistryError.invalidAccountIdentifier
+      }
+      let payload = try loadPayload()
+      try savePayload(
+        accounts: payload.accounts,
+        systemDefaultWorkspaceName: account.normalizedWorkspaceName
+      )
+      return
+    }
+
+    guard account.isManaged else {
+      throw UsageAccountRegistryError.invalidAccountIdentifier
+    }
     var managedAccounts = try loadManagedAccounts()
     guard let index = managedAccounts.firstIndex(where: { $0.id == account.id }) else {
       throw UsageAccountRegistryError.managedAccountMissing
@@ -342,20 +369,42 @@ struct UsageAccountRegistry: @unchecked Sendable {
   }
 
   private func loadManagedAccounts() throws -> [UsageAccount] {
-    guard fileManager.fileExists(atPath: registryURL.path) else { return [] }
+    try loadPayload().accounts.filter(\.isManaged)
+  }
+
+  private func loadPayload() throws -> Payload {
+    guard fileManager.fileExists(atPath: registryURL.path) else {
+      return Payload(version: 2, accounts: [])
+    }
     let data = try Data(contentsOf: registryURL)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    let payload = try decoder.decode(Payload.self, from: data)
-    return payload.accounts.filter { $0.isManaged }
+    return try decoder.decode(Payload.self, from: data)
   }
 
   private func saveManagedAccounts(_ accounts: [UsageAccount]) throws {
+    let payload = try loadPayload()
+    try savePayload(
+      accounts: accounts,
+      systemDefaultWorkspaceName: payload.systemDefaultWorkspaceName
+    )
+  }
+
+  private func savePayload(
+    accounts: [UsageAccount],
+    systemDefaultWorkspaceName: String?
+  ) throws {
     try prepareRootDirectories()
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let data = try encoder.encode(Payload(version: 1, accounts: accounts))
+    let data = try encoder.encode(
+      Payload(
+        version: 2,
+        accounts: accounts,
+        systemDefaultWorkspaceName: systemDefaultWorkspaceName
+      )
+    )
     try data.write(to: registryURL, options: .atomic)
     try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: registryURL.path)
   }

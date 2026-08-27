@@ -52,7 +52,7 @@ struct MenuContentView: View {
     }
     .padding(14)
     .frame(width: 420)
-    .onAppear { store.refreshIfStale() }
+    .onAppear { store.refreshAll() }
     .onChange(of: store.accountStates.map(\.id)) { accountIDs in
       if let pendingDeletionAccount,
         !accountIDs.contains(pendingDeletionAccount.id)
@@ -132,6 +132,23 @@ struct MenuContentView: View {
           .font(.caption2)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
+        if store.isAddingAccount {
+          VStack(alignment: .leading, spacing: 4) {
+            TextField(
+              "워크스페이스 이름 (선택)",
+              text: Binding(
+                get: { store.pendingWorkspaceName },
+                set: { store.setPendingWorkspaceName($0) }
+              )
+            )
+            .textFieldStyle(.roundedBorder)
+            .controlSize(.small)
+
+            Text("예: 개인, 회사, 개발팀 · 입력하지 않아도 인증은 자동으로 완료됩니다.")
+              .font(.caption2)
+              .foregroundStyle(.tertiary)
+          }
+        }
         Text(info.userCode)
           .font(.system(.title3, design: .monospaced, weight: .bold))
           .textSelection(.enabled)
@@ -273,7 +290,7 @@ struct MenuContentView: View {
     var reservedHeight: CGFloat = 235
 
     if store.isAuthenticating || store.deviceLoginInfo != nil {
-      reservedHeight += store.deviceLoginInfo == nil ? 72 : 150
+      reservedHeight += store.deviceLoginInfo == nil ? 72 : (store.isAddingAccount ? 205 : 150)
     }
     if pendingDeletionAccount != nil { reservedHeight += 124 }
     if store.accountManagementError != nil || store.accountManagementNotice != nil {
@@ -287,10 +304,9 @@ struct MenuContentView: View {
   private func estimatedCardHeight(_ viewState: UsageStore.AccountViewState) -> CGFloat {
     switch viewState.state {
     case .loaded(let snapshot):
-      let workspaceRowHeight: CGFloat = viewState.account.workspaceReference == nil ? 0 : 24
-      return ((snapshot.availableResetCredits ?? 0) > 0 ? 174 : 152) + workspaceRowHeight
+      return ((snapshot.availableResetCredits ?? 0) > 0 ? 174 : 152) + 24
     case .loading, .needsAuthentication, .failed:
-      return 108 + (viewState.account.workspaceReference == nil ? 0 : 24)
+      return 132
     }
   }
 
@@ -324,17 +340,14 @@ private struct AccountUsageCard: View {
 
   @State private var isRenaming = false
   @State private var draftName = ""
+  @State private var isRenamingWorkspace = false
+  @State private var draftWorkspaceName = ""
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       accountHeader
 
-      if let workspaceLabel = viewState.account.workspaceDisplayLabel {
-        Label(workspaceLabel, systemImage: "building.2")
-          .font(.caption2.monospaced())
-          .foregroundStyle(.secondary)
-          .help("이 연결에만 사용하는 독립 CODEX_HOME의 로컬 워크스페이스 참조값입니다.")
-      }
+      workspaceRow
 
       switch viewState.state {
       case .loading:
@@ -396,7 +409,7 @@ private struct AccountUsageCard: View {
       }
 
       if viewState.account.isManaged {
-        Button("표시 이름 변경", systemImage: "pencil") {
+        Button("계정 표시 이름 변경", systemImage: "pencil") {
           draftName = viewState.account.displayName ?? viewState.account.title
           isRenaming = true
         }
@@ -413,6 +426,67 @@ private struct AccountUsageCard: View {
     }
     .menuStyle(.borderlessButton)
     .fixedSize()
+  }
+
+  @ViewBuilder
+  private var workspaceRow: some View {
+    HStack(spacing: 6) {
+      if isRenamingWorkspace {
+        Image(systemName: "building.2")
+          .foregroundStyle(.secondary)
+        TextField("워크스페이스 이름", text: $draftWorkspaceName)
+          .textFieldStyle(.roundedBorder)
+          .controlSize(.small)
+          .onSubmit { saveWorkspaceName() }
+        Button { saveWorkspaceName() } label: {
+          Image(systemName: "checkmark")
+        }
+        .buttonStyle(.plain)
+        .help("워크스페이스 이름 저장")
+        Button { isRenamingWorkspace = false } label: {
+          Image(systemName: "xmark")
+        }
+        .buttonStyle(.plain)
+        .help("취소")
+      } else {
+        Label(
+          viewState.account.workspaceDisplayLabel ?? "워크스페이스 이름 미지정",
+          systemImage: "building.2"
+        )
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .help(workspaceHelp)
+
+        Button {
+          draftWorkspaceName = viewState.account.normalizedWorkspaceName ?? ""
+          isRenamingWorkspace = true
+        } label: {
+          Image(systemName: "pencil")
+            .font(.caption2.weight(.semibold))
+        }
+        .buttonStyle(.plain)
+        .help("워크스페이스 이름 수정")
+
+        Spacer(minLength: 4)
+
+        if viewState.account.normalizedWorkspaceName != nil,
+          let reference = viewState.account.workspaceReference
+        {
+          Text("#\(reference)")
+            .font(.caption2.monospaced())
+            .foregroundStyle(.tertiary)
+            .help("중복 연결 판별용 로컬 참조값")
+        }
+      }
+    }
+  }
+
+  private var workspaceHelp: String {
+    if viewState.account.normalizedWorkspaceName != nil {
+      return "이 Mac에서 직접 지정한 워크스페이스 표시 이름입니다."
+    }
+    return "실제 워크스페이스 이름은 자동 조회되지 않습니다. 연필 버튼으로 알아보기 쉬운 이름을 지정하세요."
   }
 
   private var loadingView: some View {
@@ -582,6 +656,11 @@ private struct AccountUsageCard: View {
   private func saveName() {
     store.renameManagedAccount(accountID: viewState.id, displayName: draftName)
     isRenaming = false
+  }
+
+  private func saveWorkspaceName() {
+    store.renameWorkspace(accountID: viewState.id, workspaceName: draftWorkspaceName)
+    isRenamingWorkspace = false
   }
 }
 

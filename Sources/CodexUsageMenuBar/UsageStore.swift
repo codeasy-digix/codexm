@@ -30,6 +30,7 @@ final class UsageStore: ObservableObject {
   @Published private(set) var accountManagementError: String?
   @Published private(set) var accountManagementNotice: String?
   @Published private(set) var recentlyAddedAccountID: String?
+  @Published private(set) var pendingWorkspaceName = ""
 
   private enum AuthenticationMode {
     case adding(UsageAccount)
@@ -92,6 +93,11 @@ final class UsageStore: ObservableObject {
     }.max()
   }
 
+  var isAddingAccount: Bool {
+    if case .adding = authenticationMode { return true }
+    return false
+  }
+
   var authenticationTitle: String {
     if let account = authenticationAccount {
       return "\(account.title) 다시 로그인"
@@ -145,9 +151,14 @@ final class UsageStore: ObservableObject {
 
     refreshTask = Task { [weak self] in
       guard let self else { return }
-      for account in accounts {
-        guard !Task.isCancelled else { break }
-        await self.refreshNow(account)
+      await withTaskGroup(of: Void.self) { group in
+        for account in accounts {
+          group.addTask { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshNow(account)
+          }
+        }
+        await group.waitForAll()
       }
       guard !Task.isCancelled else { return }
       self.isRefreshingAll = false
@@ -225,10 +236,29 @@ final class UsageStore: ObservableObject {
     let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     accountStates[index].account.displayName = trimmed.isEmpty ? nil : trimmed
     do {
-      try registry.updateManagedAccount(accountStates[index].account)
+      try registry.updateAccount(accountStates[index].account)
     } catch {
       accountManagementError = error.localizedDescription
     }
+  }
+
+  func renameWorkspace(accountID: String, workspaceName: String) {
+    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
+    var account = accountStates[index].account
+    let trimmed = workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+    account.workspaceName = trimmed.isEmpty ? nil : trimmed
+
+    do {
+      try registry.updateAccount(account)
+      accountStates[index].account = account
+      accountManagementError = nil
+    } catch {
+      accountManagementError = error.localizedDescription
+    }
+  }
+
+  func setPendingWorkspaceName(_ workspaceName: String) {
+    pendingWorkspaceName = workspaceName
   }
 
   func removeManagedAccount(accountID: String) {
@@ -341,8 +371,12 @@ final class UsageStore: ObservableObject {
     cancelAuthentication(discardPendingAccount: true)
     authenticationMode = mode
     switch mode {
-    case .adding(let account), .relogin(let account):
+    case .adding(let account):
       authenticationAccountID = account.id
+      pendingWorkspaceName = account.normalizedWorkspaceName ?? ""
+    case .relogin(let account):
+      authenticationAccountID = account.id
+      pendingWorkspaceName = ""
     }
     isAuthenticating = true
     deviceLoginInfo = nil
@@ -386,6 +420,10 @@ final class UsageStore: ObservableObject {
 
     switch mode {
     case .adding(var account):
+      let trimmedWorkspaceName = pendingWorkspaceName.trimmingCharacters(
+        in: .whitespacesAndNewlines
+      )
+      account.workspaceName = trimmedWorkspaceName.isEmpty ? nil : trimmedWorkspaceName
       account.lastKnownEmail = snapshot.accountEmail
       account.lastKnownPlanType = snapshot.planType
       let workspaceFingerprint = identityReader.fingerprint(
@@ -404,6 +442,7 @@ final class UsageStore: ObservableObject {
         authenticationAccountID = nil
         accountManagementNotice = nil
         accountManagementError = "이미 등록된 계정/워크스페이스 연결입니다: \(duplicate.title)"
+        pendingWorkspaceName = ""
         return
       }
 
@@ -428,6 +467,7 @@ final class UsageStore: ObservableObject {
       }
       authenticationMode = nil
       authenticationAccountID = nil
+      pendingWorkspaceName = ""
     case .relogin(let account):
       updateAccountMetadata(
         accountID: account.id,
@@ -437,6 +477,7 @@ final class UsageStore: ObservableObject {
       setState(.loaded(snapshot), for: account.id)
       authenticationMode = nil
       authenticationAccountID = nil
+      pendingWorkspaceName = ""
       accountManagementNotice = "\(account.title) 계정을 다시 연결했습니다."
     }
   }
@@ -448,6 +489,7 @@ final class UsageStore: ObservableObject {
     authenticationError = error.localizedDescription
     authenticationMode = nil
     authenticationAccountID = nil
+    pendingWorkspaceName = ""
 
     if case .adding(let account) = mode {
       try? registry.discardPendingAccount(account)
@@ -467,6 +509,7 @@ final class UsageStore: ObservableObject {
     }
     authenticationMode = nil
     authenticationAccountID = nil
+    pendingWorkspaceName = ""
   }
 
   private func cancelRefresh() {
@@ -501,7 +544,7 @@ final class UsageStore: ObservableObject {
     }
     if accountStates[index].account.isManaged {
       do {
-        try registry.updateManagedAccount(accountStates[index].account)
+        try registry.updateAccount(accountStates[index].account)
       } catch {
         accountManagementError = error.localizedDescription
       }
