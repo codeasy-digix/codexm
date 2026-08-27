@@ -95,7 +95,7 @@ struct MenuContentView: View {
       VStack(alignment: .leading, spacing: 1) {
         Text("Codex Usage")
           .font(.headline)
-        Text("계정 \(store.accountStates.count)개 · 5시간/주간 남은 사용량")
+        Text("연결 \(store.accountStates.count)개 · 5시간/주간 남은 사용량")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -158,7 +158,7 @@ struct MenuContentView: View {
 
   private func deleteConfirmationPanel(_ account: UsageAccount) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("\(account.title) 계정을 삭제할까요?", systemImage: "trash.fill")
+      Label("\(account.title) 연결을 삭제할까요?", systemImage: "trash.fill")
         .font(.callout.weight(.semibold))
 
       Text("이 Mac에 저장된 로그인 정보와 전용 Codex 저장소가 함께 삭제됩니다.")
@@ -166,10 +166,16 @@ struct MenuContentView: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
 
+      if let workspaceLabel = account.workspaceDisplayLabel {
+        Text(workspaceLabel)
+          .font(.caption2.monospaced())
+          .foregroundStyle(.secondary)
+      }
+
       HStack {
         Button("취소", role: .cancel) { pendingDeletionAccount = nil }
         Spacer()
-        Button("계정 삭제", role: .destructive) {
+        Button("연결 삭제", role: .destructive) {
           store.removeManagedAccount(accountID: account.id)
           pendingDeletionAccount = nil
         }
@@ -219,9 +225,9 @@ struct MenuContentView: View {
       HStack(spacing: 7) {
         if store.isAuthenticating {
           ProgressView().controlSize(.small)
-          Text("계정 인증 진행 중…")
+          Text("계정/워크스페이스 인증 중…")
         } else {
-          Label("계정 추가", systemImage: "person.crop.circle.badge.plus")
+          Label("계정 또는 워크스페이스 추가", systemImage: "person.crop.circle.badge.plus")
         }
       }
       .frame(maxWidth: .infinity)
@@ -269,7 +275,7 @@ struct MenuContentView: View {
     if store.isAuthenticating || store.deviceLoginInfo != nil {
       reservedHeight += store.deviceLoginInfo == nil ? 72 : 150
     }
-    if pendingDeletionAccount != nil { reservedHeight += 104 }
+    if pendingDeletionAccount != nil { reservedHeight += 124 }
     if store.accountManagementError != nil || store.accountManagementNotice != nil {
       reservedHeight += 54
     }
@@ -281,9 +287,10 @@ struct MenuContentView: View {
   private func estimatedCardHeight(_ viewState: UsageStore.AccountViewState) -> CGFloat {
     switch viewState.state {
     case .loaded(let snapshot):
-      return (snapshot.availableResetCredits ?? 0) > 0 ? 174 : 152
+      let workspaceRowHeight: CGFloat = viewState.account.workspaceReference == nil ? 0 : 24
+      return ((snapshot.availableResetCredits ?? 0) > 0 ? 174 : 152) + workspaceRowHeight
     case .loading, .needsAuthentication, .failed:
-      return 108
+      return 108 + (viewState.account.workspaceReference == nil ? 0 : 24)
     }
   }
 
@@ -322,6 +329,13 @@ private struct AccountUsageCard: View {
     VStack(alignment: .leading, spacing: 10) {
       accountHeader
 
+      if let workspaceLabel = viewState.account.workspaceDisplayLabel {
+        Label(workspaceLabel, systemImage: "building.2")
+          .font(.caption2.monospaced())
+          .foregroundStyle(.secondary)
+          .help("이 연결에만 사용하는 독립 CODEX_HOME의 로컬 워크스페이스 참조값입니다.")
+      }
+
       switch viewState.state {
       case .loading:
         loadingView
@@ -345,7 +359,7 @@ private struct AccountUsageCard: View {
   private var accountHeader: some View {
     HStack(spacing: 7) {
       if isRenaming {
-        TextField("계정 이름", text: $draftName)
+        TextField("표시 이름", text: $draftName)
           .textFieldStyle(.roundedBorder)
           .onSubmit { saveName() }
         Button { saveName() } label: { Image(systemName: "checkmark") }
@@ -382,7 +396,7 @@ private struct AccountUsageCard: View {
       }
 
       if viewState.account.isManaged {
-        Button("이름 변경", systemImage: "pencil") {
+        Button("표시 이름 변경", systemImage: "pencil") {
           draftName = viewState.account.displayName ?? viewState.account.title
           isRenaming = true
         }
@@ -390,7 +404,7 @@ private struct AccountUsageCard: View {
           store.relogin(accountID: viewState.id)
         }
         Divider()
-        Button("계정 삭제", systemImage: "trash", role: .destructive) {
+        Button("연결 삭제", systemImage: "trash", role: .destructive) {
           onRequestDelete()
         }
       }
@@ -485,7 +499,8 @@ private struct AccountUsageCard: View {
     if let weekly = snapshot.weeklyLimit {
       limits.append("주간 한도 \(weekly.remainingPercent)퍼센트 남음")
     }
-    return "\(viewState.account.title), Codex " + limits.joined(separator: ", ")
+    let workspace = viewState.account.workspaceDisplayLabel.map { ", \($0)" } ?? ""
+    return "\(viewState.account.title)\(workspace), Codex " + limits.joined(separator: ", ")
   }
 
   @ViewBuilder
@@ -526,7 +541,10 @@ private struct AccountUsageCard: View {
 
   private var authenticationRequiredView: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("계정 연결이 필요합니다", systemImage: "person.crop.circle.badge.exclamationmark")
+      Label(
+        "계정/워크스페이스 연결이 필요합니다",
+        systemImage: "person.crop.circle.badge.exclamationmark"
+      )
         .font(.caption.weight(.semibold))
         .foregroundStyle(.orange)
 

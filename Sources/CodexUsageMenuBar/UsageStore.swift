@@ -96,21 +96,21 @@ final class UsageStore: ObservableObject {
     if let account = authenticationAccount {
       return "\(account.title) 다시 로그인"
     }
-    return "새 ChatGPT 계정 로그인"
+    return "계정 또는 워크스페이스 추가"
   }
 
   var authenticationInstruction: String {
     if authenticationAccount != nil {
-      return "열린 브라우저에서 아래 코드를 입력하고, 다시 연결할 계정으로 로그인하세요."
+      return "열린 브라우저에서 아래 코드를 입력하고, 이 연결에서 사용할 계정과 워크스페이스를 선택하세요."
     }
-    return "열린 브라우저에서 아래 코드를 입력하고, 추가할 계정으로 로그인하세요."
+    return "열린 브라우저에서 아래 코드를 입력한 뒤 사용할 계정과 워크스페이스를 선택하세요. 같은 계정의 다른 워크스페이스도 별도로 추가할 수 있습니다."
   }
 
   var authenticationCompletionNote: String {
     if authenticationAccount != nil {
       return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 계정 정보가 바로 갱신됩니다."
     }
-    return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 계정이 바로 추가됩니다."
+    return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 독립된 CODEX_HOME 연결로 바로 추가됩니다."
   }
 
   func start() {
@@ -243,7 +243,7 @@ final class UsageStore: ObservableObject {
       try registry.removeManagedAccount(account)
       accountStates.remove(at: index)
       accountManagementError = nil
-      accountManagementNotice = "\(account.title) 계정을 삭제했습니다."
+      accountManagementNotice = "\(account.title) 연결을 삭제했습니다."
       if recentlyAddedAccountID == accountID {
         recentlyAddedAccountID = nil
       }
@@ -307,7 +307,11 @@ final class UsageStore: ObservableObject {
         environmentOverride: runtime.environment
       )
       guard !Task.isCancelled else { return }
-      updateAccountMetadata(accountID: account.id, snapshot: snapshot)
+      updateAccountMetadata(
+        accountID: account.id,
+        snapshot: snapshot,
+        workspaceFingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
+      )
       setState(.loaded(snapshot), for: account.id)
     } catch is CancellationError {
       return
@@ -384,9 +388,13 @@ final class UsageStore: ObservableObject {
     case .adding(var account):
       account.lastKnownEmail = snapshot.accountEmail
       account.lastKnownPlanType = snapshot.planType
+      let workspaceFingerprint = identityReader.fingerprint(
+        codexHomeURL: runtime.codexHomeURL
+      )
+      account.lastKnownWorkspaceFingerprint = workspaceFingerprint
 
       let candidateIdentity = CodexAccountIdentity(
-        fingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL),
+        fingerprint: workspaceFingerprint,
         email: snapshot.accountEmail,
         planType: snapshot.planType
       )
@@ -395,7 +403,7 @@ final class UsageStore: ObservableObject {
         authenticationMode = nil
         authenticationAccountID = nil
         accountManagementNotice = nil
-        accountManagementError = "이미 등록된 계정입니다: \(duplicate.title)"
+        accountManagementError = "이미 등록된 계정/워크스페이스 연결입니다: \(duplicate.title)"
         return
       }
 
@@ -411,7 +419,8 @@ final class UsageStore: ObservableObject {
         sortAccountStates()
         recentlyAddedAccountID = account.id
         accountManagementError = nil
-        accountManagementNotice = "\(account.title) 계정을 추가했습니다."
+        let workspaceLabel = account.workspaceDisplayLabel.map { " · \($0)" } ?? ""
+        accountManagementNotice = "\(account.title)\(workspaceLabel) 연결을 추가했습니다."
       } catch {
         try? registry.discardPendingAccount(account)
         accountManagementNotice = nil
@@ -420,7 +429,11 @@ final class UsageStore: ObservableObject {
       authenticationMode = nil
       authenticationAccountID = nil
     case .relogin(let account):
-      updateAccountMetadata(accountID: account.id, snapshot: snapshot)
+      updateAccountMetadata(
+        accountID: account.id,
+        snapshot: snapshot,
+        workspaceFingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
+      )
       setState(.loaded(snapshot), for: account.id)
       authenticationMode = nil
       authenticationAccountID = nil
@@ -475,10 +488,17 @@ final class UsageStore: ObservableObject {
     accountStates[index].isRefreshing = refreshing
   }
 
-  private func updateAccountMetadata(accountID: String, snapshot: UsageSnapshot) {
+  private func updateAccountMetadata(
+    accountID: String,
+    snapshot: UsageSnapshot,
+    workspaceFingerprint: String?
+  ) {
     guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
     accountStates[index].account.lastKnownEmail = snapshot.accountEmail
     accountStates[index].account.lastKnownPlanType = snapshot.planType
+    if let workspaceFingerprint {
+      accountStates[index].account.lastKnownWorkspaceFingerprint = workspaceFingerprint
+    }
     if accountStates[index].account.isManaged {
       do {
         try registry.updateManagedAccount(accountStates[index].account)
@@ -513,6 +533,7 @@ final class UsageStore: ObservableObject {
         fingerprint = identityReader.fingerprint(codexHomeURL: existingRuntime.codexHomeURL)
         withExtendedLifetime(existingRuntime) {}
       }
+      fingerprint = fingerprint ?? viewState.account.lastKnownWorkspaceFingerprint
 
       let existingIdentity = CodexAccountIdentity(
         fingerprint: fingerprint,

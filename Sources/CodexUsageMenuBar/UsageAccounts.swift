@@ -97,6 +97,7 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
   var displayName: String?
   var lastKnownEmail: String?
   var lastKnownPlanType: String?
+  var lastKnownWorkspaceFingerprint: String? = nil
   let createdAt: Date
 
   static var systemDefault: UsageAccount {
@@ -112,6 +113,19 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
 
   var isSystemDefault: Bool { kind == .systemDefault }
   var isManaged: Bool { kind == .managed }
+
+  /// A short, non-secret reference derived from the selected ChatGPT
+  /// account/workspace id. It lets equal-email workspaces remain distinguishable.
+  var workspaceReference: String? {
+    let fingerprint = lastKnownWorkspaceFingerprint?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard fingerprint.count >= 8 else { return nil }
+    return String(fingerprint.prefix(8)).uppercased()
+  }
+
+  var workspaceDisplayLabel: String? {
+    workspaceReference.map { "워크스페이스 #\($0)" }
+  }
 
   var title: String {
     let trimmedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
