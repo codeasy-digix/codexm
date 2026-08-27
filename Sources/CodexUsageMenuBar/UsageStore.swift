@@ -19,11 +19,6 @@ final class UsageStore: ObservableObject {
     var id: String { account.id }
   }
 
-  struct PendingAccountConfirmation: Equatable {
-    let account: UsageAccount
-    let snapshot: UsageSnapshot
-  }
-
   @Published private(set) var accountStates: [AccountViewState]
   @Published private(set) var isRefreshingAll = false
   @Published private(set) var launchAtLoginEnabled = false
@@ -32,8 +27,9 @@ final class UsageStore: ObservableObject {
   @Published private(set) var authenticationAccountID: String?
   @Published private(set) var deviceLoginInfo: DeviceLoginInfo?
   @Published private(set) var authenticationError: String?
-  @Published private(set) var pendingAccountConfirmation: PendingAccountConfirmation?
   @Published private(set) var accountManagementError: String?
+  @Published private(set) var accountManagementNotice: String?
+  @Published private(set) var recentlyAddedAccountID: String?
 
   private enum AuthenticationMode {
     case adding(UsageAccount)
@@ -44,6 +40,7 @@ final class UsageStore: ObservableObject {
   private let runtimeLocator: CodexRuntimeLocator
   private let client: CodexAppServerClient
   private let authenticationClient: CodexAuthenticationClient
+  private let identityReader: CodexAccountIdentityReader
   private var refreshTask: Task<Void, Never>?
   private var timerTask: Task<Void, Never>?
   private var authenticationTask: Task<Void, Never>?
@@ -53,12 +50,14 @@ final class UsageStore: ObservableObject {
     registry: UsageAccountRegistry = UsageAccountRegistry(),
     runtimeLocator: CodexRuntimeLocator = CodexRuntimeLocator(),
     client: CodexAppServerClient = CodexAppServerClient(),
-    authenticationClient: CodexAuthenticationClient = CodexAuthenticationClient()
+    authenticationClient: CodexAuthenticationClient = CodexAuthenticationClient(),
+    identityReader: CodexAccountIdentityReader = CodexAccountIdentityReader()
   ) {
     self.registry = registry
     self.runtimeLocator = runtimeLocator
     self.client = client
     self.authenticationClient = authenticationClient
+    self.identityReader = identityReader
 
     do {
       self.accountStates = try registry.loadAccounts().map {
@@ -91,6 +90,27 @@ final class UsageStore: ObservableObject {
       guard case .loaded(let snapshot) = viewState.state else { return nil }
       return snapshot.fetchedAt
     }.max()
+  }
+
+  var authenticationTitle: String {
+    if let account = authenticationAccount {
+      return "\(account.title) 다시 로그인"
+    }
+    return "새 ChatGPT 계정 로그인"
+  }
+
+  var authenticationInstruction: String {
+    if authenticationAccount != nil {
+      return "열린 브라우저에서 아래 코드를 입력하고, 다시 연결할 계정으로 로그인하세요."
+    }
+    return "열린 브라우저에서 아래 코드를 입력하고, 추가할 계정으로 로그인하세요."
+  }
+
+  var authenticationCompletionNote: String {
+    if authenticationAccount != nil {
+      return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 계정 정보가 바로 갱신됩니다."
+    }
+    return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 계정이 바로 추가됩니다."
   }
 
   func start() {
@@ -168,6 +188,7 @@ final class UsageStore: ObservableObject {
     cancelAuthentication(discardPendingAccount: true)
     authenticationError = nil
     accountManagementError = nil
+    accountManagementNotice = nil
 
     do {
       let account = try registry.beginManagedAccount()
@@ -180,10 +201,11 @@ final class UsageStore: ObservableObject {
   }
 
   func relogin(accountID: String) {
-    guard !isAuthenticating, pendingAccountConfirmation == nil else { return }
+    guard !isAuthenticating else { return }
     guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
     authenticationError = nil
     accountManagementError = nil
+    accountManagementNotice = nil
 
     do {
       let runtime = try runtime(for: account)
@@ -191,35 +213,6 @@ final class UsageStore: ObservableObject {
     } catch {
       authenticationError = error.localizedDescription
     }
-  }
-
-  func confirmPendingAccount() {
-    guard let confirmation = pendingAccountConfirmation else { return }
-    do {
-      try registry.commitPendingAccount(confirmation.account)
-      accountStates.append(
-        AccountViewState(
-          account: confirmation.account,
-          state: .loaded(confirmation.snapshot),
-          isRefreshing: false
-        )
-      )
-      sortAccountStates()
-      pendingAccountConfirmation = nil
-      authenticationMode = nil
-      authenticationAccountID = nil
-      authenticationError = nil
-    } catch {
-      accountManagementError = error.localizedDescription
-    }
-  }
-
-  func cancelPendingAccount() {
-    guard let confirmation = pendingAccountConfirmation else { return }
-    try? registry.discardPendingAccount(confirmation.account)
-    pendingAccountConfirmation = nil
-    authenticationMode = nil
-    authenticationAccountID = nil
   }
 
   func cancelCurrentAuthentication() {
@@ -249,6 +242,11 @@ final class UsageStore: ObservableObject {
     do {
       try registry.removeManagedAccount(account)
       accountStates.remove(at: index)
+      accountManagementError = nil
+      accountManagementNotice = "\(account.title) 계정을 삭제했습니다."
+      if recentlyAddedAccountID == accountID {
+        recentlyAddedAccountID = nil
+      }
     } catch {
       accountManagementError = error.localizedDescription
     }
@@ -280,6 +278,15 @@ final class UsageStore: ObservableObject {
 
   func clearAccountManagementError() {
     accountManagementError = nil
+  }
+
+  func clearAccountManagementNotice() {
+    accountManagementNotice = nil
+  }
+
+  func consumeRecentlyAddedAccount(_ accountID: String) {
+    guard recentlyAddedAccountID == accountID else { return }
+    recentlyAddedAccountID = nil
   }
 
   private func refreshNow(_ account: UsageAccount) async {
@@ -353,7 +360,7 @@ final class UsageStore: ObservableObject {
           environmentOverride: runtime.environment
         )
         guard !Task.isCancelled else { return }
-        self.finishAuthentication(mode: mode, snapshot: snapshot)
+        self.finishAuthentication(mode: mode, snapshot: snapshot, runtime: runtime)
       } catch is CancellationError {
         return
       } catch {
@@ -363,21 +370,61 @@ final class UsageStore: ObservableObject {
     }
   }
 
-  private func finishAuthentication(mode: AuthenticationMode, snapshot: UsageSnapshot) {
+  private func finishAuthentication(
+    mode: AuthenticationMode,
+    snapshot: UsageSnapshot,
+    runtime: CodexRuntime
+  ) {
     isAuthenticating = false
     deviceLoginInfo = nil
     authenticationTask = nil
+    authenticationError = nil
 
     switch mode {
     case .adding(var account):
       account.lastKnownEmail = snapshot.accountEmail
       account.lastKnownPlanType = snapshot.planType
-      pendingAccountConfirmation = PendingAccountConfirmation(account: account, snapshot: snapshot)
+
+      let candidateIdentity = CodexAccountIdentity(
+        fingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL),
+        email: snapshot.accountEmail,
+        planType: snapshot.planType
+      )
+      if let duplicate = duplicateAccount(matching: candidateIdentity) {
+        try? registry.discardPendingAccount(account)
+        authenticationMode = nil
+        authenticationAccountID = nil
+        accountManagementNotice = nil
+        accountManagementError = "이미 등록된 계정입니다: \(duplicate.title)"
+        return
+      }
+
+      do {
+        try registry.commitPendingAccount(account)
+        accountStates.append(
+          AccountViewState(
+            account: account,
+            state: .loaded(snapshot),
+            isRefreshing: false
+          )
+        )
+        sortAccountStates()
+        recentlyAddedAccountID = account.id
+        accountManagementError = nil
+        accountManagementNotice = "\(account.title) 계정을 추가했습니다."
+      } catch {
+        try? registry.discardPendingAccount(account)
+        accountManagementNotice = nil
+        accountManagementError = error.localizedDescription
+      }
+      authenticationMode = nil
+      authenticationAccountID = nil
     case .relogin(let account):
       updateAccountMetadata(accountID: account.id, snapshot: snapshot)
       setState(.loaded(snapshot), for: account.id)
       authenticationMode = nil
       authenticationAccountID = nil
+      accountManagementNotice = "\(account.title) 계정을 다시 연결했습니다."
     }
   }
 
@@ -401,8 +448,7 @@ final class UsageStore: ObservableObject {
     deviceLoginInfo = nil
 
     if discardPendingAccount,
-      case .adding(let account) = authenticationMode,
-      pendingAccountConfirmation == nil
+      case .adding(let account) = authenticationMode
     {
       try? registry.discardPendingAccount(account)
     }
@@ -449,6 +495,37 @@ final class UsageStore: ObservableObject {
       }
       return lhs.account.createdAt < rhs.account.createdAt
     }
+  }
+
+  private func duplicateAccount(
+    matching candidateIdentity: CodexAccountIdentity
+  ) -> UsageAccount? {
+    accountStates.first { viewState in
+      let snapshot: UsageSnapshot?
+      if case .loaded(let loadedSnapshot) = viewState.state {
+        snapshot = loadedSnapshot
+      } else {
+        snapshot = nil
+      }
+
+      var fingerprint: String?
+      if let existingRuntime = try? runtime(for: viewState.account) {
+        fingerprint = identityReader.fingerprint(codexHomeURL: existingRuntime.codexHomeURL)
+        withExtendedLifetime(existingRuntime) {}
+      }
+
+      let existingIdentity = CodexAccountIdentity(
+        fingerprint: fingerprint,
+        email: snapshot?.accountEmail ?? viewState.account.lastKnownEmail,
+        planType: snapshot?.planType ?? viewState.account.lastKnownPlanType
+      )
+      return candidateIdentity.matches(existingIdentity)
+    }?.account
+  }
+
+  private var authenticationAccount: UsageAccount? {
+    guard let authenticationAccountID else { return nil }
+    return accountStates.first { $0.id == authenticationAccountID }?.account
   }
 
   private func copyToPasteboard(_ text: String) {

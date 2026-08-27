@@ -1,4 +1,88 @@
+import CryptoKit
 import Foundation
+
+struct CodexAccountIdentity: Equatable, Sendable {
+  let fingerprint: String?
+  let email: String?
+  let planType: String?
+
+  init(fingerprint: String?, email: String?, planType: String?) {
+    self.fingerprint = Self.normalized(fingerprint)
+    self.email = Self.normalized(email)
+    self.planType = Self.normalizedPlanType(planType)
+  }
+
+  func matches(_ other: CodexAccountIdentity) -> Bool {
+    if let fingerprint, let otherFingerprint = other.fingerprint {
+      guard fingerprint == otherFingerprint else { return false }
+      if let email, let otherEmail = other.email {
+        return email == otherEmail
+      }
+      return true
+    }
+
+    guard let email, email == other.email else { return false }
+    if let planType, let otherPlanType = other.planType {
+      return planType == otherPlanType
+    }
+    return true
+  }
+
+  private static func normalized(_ value: String?) -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return normalized.isEmpty ? nil : normalized
+  }
+
+  private static func normalizedPlanType(_ value: String?) -> String? {
+    guard let normalized = normalized(value) else { return nil }
+    switch normalized {
+    case "business", "team", "self_serve_business_usage_based":
+      return "business"
+    case "enterprise", "enterprise_cbp_usage_based":
+      return "enterprise"
+    case "pro", "prolite":
+      return "pro"
+    default:
+      return normalized
+    }
+  }
+}
+
+struct CodexAccountIdentityReader: @unchecked Sendable {
+  private let fileManager: FileManager
+
+  init(fileManager: FileManager = .default) {
+    self.fileManager = fileManager
+  }
+
+  /// Uses only the account/workspace identifier. Access, refresh, and ID token
+  /// values are never used for matching or separately retained.
+  func fingerprint(codexHomeURL: URL) -> String? {
+    let authURL = codexHomeURL.appending(path: "auth.json", directoryHint: .notDirectory)
+    guard fileManager.isReadableFile(atPath: authURL.path),
+      let data = try? Data(contentsOf: authURL),
+      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+      return nil
+    }
+
+    let tokens = root["tokens"] as? [String: Any]
+    let rawIdentifier =
+      tokens?["account_id"] as? String
+      ?? root["account_id"] as? String
+      ?? root["chatgpt_account_id"] as? String
+    guard let identifier = Self.normalizedIdentifier(rawIdentifier) else { return nil }
+
+    return SHA256.hash(data: Data(identifier.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+  }
+
+  private static func normalizedIdentifier(_ value: String?) -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return normalized.isEmpty ? nil : normalized
+  }
+}
 
 enum UsageAccountKind: String, Codable, Equatable, Sendable {
   case systemDefault

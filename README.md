@@ -14,11 +14,12 @@ Codex CLI의 5시간 및 주간 사용량을 macOS 메뉴 바에서 바로 확�
 - Node.js나 별도 Codex CLI 설치 없이 동작하는 네이티브 Codex 런타임 내장
 - 기존 `~/.codex` 로그인을 자동 재사용해 중복 로그인 방지
 - 추가 계정마다 독립된 `CODEX_HOME`과 브라우저 기기 코드 로그인 사용
+- 기기 코드 인증 완료 시 별도 확인 단계 없이 계정을 자동 추가하고 중복 계정은 차단
 - 계정 이름 변경, 재로그인 및 로컬 로그인 정보 삭제 지원
 - macOS의 표준 로그인 항목(`SMAppService`) 선택 지원
 - Dock에 나타나지 않는 표준 메뉴 바 앱(`LSUIElement`)
 
-앱은 함께 배포되는 Codex 네이티브 실행 파일과 공식 로컬 app-server 프로토콜인 `account/rateLimits/read`를 사용합니다. 앱 자체는 `~/.codex/auth.json`의 인증 토큰을 파싱하거나 복사하지 않습니다.
+앱은 함께 배포되는 Codex 네이티브 실행 파일과 공식 로컬 app-server 프로토콜인 `account/rateLimits/read`를 사용합니다. 앱은 중복 계정 판별을 위해 `auth.json`의 계정/워크스페이스 식별자만 단방향 해시로 비교하며, 액세스·리프레시·ID 토큰 값은 판별에 사용하거나 별도로 저장·복사하지 않습니다.
 
 ## 요구 사항
 

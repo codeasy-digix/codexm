@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuContentView: View {
   @ObservedObject var store: UsageStore
   @ObservedObject var preferences: AppPreferences
+  @State private var pendingDeletionAccount: UsageAccount?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -13,25 +14,35 @@ struct MenuContentView: View {
         authenticationPanel
       }
 
-      if let confirmation = store.pendingAccountConfirmation {
-        accountConfirmationPanel(confirmation)
+      if let account = pendingDeletionAccount {
+        deleteConfirmationPanel(account)
       }
 
-      ScrollView {
-        LazyVStack(spacing: 10) {
-          ForEach(store.accountStates) { accountState in
-            AccountUsageCard(viewState: accountState, store: store)
-          }
-        }
-        .padding(.vertical, 1)
+      if let error = store.accountManagementError {
+        statusPanel(
+          error,
+          systemImage: "exclamationmark.circle.fill",
+          color: .red,
+          onDismiss: store.clearAccountManagementError
+        )
+      } else if let notice = store.accountManagementNotice {
+        statusPanel(
+          notice,
+          systemImage: "checkmark.circle.fill",
+          color: .green,
+          onDismiss: store.clearAccountManagementNotice
+        )
       }
-      .frame(maxHeight: 500)
+
+      accountList
 
       if let error = store.authenticationError {
-        Label(error, systemImage: "exclamationmark.circle.fill")
-          .font(.caption)
-          .foregroundStyle(.red)
-          .fixedSize(horizontal: false, vertical: true)
+        statusPanel(
+          error,
+          systemImage: "exclamationmark.circle.fill",
+          color: .red,
+          onDismiss: nil
+        )
       }
 
       Divider()
@@ -40,19 +51,39 @@ struct MenuContentView: View {
       footer
     }
     .padding(14)
-    .frame(width: 390)
+    .frame(width: 420)
     .onAppear { store.refreshIfStale() }
-    .alert(
-      "계정 관리 오류",
-      isPresented: Binding(
-        get: { store.accountManagementError != nil },
-        set: { if !$0 { store.clearAccountManagementError() } }
-      )
-    ) {
-      Button("확인") { store.clearAccountManagementError() }
-    } message: {
-      Text(store.accountManagementError ?? "계정 정보를 저장하지 못했습니다.")
+    .onChange(of: store.accountStates.map(\.id)) { accountIDs in
+      if let pendingDeletionAccount,
+        !accountIDs.contains(pendingDeletionAccount.id)
+      {
+        self.pendingDeletionAccount = nil
+      }
     }
+  }
+
+  private var accountList: some View {
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(spacing: 10) {
+          ForEach(store.accountStates) { accountState in
+            AccountUsageCard(
+              viewState: accountState,
+              store: store,
+              onRequestDelete: { pendingDeletionAccount = accountState.account }
+            )
+            .id(accountState.id)
+          }
+        }
+        .padding(.vertical, 1)
+      }
+      .frame(height: accountListHeight)
+      .onAppear { revealRecentlyAddedAccount(using: proxy) }
+      .onChange(of: store.recentlyAddedAccountID) { _ in
+        revealRecentlyAddedAccount(using: proxy)
+      }
+    }
+    .animation(.easeInOut(duration: 0.18), value: accountListHeight)
   }
 
   private var header: some View {
@@ -89,12 +120,16 @@ struct MenuContentView: View {
 
   private var authenticationPanel: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("ChatGPT 계정 로그인", systemImage: "person.badge.key.fill")
+      Label(store.authenticationTitle, systemImage: "person.badge.key.fill")
         .font(.callout.weight(.semibold))
 
       if let info = store.deviceLoginInfo {
-        Text("열린 브라우저에서 아래 코드를 입력하고, 추가할 계정으로 로그인하세요.")
+        Text(store.authenticationInstruction)
           .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(store.authenticationCompletionNote)
+          .font(.caption2)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         Text(info.userCode)
@@ -121,55 +156,79 @@ struct MenuContentView: View {
     .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
   }
 
-  private func accountConfirmationPanel(
-    _ confirmation: UsageStore.PendingAccountConfirmation
-  ) -> some View {
+  private func deleteConfirmationPanel(_ account: UsageAccount) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("이 계정을 추가할까요?", systemImage: "person.crop.circle.badge.checkmark")
+      Label("\(account.title) 계정을 삭제할까요?", systemImage: "trash.fill")
         .font(.callout.weight(.semibold))
 
-      if let email = confirmation.snapshot.accountEmail {
-        Text(email)
-          .font(.callout.weight(.medium))
-          .textSelection(.enabled)
-      }
-      if let plan = confirmation.snapshot.planDisplayName {
-        Text("ChatGPT \(plan) 플랜")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-      HStack(spacing: 10) {
-        if let fiveHour = confirmation.snapshot.fiveHourLimit {
-          Text("5시간 \(fiveHour.remainingPercent)%")
-        }
-        if let weekly = confirmation.snapshot.weeklyLimit {
-          Text("주간 \(weekly.remainingPercent)%")
-        }
-      }
-      .font(.caption.monospacedDigit())
-      .foregroundStyle(.secondary)
+      Text("이 Mac에 저장된 로그인 정보와 전용 Codex 저장소가 함께 삭제됩니다.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
 
       HStack {
-        Button("계정 추가") { store.confirmPendingAccount() }
-          .buttonStyle(.borderedProminent)
-        Button("취소", role: .cancel) { store.cancelPendingAccount() }
+        Button("취소", role: .cancel) { pendingDeletionAccount = nil }
+        Spacer()
+        Button("계정 삭제", role: .destructive) {
+          store.removeManagedAccount(accountID: account.id)
+          pendingDeletionAccount = nil
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.red)
       }
       .controlSize(.small)
     }
     .padding(11)
-    .background(Color.green.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+    .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
+    .overlay {
+      RoundedRectangle(cornerRadius: 10)
+        .stroke(Color.red.opacity(0.22), lineWidth: 1)
+    }
+  }
+
+  private func statusPanel(
+    _ message: String,
+    systemImage: String,
+    color: Color,
+    onDismiss: (() -> Void)?
+  ) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: systemImage)
+        .foregroundStyle(color)
+      Text(message)
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 4)
+      if let onDismiss {
+        Button(action: onDismiss) {
+          Image(systemName: "xmark")
+            .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.plain)
+        .help("닫기")
+      }
+    }
+    .padding(9)
+    .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
   }
 
   private var accountActions: some View {
     Button {
       store.startAddingAccount()
     } label: {
-      Label("계정 추가", systemImage: "person.crop.circle.badge.plus")
-        .frame(maxWidth: .infinity)
+      HStack(spacing: 7) {
+        if store.isAuthenticating {
+          ProgressView().controlSize(.small)
+          Text("계정 인증 진행 중…")
+        } else {
+          Label("계정 추가", systemImage: "person.crop.circle.badge.plus")
+        }
+      }
+      .frame(maxWidth: .infinity)
     }
     .buttonStyle(.borderedProminent)
     .controlSize(.regular)
-    .disabled(store.isAuthenticating || store.pendingAccountConfirmation != nil)
+    .disabled(store.isAuthenticating || pendingDeletionAccount != nil)
   }
 
   private var launchPreferences: some View {
@@ -193,6 +252,49 @@ struct MenuContentView: View {
     }
   }
 
+  private var accountListHeight: CGFloat {
+    let spacing = CGFloat(max(0, store.accountStates.count - 1)) * 10
+    let desiredHeight = store.accountStates.reduce(CGFloat.zero) { partial, viewState in
+      partial + estimatedCardHeight(viewState)
+    } + spacing + 2
+    return min(max(118, desiredHeight), maximumAccountListHeight)
+  }
+
+  private var maximumAccountListHeight: CGFloat {
+    let currentScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
+      ?? NSScreen.main
+    let visibleHeight = currentScreen?.visibleFrame.height ?? 900
+    var reservedHeight: CGFloat = 235
+
+    if store.isAuthenticating || store.deviceLoginInfo != nil {
+      reservedHeight += store.deviceLoginInfo == nil ? 72 : 150
+    }
+    if pendingDeletionAccount != nil { reservedHeight += 104 }
+    if store.accountManagementError != nil || store.accountManagementNotice != nil {
+      reservedHeight += 54
+    }
+    if store.authenticationError != nil { reservedHeight += 54 }
+
+    return min(580, max(118, visibleHeight - reservedHeight))
+  }
+
+  private func estimatedCardHeight(_ viewState: UsageStore.AccountViewState) -> CGFloat {
+    switch viewState.state {
+    case .loaded(let snapshot):
+      return (snapshot.availableResetCredits ?? 0) > 0 ? 174 : 152
+    case .loading, .needsAuthentication, .failed:
+      return 108
+    }
+  }
+
+  private func revealRecentlyAddedAccount(using proxy: ScrollViewProxy) {
+    guard let accountID = store.recentlyAddedAccountID else { return }
+    withAnimation(.easeOut(duration: 0.2)) {
+      proxy.scrollTo(accountID, anchor: .bottom)
+    }
+    store.consumeRecentlyAddedAccount(accountID)
+  }
+
   private var footer: some View {
     HStack {
       if let fetchedAt = store.latestFetchedAt {
@@ -211,10 +313,10 @@ struct MenuContentView: View {
 private struct AccountUsageCard: View {
   let viewState: UsageStore.AccountViewState
   @ObservedObject var store: UsageStore
+  let onRequestDelete: () -> Void
 
   @State private var isRenaming = false
   @State private var draftName = ""
-  @State private var showDeleteConfirmation = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -236,14 +338,6 @@ private struct AccountUsageCard: View {
     .overlay {
       RoundedRectangle(cornerRadius: 11)
         .stroke(.quaternary, lineWidth: 1)
-    }
-    .alert("계정을 삭제할까요?", isPresented: $showDeleteConfirmation) {
-      Button("삭제", role: .destructive) {
-        store.removeManagedAccount(accountID: viewState.id)
-      }
-      Button("취소", role: .cancel) {}
-    } message: {
-      Text("\(viewState.account.title)의 로그인 정보와 전용 Codex 저장소가 이 Mac에서 삭제됩니다.")
     }
   }
 
@@ -297,7 +391,7 @@ private struct AccountUsageCard: View {
         }
         Divider()
         Button("계정 삭제", systemImage: "trash", role: .destructive) {
-          showDeleteConfirmation = true
+          onRequestDelete()
         }
       }
     } label: {

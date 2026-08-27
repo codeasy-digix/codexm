@@ -5,6 +5,62 @@ import Testing
 
 @Suite("Usage account registry")
 struct UsageAccountRegistryTests {
+  @Test("Identifies the same account without retaining its raw identifier")
+  func accountIdentityFingerprint() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let firstHome = root.appending(path: "first", directoryHint: .isDirectory)
+    let secondHome = root.appending(path: "second", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: firstHome, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondHome, withIntermediateDirectories: true)
+    try Data(#"{"tokens":{"account_id":"Workspace-123"}}"#.utf8)
+      .write(to: firstHome.appending(path: "auth.json"))
+    try Data(#"{"tokens":{"account_id":"workspace-123"}}"#.utf8)
+      .write(to: secondHome.appending(path: "auth.json"))
+
+    let reader = CodexAccountIdentityReader()
+    let first = try #require(reader.fingerprint(codexHomeURL: firstHome))
+    let second = try #require(reader.fingerprint(codexHomeURL: secondHome))
+
+    #expect(first == second)
+    #expect(first != "workspace-123")
+    #expect(first.count == 64)
+  }
+
+  @Test("Uses account fingerprint first and email plus plan as a fallback")
+  func duplicateAccountMatching() {
+    let exact = CodexAccountIdentity(
+      fingerprint: "ACCOUNT-A",
+      email: "Owner@Example.com",
+      planType: "team"
+    )
+    let sameWorkspace = CodexAccountIdentity(
+      fingerprint: "account-a",
+      email: "owner@example.com",
+      planType: "business"
+    )
+    let anotherWorkspace = CodexAccountIdentity(
+      fingerprint: "account-b",
+      email: "owner@example.com",
+      planType: "business"
+    )
+    let anotherMember = CodexAccountIdentity(
+      fingerprint: "account-a",
+      email: "member@example.com",
+      planType: "business"
+    )
+    let fallback = CodexAccountIdentity(
+      fingerprint: nil,
+      email: " owner@example.com ",
+      planType: "self_serve_business_usage_based"
+    )
+
+    #expect(exact.matches(sameWorkspace))
+    #expect(!exact.matches(anotherWorkspace))
+    #expect(!exact.matches(anotherMember))
+    #expect(exact.matches(fallback))
+  }
+
   @Test("Creates, commits, reloads, and removes an isolated managed Codex home")
   func managedAccountLifecycle() throws {
     let root = temporaryRoot()
