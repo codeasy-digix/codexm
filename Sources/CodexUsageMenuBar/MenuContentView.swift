@@ -41,7 +41,7 @@ struct MenuContentView: View {
           error,
           systemImage: "exclamationmark.circle.fill",
           color: .red,
-          onDismiss: nil
+          onDismiss: store.clearAuthenticationError
         )
       }
 
@@ -52,6 +52,9 @@ struct MenuContentView: View {
     }
     .padding(14)
     .frame(width: 420)
+    .animation(.easeInOut(duration: 0.2), value: store.accountManagementError)
+    .animation(.easeInOut(duration: 0.2), value: store.accountManagementNotice)
+    .animation(.easeInOut(duration: 0.2), value: store.authenticationError)
     .onAppear { store.refreshAll() }
     .onChange(of: store.accountStates.map(\.id)) { accountIDs in
       if let pendingDeletionAccount,

@@ -42,9 +42,14 @@ final class UsageStore: ObservableObject {
   private let client: CodexAppServerClient
   private let authenticationClient: CodexAuthenticationClient
   private let identityReader: CodexAccountIdentityReader
+  private let noticeDismissDelay: Duration
+  private let errorDismissDelay: Duration
   private var refreshTask: Task<Void, Never>?
   private var timerTask: Task<Void, Never>?
   private var authenticationTask: Task<Void, Never>?
+  private var authenticationErrorDismissTask: Task<Void, Never>?
+  private var accountManagementErrorDismissTask: Task<Void, Never>?
+  private var accountManagementNoticeDismissTask: Task<Void, Never>?
   private var authenticationMode: AuthenticationMode?
 
   init(
@@ -52,13 +57,17 @@ final class UsageStore: ObservableObject {
     runtimeLocator: CodexRuntimeLocator = CodexRuntimeLocator(),
     client: CodexAppServerClient = CodexAppServerClient(),
     authenticationClient: CodexAuthenticationClient = CodexAuthenticationClient(),
-    identityReader: CodexAccountIdentityReader = CodexAccountIdentityReader()
+    identityReader: CodexAccountIdentityReader = CodexAccountIdentityReader(),
+    noticeDismissDelay: Duration = .seconds(5),
+    errorDismissDelay: Duration = .seconds(10)
   ) {
     self.registry = registry
     self.runtimeLocator = runtimeLocator
     self.client = client
     self.authenticationClient = authenticationClient
     self.identityReader = identityReader
+    self.noticeDismissDelay = noticeDismissDelay
+    self.errorDismissDelay = errorDismissDelay
 
     do {
       self.accountStates = try registry.loadAccounts().map {
@@ -80,6 +89,9 @@ final class UsageStore: ObservableObject {
     refreshTask?.cancel()
     timerTask?.cancel()
     authenticationTask?.cancel()
+    authenticationErrorDismissTask?.cancel()
+    accountManagementErrorDismissTask?.cancel()
+    accountManagementNoticeDismissTask?.cancel()
   }
 
   var primaryAccountState: AccountLoadState {
@@ -175,7 +187,7 @@ final class UsageStore: ObservableObject {
   }
 
   func connectExistingCodexLogin() {
-    authenticationError = nil
+    clearAuthenticationError()
     let panel = NSOpenPanel()
     panel.title = "기본 Codex 로그인 연결"
     panel.message = "Codex CLI가 사용하는 .codex 폴더를 선택하세요. 계정 로그인은 다시 하지 않습니다."
@@ -191,15 +203,15 @@ final class UsageStore: ObservableObject {
       try runtimeLocator.saveCodexHomeAccess(url)
       refresh(accountID: UsageAccount.systemDefaultID)
     } catch {
-      authenticationError = error.localizedDescription
+      showAuthenticationError(error.localizedDescription)
     }
   }
 
   func startAddingAccount() {
     cancelAuthentication(discardPendingAccount: true)
-    authenticationError = nil
-    accountManagementError = nil
-    accountManagementNotice = nil
+    clearAuthenticationError()
+    clearAccountManagementError()
+    clearAccountManagementNotice()
 
     do {
       let account = try registry.beginManagedAccount()
@@ -207,22 +219,22 @@ final class UsageStore: ObservableObject {
       let runtime = try runtimeLocator.locateManagedAccount(codexHomeURL: home)
       beginAuthentication(mode: .adding(account), runtime: runtime)
     } catch {
-      authenticationError = error.localizedDescription
+      showAuthenticationError(error.localizedDescription)
     }
   }
 
   func relogin(accountID: String) {
     guard !isAuthenticating else { return }
     guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
-    authenticationError = nil
-    accountManagementError = nil
-    accountManagementNotice = nil
+    clearAuthenticationError()
+    clearAccountManagementError()
+    clearAccountManagementNotice()
 
     do {
       let runtime = try runtime(for: account)
       beginAuthentication(mode: .relogin(account), runtime: runtime)
     } catch {
-      authenticationError = error.localizedDescription
+      showAuthenticationError(error.localizedDescription)
     }
   }
 
@@ -238,7 +250,7 @@ final class UsageStore: ObservableObject {
     do {
       try registry.updateAccount(accountStates[index].account)
     } catch {
-      accountManagementError = error.localizedDescription
+      showAccountManagementError(error.localizedDescription)
     }
   }
 
@@ -251,9 +263,9 @@ final class UsageStore: ObservableObject {
     do {
       try registry.updateAccount(account)
       accountStates[index].account = account
-      accountManagementError = nil
+      clearAccountManagementError()
     } catch {
-      accountManagementError = error.localizedDescription
+      showAccountManagementError(error.localizedDescription)
     }
   }
 
@@ -272,13 +284,12 @@ final class UsageStore: ObservableObject {
     do {
       try registry.removeManagedAccount(account)
       accountStates.remove(at: index)
-      accountManagementError = nil
-      accountManagementNotice = "\(account.title) 연결을 삭제했습니다."
+      showAccountManagementNotice("\(account.title) 연결을 삭제했습니다.")
       if recentlyAddedAccountID == accountID {
         recentlyAddedAccountID = nil
       }
     } catch {
-      accountManagementError = error.localizedDescription
+      showAccountManagementError(error.localizedDescription)
     }
   }
 
@@ -307,11 +318,21 @@ final class UsageStore: ObservableObject {
   }
 
   func clearAccountManagementError() {
+    accountManagementErrorDismissTask?.cancel()
+    accountManagementErrorDismissTask = nil
     accountManagementError = nil
   }
 
   func clearAccountManagementNotice() {
+    accountManagementNoticeDismissTask?.cancel()
+    accountManagementNoticeDismissTask = nil
     accountManagementNotice = nil
+  }
+
+  func clearAuthenticationError() {
+    authenticationErrorDismissTask?.cancel()
+    authenticationErrorDismissTask = nil
+    authenticationError = nil
   }
 
   func consumeRecentlyAddedAccount(_ accountID: String) {
@@ -416,7 +437,7 @@ final class UsageStore: ObservableObject {
     isAuthenticating = false
     deviceLoginInfo = nil
     authenticationTask = nil
-    authenticationError = nil
+    clearAuthenticationError()
 
     switch mode {
     case .adding(var account):
@@ -440,8 +461,9 @@ final class UsageStore: ObservableObject {
         try? registry.discardPendingAccount(account)
         authenticationMode = nil
         authenticationAccountID = nil
-        accountManagementNotice = nil
-        accountManagementError = "이미 등록된 계정/워크스페이스 연결입니다: \(duplicate.title)"
+        showAccountManagementError(
+          "이미 등록된 계정/워크스페이스 연결입니다: \(duplicate.title)"
+        )
         pendingWorkspaceName = ""
         return
       }
@@ -457,13 +479,13 @@ final class UsageStore: ObservableObject {
         )
         sortAccountStates()
         recentlyAddedAccountID = account.id
-        accountManagementError = nil
         let workspaceLabel = account.workspaceDisplayLabel.map { " · \($0)" } ?? ""
-        accountManagementNotice = "\(account.title)\(workspaceLabel) 연결을 추가했습니다."
+        showAccountManagementNotice(
+          "\(account.title)\(workspaceLabel) 연결을 추가했습니다."
+        )
       } catch {
         try? registry.discardPendingAccount(account)
-        accountManagementNotice = nil
-        accountManagementError = error.localizedDescription
+        showAccountManagementError(error.localizedDescription)
       }
       authenticationMode = nil
       authenticationAccountID = nil
@@ -478,7 +500,7 @@ final class UsageStore: ObservableObject {
       authenticationMode = nil
       authenticationAccountID = nil
       pendingWorkspaceName = ""
-      accountManagementNotice = "\(account.title) 계정을 다시 연결했습니다."
+      showAccountManagementNotice("\(account.title) 계정을 다시 연결했습니다.")
     }
   }
 
@@ -486,7 +508,7 @@ final class UsageStore: ObservableObject {
     isAuthenticating = false
     deviceLoginInfo = nil
     authenticationTask = nil
-    authenticationError = error.localizedDescription
+    showAuthenticationError(error.localizedDescription)
     authenticationMode = nil
     authenticationAccountID = nil
     pendingWorkspaceName = ""
@@ -546,7 +568,7 @@ final class UsageStore: ObservableObject {
       do {
         try registry.updateAccount(accountStates[index].account)
       } catch {
-        accountManagementError = error.localizedDescription
+        showAccountManagementError(error.localizedDescription)
       }
     }
   }
@@ -590,6 +612,56 @@ final class UsageStore: ObservableObject {
   private var authenticationAccount: UsageAccount? {
     guard let authenticationAccountID else { return nil }
     return accountStates.first { $0.id == authenticationAccountID }?.account
+  }
+
+  private func showAccountManagementNotice(_ message: String) {
+    clearAccountManagementError()
+    clearAccountManagementNotice()
+    accountManagementNotice = message
+    let delay = noticeDismissDelay
+    accountManagementNoticeDismissTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: delay)
+      } catch {
+        return
+      }
+      guard !Task.isCancelled, self?.accountManagementNotice == message else { return }
+      self?.accountManagementNotice = nil
+      self?.accountManagementNoticeDismissTask = nil
+    }
+  }
+
+  private func showAccountManagementError(_ message: String) {
+    clearAccountManagementNotice()
+    clearAccountManagementError()
+    accountManagementError = message
+    let delay = errorDismissDelay
+    accountManagementErrorDismissTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: delay)
+      } catch {
+        return
+      }
+      guard !Task.isCancelled, self?.accountManagementError == message else { return }
+      self?.accountManagementError = nil
+      self?.accountManagementErrorDismissTask = nil
+    }
+  }
+
+  private func showAuthenticationError(_ message: String) {
+    clearAuthenticationError()
+    authenticationError = message
+    let delay = errorDismissDelay
+    authenticationErrorDismissTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: delay)
+      } catch {
+        return
+      }
+      guard !Task.isCancelled, self?.authenticationError == message else { return }
+      self?.authenticationError = nil
+      self?.authenticationErrorDismissTask = nil
+    }
   }
 
   private func copyToPasteboard(_ text: String) {
