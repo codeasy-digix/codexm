@@ -5,18 +5,15 @@ struct CodexRuntime: @unchecked Sendable {
   let executableURL: URL
   let environment: [String: String]
   let codexHomeURL: URL
-  private let securityScopedAccess: SecurityScopedAccess?
 
   init(
     executableURL: URL,
     environment: [String: String],
-    codexHomeURL: URL,
-    securityScopedAccess: SecurityScopedAccess? = nil
+    codexHomeURL: URL
   ) {
     self.executableURL = executableURL
     self.environment = environment
     self.codexHomeURL = codexHomeURL
-    self.securityScopedAccess = securityScopedAccess
   }
 }
 
@@ -33,6 +30,22 @@ final class SecurityScopedAccess: @unchecked Sendable {
     if isAccessing {
       url.stopAccessingSecurityScopedResource()
     }
+  }
+}
+
+/// A read-only lifetime token for inspecting the machine's existing Codex
+/// identity. It is deliberately separate from `CodexRuntime`, so the system
+/// `~/.codex` directory can never be passed to an app-server process.
+struct CodexHomeIdentityAccess: @unchecked Sendable {
+  let codexHomeURL: URL
+  private let securityScopedAccess: SecurityScopedAccess?
+
+  init(
+    codexHomeURL: URL,
+    securityScopedAccess: SecurityScopedAccess? = nil
+  ) {
+    self.codexHomeURL = codexHomeURL
+    self.securityScopedAccess = securityScopedAccess
   }
 }
 
@@ -60,7 +73,6 @@ struct CodexRuntimeLocator: @unchecked Sendable {
   private let defaults: UserDefaults
   private let environment: [String: String]
   private let runtimeURLOverride: URL?
-  private let applicationSupportURL: URL
   private let systemCodexHomeURL: URL
 
   init(
@@ -68,17 +80,12 @@ struct CodexRuntimeLocator: @unchecked Sendable {
     defaults: UserDefaults = .standard,
     environment: [String: String] = ProcessInfo.processInfo.environment,
     runtimeURLOverride: URL? = nil,
-    applicationSupportURL: URL? = nil,
     systemCodexHomeURL: URL? = nil
   ) {
     self.fileManager = fileManager
     self.defaults = defaults
     self.environment = environment
     self.runtimeURLOverride = runtimeURLOverride
-    self.applicationSupportURL =
-      applicationSupportURL
-      ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appending(path: "Codex Usage", directoryHint: .isDirectory)
     self.systemCodexHomeURL =
       systemCodexHomeURL
       ?? fileManager.homeDirectoryForCurrentUser.appending(
@@ -87,16 +94,12 @@ struct CodexRuntimeLocator: @unchecked Sendable {
       )
   }
 
-  func locate() throws -> CodexRuntime {
-    try locateDefaultAccount()
-  }
-
-  func locateDefaultAccount() throws -> CodexRuntime {
+  func locateSystemCodexHomeIdentity() throws -> CodexHomeIdentityAccess {
     if isAuthenticatedCodexHome(systemCodexHomeURL) {
-      return try makeRuntime(codexHomeURL: systemCodexHomeURL)
+      return CodexHomeIdentityAccess(codexHomeURL: systemCodexHomeURL)
     }
     if let selection = selectedCodexHome() {
-      return try makeRuntime(
+      return CodexHomeIdentityAccess(
         codexHomeURL: selection.url,
         securityScopedAccess: selection.access
       )
@@ -113,10 +116,7 @@ struct CodexRuntimeLocator: @unchecked Sendable {
     return try makeRuntime(codexHomeURL: codexHomeURL)
   }
 
-  private func makeRuntime(
-    codexHomeURL: URL,
-    securityScopedAccess: SecurityScopedAccess? = nil
-  ) throws -> CodexRuntime {
+  private func makeRuntime(codexHomeURL: URL) throws -> CodexRuntime {
     let executableURL = try bundledRuntimeURL()
     var runtimeEnvironment = environment
     runtimeEnvironment["CODEX_HOME"] = codexHomeURL.path
@@ -125,8 +125,7 @@ struct CodexRuntimeLocator: @unchecked Sendable {
     return CodexRuntime(
       executableURL: executableURL,
       environment: runtimeEnvironment,
-      codexHomeURL: codexHomeURL,
-      securityScopedAccess: securityScopedAccess
+      codexHomeURL: codexHomeURL
     )
   }
 
@@ -136,7 +135,7 @@ struct CodexRuntimeLocator: @unchecked Sendable {
     }
 
     let bookmark = try url.bookmarkData(
-      options: .withSecurityScope,
+      options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
       includingResourceValuesForKeys: nil,
       relativeTo: nil
     )

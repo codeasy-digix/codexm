@@ -27,6 +27,61 @@ struct UsageAccountRegistryTests {
     #expect(first.count == 64)
   }
 
+  @Test("Allows the isolated default runtime only for the same account and workspace")
+  func validatesIsolatedDefaultIdentity() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sourceHome = root.appending(path: "source", directoryHint: .isDirectory)
+    let isolatedHome = root.appending(path: "isolated", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: sourceHome, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: isolatedHome, withIntermediateDirectories: true)
+    try Data(#"{"tokens":{"account_id":"workspace-a"}}"#.utf8)
+      .write(to: sourceHome.appending(path: "auth.json"))
+    try Data(#"{"tokens":{"account_id":"workspace-a"}}"#.utf8)
+      .write(to: isolatedHome.appending(path: "auth.json"))
+
+    let fingerprint = try SystemDefaultIsolationValidator().validate(
+      sourceCodexHomeURL: sourceHome,
+      isolatedCodexHomeURL: isolatedHome
+    )
+
+    #expect(fingerprint.count == 64)
+    try Data(#"{"tokens":{"account_id":"workspace-b"}}"#.utf8)
+      .write(to: isolatedHome.appending(path: "auth.json"))
+    #expect(throws: SystemDefaultIsolationError.identityMismatch) {
+      try SystemDefaultIsolationValidator().validate(
+        sourceCodexHomeURL: sourceHome,
+        isolatedCodexHomeURL: isolatedHome
+      )
+    }
+  }
+
+  @Test("Requires both source and isolated identity records before validation")
+  func requiresBothDefaultIdentities() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sourceHome = root.appending(path: "source", directoryHint: .isDirectory)
+    let isolatedHome = root.appending(path: "isolated", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: sourceHome, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: isolatedHome, withIntermediateDirectories: true)
+
+    #expect(throws: SystemDefaultIsolationError.sourceIdentityUnavailable) {
+      try SystemDefaultIsolationValidator().validate(
+        sourceCodexHomeURL: sourceHome,
+        isolatedCodexHomeURL: isolatedHome
+      )
+    }
+
+    try Data(#"{"tokens":{"account_id":"workspace-a"}}"#.utf8)
+      .write(to: sourceHome.appending(path: "auth.json"))
+    #expect(throws: SystemDefaultIsolationError.isolatedLoginRequired) {
+      try SystemDefaultIsolationValidator().validate(
+        sourceCodexHomeURL: sourceHome,
+        isolatedCodexHomeURL: isolatedHome
+      )
+    }
+  }
+
   @Test("Allows one login in different workspaces while blocking exact duplicates")
   func duplicateAccountMatching() {
     let exact = CodexAccountIdentity(
@@ -198,6 +253,31 @@ struct UsageAccountRegistryTests {
     try registry.removeManagedAccount(account)
     #expect(try registry.loadAccounts().map(\.id) == [UsageAccount.systemDefaultID])
     #expect(!FileManager.default.fileExists(atPath: managedHome.path))
+  }
+
+  @Test("Creates and clears the app-owned default Codex home without touching the source")
+  func isolatedDefaultHomeLifecycle() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = UsageAccountRegistry(applicationSupportURL: root)
+    let sourceHome = root.appending(path: "machine-source", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: sourceHome, withIntermediateDirectories: true)
+    let sourceAuth = sourceHome.appending(path: "auth.json")
+    try Data("source-auth".utf8).write(to: sourceAuth)
+
+    let isolatedHome = try registry.systemDefaultCodexHomeURL()
+    let isolatedAuth = isolatedHome.appending(path: "auth.json")
+    let config = try String(
+      contentsOf: isolatedHome.appending(path: "config.toml"),
+      encoding: .utf8
+    )
+    try Data("isolated-auth".utf8).write(to: isolatedAuth)
+
+    #expect(isolatedHome != sourceHome)
+    #expect(config == "cli_auth_credentials_store = \"file\"\n")
+    try registry.clearSystemDefaultAuthentication()
+    #expect(!FileManager.default.fileExists(atPath: isolatedAuth.path))
+    #expect(try String(contentsOf: sourceAuth, encoding: .utf8) == "source-auth")
   }
 
   @Test("Keeps workspaces from one ChatGPT login in separate Codex homes")

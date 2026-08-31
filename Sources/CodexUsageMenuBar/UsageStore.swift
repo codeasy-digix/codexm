@@ -31,6 +31,7 @@ final class UsageStore: ObservableObject {
   @Published private(set) var accountManagementNotice: String?
   @Published private(set) var recentlyAddedAccountID: String?
   @Published private(set) var pendingWorkspaceName = ""
+  @Published private(set) var systemDefaultIsolationIssue: SystemDefaultIsolationError?
   @Published private(set) var automaticActivationEnabled: Bool
   @Published private(set) var automaticActivationInProgressAccountIDs = Set<String>()
   @Published private(set) var automaticActivationError: String?
@@ -38,6 +39,7 @@ final class UsageStore: ObservableObject {
   private enum AuthenticationMode {
     case adding(UsageAccount)
     case relogin(UsageAccount)
+    case systemDefaultIsolation(UsageAccount)
   }
 
   private let registry: UsageAccountRegistry
@@ -45,6 +47,7 @@ final class UsageStore: ObservableObject {
   private let client: CodexAppServerClient
   private let authenticationClient: CodexAuthenticationClient
   private let identityReader: CodexAccountIdentityReader
+  private let systemDefaultIsolationValidator: SystemDefaultIsolationValidator
   private let automaticUsageClient: CodexAutomaticUsageClient
   private let automaticScheduleStore: AutomaticUsageScheduleStore
   private let automaticPromptGenerator: AutomaticUsagePromptGenerator
@@ -78,6 +81,9 @@ final class UsageStore: ObservableObject {
     self.client = client
     self.authenticationClient = authenticationClient
     self.identityReader = identityReader
+    self.systemDefaultIsolationValidator = SystemDefaultIsolationValidator(
+      identityReader: identityReader
+    )
     self.automaticUsageClient = automaticUsageClient
     self.automaticScheduleStore = automaticScheduleStore
     self.automaticPromptGenerator = automaticPromptGenerator
@@ -129,7 +135,15 @@ final class UsageStore: ObservableObject {
     return false
   }
 
+  var isPairingSystemDefault: Bool {
+    if case .systemDefaultIsolation = authenticationMode { return true }
+    return false
+  }
+
   var authenticationTitle: String {
+    if isPairingSystemDefault {
+      return "기본 계정 격리 연결"
+    }
     if let account = authenticationAccount {
       return "\(account.title) 다시 로그인"
     }
@@ -137,6 +151,9 @@ final class UsageStore: ObservableObject {
   }
 
   var authenticationInstruction: String {
+    if isPairingSystemDefault {
+      return "현재 머신의 기본 .codex와 같은 계정 및 워크스페이스를 선택하세요. 인증 정보는 앱 전용 저장소에만 기록됩니다."
+    }
     if authenticationAccount != nil {
       return "열린 브라우저에서 아래 코드를 입력하고, 이 연결에서 사용할 계정과 워크스페이스를 선택하세요."
     }
@@ -144,6 +161,9 @@ final class UsageStore: ObservableObject {
   }
 
   var authenticationCompletionNote: String {
+    if isPairingSystemDefault {
+      return "코드는 클립보드에 자동으로 복사했습니다. 완료 후 두 연결의 식별자가 같을 때만 사용량 조회를 시작합니다."
+    }
     if authenticationAccount != nil {
       return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 계정 정보가 바로 갱신됩니다."
     }
@@ -232,12 +252,28 @@ final class UsageStore: ObservableObject {
     }
   }
 
-  func connectExistingCodexLogin() {
+  func connectSystemDefaultIsolatedLogin() {
+    guard !isAuthenticating else { return }
     clearAuthenticationError()
+    clearAccountManagementError()
+    clearAccountManagementNotice()
+
+    do {
+      try startSystemDefaultIsolationAuthentication()
+      return
+    } catch SystemDefaultIsolationError.sourceLoginUnavailable {
+      // Sandboxed builds need a user-selected security-scoped bookmark before
+      // inspecting the existing login's non-secret identity fingerprint.
+    } catch {
+      showAuthenticationError(error.localizedDescription)
+      return
+    }
+
     let panel = NSOpenPanel()
-    panel.title = "기본 Codex 로그인 연결"
-    panel.message = "Codex CLI가 사용하는 .codex 폴더를 선택하세요. 계정 로그인은 다시 하지 않습니다."
-    panel.prompt = "이 폴더 사용"
+    panel.title = "기본 .codex 확인 권한"
+    panel.message =
+      "현재 머신의 기본 계정/워크스페이스 식별자만 확인할 .codex 폴더를 선택하세요. 사용량 조회와 토큰 갱신에는 이 폴더를 사용하지 않습니다."
+    panel.prompt = "이 폴더 확인"
     panel.canChooseFiles = false
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = false
@@ -247,7 +283,7 @@ final class UsageStore: ObservableObject {
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
       try runtimeLocator.saveCodexHomeAccess(url)
-      refresh(accountID: UsageAccount.systemDefaultID)
+      try startSystemDefaultIsolationAuthentication()
     } catch {
       showAuthenticationError(error.localizedDescription)
     }
@@ -272,6 +308,10 @@ final class UsageStore: ObservableObject {
   func relogin(accountID: String) {
     guard !isAuthenticating else { return }
     guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
+    if account.isSystemDefault {
+      connectSystemDefaultIsolatedLogin()
+      return
+    }
     clearAuthenticationError()
     clearAccountManagementError()
     clearAccountManagementNotice()
@@ -282,6 +322,21 @@ final class UsageStore: ObservableObject {
     } catch {
       showAuthenticationError(error.localizedDescription)
     }
+  }
+
+  private func startSystemDefaultIsolationAuthentication() throws {
+    let sourceAccess = try systemDefaultSourceIdentityAccess()
+    guard identityReader.fingerprint(codexHomeURL: sourceAccess.codexHomeURL) != nil else {
+      throw SystemDefaultIsolationError.sourceIdentityUnavailable
+    }
+    let account =
+      accountStates.first(where: { $0.account.isSystemDefault })?.account
+      ?? UsageAccount.systemDefault
+    let isolatedHome = try registry.systemDefaultCodexHomeURL()
+    let runtime = try runtimeLocator.locateManagedAccount(codexHomeURL: isolatedHome)
+    systemDefaultIsolationIssue = .isolatedLoginRequired
+    beginAuthentication(mode: .systemDefaultIsolation(account), runtime: runtime)
+    withExtendedLifetime(sourceAccess) {}
   }
 
   func cancelCurrentAuthentication() {
@@ -419,10 +474,23 @@ final class UsageStore: ObservableObject {
       setState(.loaded(snapshot), for: account.id)
     } catch is CancellationError {
       return
+    } catch let error as SystemDefaultIsolationError {
+      if account.isSystemDefault {
+        systemDefaultIsolationIssue = error
+        setState(.needsAuthentication, for: account.id)
+      } else {
+        setState(.failed(.serverError(error.localizedDescription)), for: account.id)
+      }
     } catch CodexRuntimeError.defaultCodexHomeUnavailable {
+      if account.isSystemDefault {
+        systemDefaultIsolationIssue = .sourceLoginUnavailable
+      }
       setState(.needsAuthentication, for: account.id)
     } catch let error as CodexUsageError {
       if case .notAuthenticated = error {
+        if account.isSystemDefault {
+          systemDefaultIsolationIssue = .isolatedLoginRequired
+        }
         setState(.needsAuthentication, for: account.id)
       } else {
         setState(.failed(error), for: account.id)
@@ -434,10 +502,54 @@ final class UsageStore: ObservableObject {
 
   private func runtime(for account: UsageAccount) throws -> CodexRuntime {
     if account.isSystemDefault {
-      return try runtimeLocator.locateDefaultAccount()
+      let sourceAccess = try systemDefaultSourceIdentityAccess()
+      let isolatedHome = try registry.systemDefaultCodexHomeURL()
+      do {
+        _ = try systemDefaultIsolationValidator.validate(
+          sourceCodexHomeURL: sourceAccess.codexHomeURL,
+          isolatedCodexHomeURL: isolatedHome
+        )
+        systemDefaultIsolationIssue = nil
+      } catch let error as SystemDefaultIsolationError {
+        systemDefaultIsolationIssue = error
+        if error == .identityMismatch {
+          try? registry.clearSystemDefaultAuthentication()
+        }
+        throw error
+      }
+      let runtime = try runtimeLocator.locateManagedAccount(codexHomeURL: isolatedHome)
+      withExtendedLifetime(sourceAccess) {}
+      return runtime
     }
     let home = try registry.managedCodexHomeURL(for: account)
     return try runtimeLocator.locateManagedAccount(codexHomeURL: home)
+  }
+
+  private func systemDefaultSourceIdentityAccess() throws -> CodexHomeIdentityAccess {
+    do {
+      return try runtimeLocator.locateSystemCodexHomeIdentity()
+    } catch CodexRuntimeError.defaultCodexHomeUnavailable {
+      systemDefaultIsolationIssue = .sourceLoginUnavailable
+      throw SystemDefaultIsolationError.sourceLoginUnavailable
+    }
+  }
+
+  private func validateCompletedSystemDefaultIsolation(runtime: CodexRuntime) throws {
+    let sourceAccess = try systemDefaultSourceIdentityAccess()
+    do {
+      _ = try systemDefaultIsolationValidator.validate(
+        sourceCodexHomeURL: sourceAccess.codexHomeURL,
+        isolatedCodexHomeURL: runtime.codexHomeURL
+      )
+      systemDefaultIsolationIssue = nil
+    } catch let error as SystemDefaultIsolationError {
+      systemDefaultIsolationIssue = error
+      if error == .identityMismatch {
+        try? registry.clearSystemDefaultAuthentication()
+      }
+      throw error
+    }
+    withExtendedLifetime(sourceAccess) {}
   }
 
   private func beginAuthentication(mode: AuthenticationMode, runtime: CodexRuntime) {
@@ -449,6 +561,9 @@ final class UsageStore: ObservableObject {
       authenticationAccountID = account.id
       pendingWorkspaceName = account.normalizedWorkspaceName ?? ""
     case .relogin(let account):
+      authenticationAccountID = account.id
+      pendingWorkspaceName = ""
+    case .systemDefaultIsolation(let account):
       authenticationAccountID = account.id
       pendingWorkspaceName = ""
     }
@@ -467,6 +582,9 @@ final class UsageStore: ObservableObject {
           }
         }
         guard !Task.isCancelled else { return }
+        if case .systemDefaultIsolation = mode {
+          try self.validateCompletedSystemDefaultIsolation(runtime: runtime)
+        }
         let snapshot = try await client.fetchUsage(
           codexURL: runtime.executableURL,
           environmentOverride: runtime.environment
@@ -555,6 +673,18 @@ final class UsageStore: ObservableObject {
       authenticationAccountID = nil
       pendingWorkspaceName = ""
       showAccountManagementNotice("\(account.title) 계정을 다시 연결했습니다.")
+    case .systemDefaultIsolation(let account):
+      updateAccountMetadata(
+        accountID: account.id,
+        snapshot: snapshot,
+        workspaceFingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
+      )
+      systemDefaultIsolationIssue = nil
+      setState(.loaded(snapshot), for: account.id)
+      authenticationMode = nil
+      authenticationAccountID = nil
+      pendingWorkspaceName = ""
+      showAccountManagementNotice("기본 계정을 앱 전용 로그인으로 격리 연결했습니다.")
     }
     startAutomaticActivationSchedulerIfNeeded()
   }
@@ -571,10 +701,21 @@ final class UsageStore: ObservableObject {
     if case .adding(let account) = mode {
       try? registry.discardPendingAccount(account)
     }
+    if case .systemDefaultIsolation(let account) = mode {
+      systemDefaultIsolationIssue =
+        (error as? SystemDefaultIsolationError) ?? .isolatedLoginRequired
+      setState(.needsAuthentication, for: account.id)
+    }
     startAutomaticActivationSchedulerIfNeeded()
   }
 
   private func cancelAuthentication(discardPendingAccount: Bool) {
+    let cancelledSystemDefaultAccountID: String? = {
+      if case .systemDefaultIsolation(let account) = authenticationMode {
+        return account.id
+      }
+      return nil
+    }()
     authenticationTask?.cancel()
     authenticationTask = nil
     isAuthenticating = false
@@ -589,6 +730,9 @@ final class UsageStore: ObservableObject {
     authenticationAccountID = nil
     pendingWorkspaceName = ""
     startAutomaticActivationSchedulerIfNeeded()
+    if let cancelledSystemDefaultAccountID {
+      refresh(accountID: cancelledSystemDefaultAccountID)
+    }
   }
 
   private func startAutomaticActivationSchedulerIfNeeded() {
@@ -685,14 +829,25 @@ final class UsageStore: ObservableObject {
       await refreshNow(account)
     } catch is CancellationError {
       return
+    } catch let error as SystemDefaultIsolationError {
+      guard !Task.isCancelled else { return }
+      if account.isSystemDefault {
+        systemDefaultIsolationIssue = error
+        setState(.needsAuthentication, for: account.id)
+      }
+      appendAutomaticActivationError(account: account, error: error)
     } catch {
       guard !Task.isCancelled else { return }
-      let message = "\(account.title): \(error.localizedDescription)"
-      if let existing = automaticActivationError, !existing.isEmpty {
-        automaticActivationError = "\(existing)\n\(message)"
-      } else {
-        automaticActivationError = message
-      }
+      appendAutomaticActivationError(account: account, error: error)
+    }
+  }
+
+  private func appendAutomaticActivationError(account: UsageAccount, error: Error) {
+    let message = "\(account.title): \(error.localizedDescription)"
+    if let existing = automaticActivationError, !existing.isEmpty {
+      automaticActivationError = "\(existing)\n\(message)"
+    } else {
+      automaticActivationError = message
     }
   }
 
