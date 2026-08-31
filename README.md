@@ -11,6 +11,7 @@ Codex CLI의 5시간 및 주간 사용량을 macOS 메뉴 바에서 바로 확�
 - 메뉴 바 숫자는 5시간 잔량, 배터리 테두리 안의 음양 반전 채움은 주간 잔량으로 표시
 - 기어 옵션에서 음양 반전 터미널형 또는 주간 링 + 5시간 숫자형 선택
 - 15분마다 자동 갱신, 메뉴를 열 때 모든 연결을 순차 갱신 및 수동 새로고침
+- 기기별 로컬 설정으로 현재 머신의 기본 연결만 최소 1분까지 갱신 주기 단축 가능
 - 선택 시 각 연결에 5시간마다 한 번씩 가벼운 무도구 산술 요청을 보내되 연결별 시작을 최소 30분 간격으로 순차 실행
 - Node.js나 별도 Codex CLI 설치 없이 동작하는 네이티브 Codex 런타임 내장
 - 기존 `~/.codex` 로그인을 자동 재사용해 중복 로그인 방지
@@ -77,6 +78,12 @@ App Sandbox 권한을 포함한 App Store용 번들은 다음과 같이 확인�
 
 ```sh
 APP_STORE_BUILD=1 ./scripts/build-app.sh
+```
+
+특정 Mac에서만 기본 연결의 자동 갱신을 1분으로 단축하려면 아래 로컬 설정을 저장한 뒤 앱을 다시 실행합니다. 추가 연결은 계속 15분마다 갱신됩니다.
+
+```sh
+defaults write org.codeasy.CodexUsage SystemDefaultUsageRefreshIntervalSeconds -int 60
 ```
 
 이 명령은 개발 확인용 ad-hoc 서명을 사용합니다. 실제 App Store 제출 시에는 Apple Developer의 배포 인증서, 프로비저닝 프로파일 및 App Store Connect 메타데이터로 다시 서명·패키징해야 합니다.

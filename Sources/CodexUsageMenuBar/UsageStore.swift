@@ -49,10 +49,13 @@ final class UsageStore: ObservableObject {
   private let automaticScheduleStore: AutomaticUsageScheduleStore
   private let automaticPromptGenerator: AutomaticUsagePromptGenerator
   private let accountOperationGate: AccountOperationGate
+  private let refreshSchedule: UsageRefreshSchedule
   private let noticeDismissDelay: Duration
   private let errorDismissDelay: Duration
   private var refreshTask: Task<Void, Never>?
+  private var refreshOperationID: UUID?
   private var timerTask: Task<Void, Never>?
+  private var systemDefaultRefreshTask: Task<Void, Never>?
   private var automaticActivationTask: Task<Void, Never>?
   private var authenticationTask: Task<Void, Never>?
   private var authenticationErrorDismissTask: Task<Void, Never>?
@@ -70,6 +73,7 @@ final class UsageStore: ObservableObject {
     automaticScheduleStore: AutomaticUsageScheduleStore = AutomaticUsageScheduleStore(),
     automaticPromptGenerator: AutomaticUsagePromptGenerator = AutomaticUsagePromptGenerator(),
     accountOperationGate: AccountOperationGate = AccountOperationGate(),
+    refreshSchedule: UsageRefreshSchedule = UsageRefreshSchedule(),
     noticeDismissDelay: Duration = .seconds(5),
     errorDismissDelay: Duration = .seconds(10)
   ) {
@@ -82,6 +86,7 @@ final class UsageStore: ObservableObject {
     self.automaticScheduleStore = automaticScheduleStore
     self.automaticPromptGenerator = automaticPromptGenerator
     self.accountOperationGate = accountOperationGate
+    self.refreshSchedule = refreshSchedule
     self.noticeDismissDelay = noticeDismissDelay
     self.errorDismissDelay = errorDismissDelay
     self.automaticActivationEnabled = automaticScheduleStore.isEnabled
@@ -106,6 +111,7 @@ final class UsageStore: ObservableObject {
   deinit {
     refreshTask?.cancel()
     timerTask?.cancel()
+    systemDefaultRefreshTask?.cancel()
     automaticActivationTask?.cancel()
     authenticationTask?.cancel()
     authenticationErrorDismissTask?.cancel()
@@ -176,9 +182,24 @@ final class UsageStore: ObservableObject {
     refreshAll()
     startAutomaticActivationSchedulerIfNeeded()
 
+    if refreshSchedule.systemDefaultIntervalSeconds < UsageRefreshSchedule.standardIntervalSeconds {
+      systemDefaultRefreshTask = Task { [weak self] in
+        while !Task.isCancelled {
+          guard let interval = self?.refreshSchedule.systemDefaultInterval else { return }
+          do {
+            try await Task.sleep(for: interval)
+          } catch {
+            return
+          }
+          guard !Task.isCancelled else { return }
+          self?.refreshSystemDefaultIfStale()
+        }
+      }
+    }
+
     timerTask = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(15 * 60))
+        try? await Task.sleep(for: .seconds(UsageRefreshSchedule.standardIntervalSeconds))
         guard !Task.isCancelled else { return }
         self?.refreshAll()
       }
@@ -212,25 +233,52 @@ final class UsageStore: ObservableObject {
     let accounts = accountStates.map(\.account)
     guard !accounts.isEmpty else { return }
     isRefreshingAll = true
+    let operationID = UUID()
+    refreshOperationID = operationID
 
     refreshTask = Task { [weak self] in
       guard let self else { return }
+      defer { self.finishRefreshOperation(operationID, wasRefreshingAll: true) }
       for account in accounts {
         guard !Task.isCancelled else { return }
+        guard !self.isRefreshing(accountID: account.id) else { continue }
         await self.refreshNow(account)
       }
-      guard !Task.isCancelled else { return }
-      self.isRefreshingAll = false
     }
   }
 
   func refresh(accountID: String) {
     guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
     cancelRefresh()
+    let operationID = UUID()
+    refreshOperationID = operationID
     refreshTask = Task { [weak self] in
       guard let self else { return }
+      defer { self.finishRefreshOperation(operationID, wasRefreshingAll: false) }
       await self.refreshNow(account)
     }
+  }
+
+  private func refreshSystemDefaultIfStale() {
+    guard refreshTask == nil, !isRefreshingAll else { return }
+    guard
+      let viewState = accountStates.first(where: { $0.account.isSystemDefault }),
+      !viewState.isRefreshing
+    else {
+      return
+    }
+    if case .needsAuthentication = viewState.state { return }
+    if case .loaded(let snapshot) = viewState.state,
+      Date().timeIntervalSince(snapshot.fetchedAt)
+        < TimeInterval(refreshSchedule.systemDefaultIntervalSeconds)
+    {
+      return
+    }
+    refresh(accountID: viewState.id)
+  }
+
+  private func isRefreshing(accountID: String) -> Bool {
+    accountStates.first(where: { $0.id == accountID })?.isRefreshing ?? false
   }
 
   func connectExistingCodexLogin() {
@@ -697,9 +745,19 @@ final class UsageStore: ObservableObject {
   private func cancelRefresh() {
     refreshTask?.cancel()
     refreshTask = nil
+    refreshOperationID = nil
     isRefreshingAll = false
     for index in accountStates.indices {
       accountStates[index].isRefreshing = false
+    }
+  }
+
+  private func finishRefreshOperation(_ operationID: UUID, wasRefreshingAll: Bool) {
+    guard refreshOperationID == operationID else { return }
+    refreshTask = nil
+    refreshOperationID = nil
+    if wasRefreshingAll {
+      isRefreshingAll = false
     }
   }
 
