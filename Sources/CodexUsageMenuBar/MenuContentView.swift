@@ -47,6 +47,7 @@ struct MenuContentView: View {
 
       Divider()
       accountActions
+      automaticActivationPreferences
       launchPreferences
       footer
     }
@@ -278,6 +279,54 @@ struct MenuContentView: View {
     }
   }
 
+  private var automaticActivationPreferences: some View {
+    VStack(alignment: .leading, spacing: 5) {
+      Toggle(
+        "5시간 한도 자동 시작 유지",
+        isOn: Binding(
+          get: { store.automaticActivationEnabled },
+          set: { store.setAutomaticActivationEnabled($0) }
+        )
+      )
+      .toggleStyle(.switch)
+      .controlSize(.small)
+
+      Text(
+        "각 연결에 5시간마다 사용 가능한 가장 가벼운 모델의 low 산술 요청 1회를 보냅니다. 소량의 Codex 사용량을 소비하며 앱이 실행 중일 때만 동작합니다."
+      )
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+
+      if store.automaticActivationEnabled {
+        if !store.automaticActivationInProgressAccountIDs.isEmpty {
+          HStack(spacing: 5) {
+            ProgressView().controlSize(.mini)
+            Text(
+              "자동 요청 중 · \(store.automaticActivationInProgressAccountIDs.count)개 연결"
+            )
+          }
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+        } else if let nextDate = store.nextAutomaticActivationDate {
+          Text(
+            "다음 자동 요청 \(nextDate.formatted(date: .abbreviated, time: .shortened))"
+          )
+          .font(.caption2)
+          .foregroundStyle(.tertiary)
+        }
+      }
+
+      if let error = store.automaticActivationError {
+        Text(error)
+          .font(.caption2)
+          .foregroundStyle(.red)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
   private var accountListHeight: CGFloat {
     let spacing = CGFloat(max(0, store.accountStates.count - 1)) * 10
     let desiredHeight = store.accountStates.reduce(CGFloat.zero) { partial, viewState in
@@ -290,7 +339,7 @@ struct MenuContentView: View {
     let currentScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
       ?? NSScreen.main
     let visibleHeight = currentScreen?.visibleFrame.height ?? 900
-    var reservedHeight: CGFloat = 235
+    var reservedHeight: CGFloat = 315
 
     if store.isAuthenticating || store.deviceLoginInfo != nil {
       reservedHeight += store.deviceLoginInfo == nil ? 72 : (store.isAddingAccount ? 205 : 150)

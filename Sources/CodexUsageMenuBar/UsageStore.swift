@@ -31,6 +31,9 @@ final class UsageStore: ObservableObject {
   @Published private(set) var accountManagementNotice: String?
   @Published private(set) var recentlyAddedAccountID: String?
   @Published private(set) var pendingWorkspaceName = ""
+  @Published private(set) var automaticActivationEnabled: Bool
+  @Published private(set) var automaticActivationInProgressAccountIDs = Set<String>()
+  @Published private(set) var automaticActivationError: String?
 
   private enum AuthenticationMode {
     case adding(UsageAccount)
@@ -42,10 +45,15 @@ final class UsageStore: ObservableObject {
   private let client: CodexAppServerClient
   private let authenticationClient: CodexAuthenticationClient
   private let identityReader: CodexAccountIdentityReader
+  private let automaticUsageClient: CodexAutomaticUsageClient
+  private let automaticScheduleStore: AutomaticUsageScheduleStore
+  private let automaticPromptGenerator: AutomaticUsagePromptGenerator
+  private let accountOperationGate: AccountOperationGate
   private let noticeDismissDelay: Duration
   private let errorDismissDelay: Duration
   private var refreshTask: Task<Void, Never>?
   private var timerTask: Task<Void, Never>?
+  private var automaticActivationTask: Task<Void, Never>?
   private var authenticationTask: Task<Void, Never>?
   private var authenticationErrorDismissTask: Task<Void, Never>?
   private var accountManagementErrorDismissTask: Task<Void, Never>?
@@ -58,6 +66,10 @@ final class UsageStore: ObservableObject {
     client: CodexAppServerClient = CodexAppServerClient(),
     authenticationClient: CodexAuthenticationClient = CodexAuthenticationClient(),
     identityReader: CodexAccountIdentityReader = CodexAccountIdentityReader(),
+    automaticUsageClient: CodexAutomaticUsageClient = CodexAutomaticUsageClient(),
+    automaticScheduleStore: AutomaticUsageScheduleStore = AutomaticUsageScheduleStore(),
+    automaticPromptGenerator: AutomaticUsagePromptGenerator = AutomaticUsagePromptGenerator(),
+    accountOperationGate: AccountOperationGate = AccountOperationGate(),
     noticeDismissDelay: Duration = .seconds(5),
     errorDismissDelay: Duration = .seconds(10)
   ) {
@@ -66,8 +78,13 @@ final class UsageStore: ObservableObject {
     self.client = client
     self.authenticationClient = authenticationClient
     self.identityReader = identityReader
+    self.automaticUsageClient = automaticUsageClient
+    self.automaticScheduleStore = automaticScheduleStore
+    self.automaticPromptGenerator = automaticPromptGenerator
+    self.accountOperationGate = accountOperationGate
     self.noticeDismissDelay = noticeDismissDelay
     self.errorDismissDelay = errorDismissDelay
+    self.automaticActivationEnabled = automaticScheduleStore.isEnabled
 
     do {
       self.accountStates = try registry.loadAccounts().map {
@@ -82,12 +99,14 @@ final class UsageStore: ObservableObject {
         )
       ]
     }
+    automaticScheduleStore.retain(accountIDs: Set(accountStates.map(\.id)))
     refreshLaunchAtLoginState()
   }
 
   deinit {
     refreshTask?.cancel()
     timerTask?.cancel()
+    automaticActivationTask?.cancel()
     authenticationTask?.cancel()
     authenticationErrorDismissTask?.cancel()
     accountManagementErrorDismissTask?.cancel()
@@ -131,9 +150,25 @@ final class UsageStore: ObservableObject {
     return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 독립된 CODEX_HOME 연결로 바로 추가됩니다."
   }
 
+  var nextAutomaticActivationDate: Date? {
+    guard automaticActivationEnabled else { return nil }
+    let now = Date()
+    return accountStates.compactMap { viewState -> Date? in
+      guard viewState.id != authenticationAccountID else { return nil }
+      if case .needsAuthentication = viewState.state {
+        return nil
+      }
+      return max(
+        now,
+        automaticScheduleStore.entry(for: viewState.id).nextAttemptDate()
+      )
+    }.min()
+  }
+
   func start() {
     guard timerTask == nil else { return }
     refreshAll()
+    startAutomaticActivationSchedulerIfNeeded()
 
     timerTask = Task { [weak self] in
       while !Task.isCancelled {
@@ -141,6 +176,17 @@ final class UsageStore: ObservableObject {
         guard !Task.isCancelled else { return }
         self?.refreshAll()
       }
+    }
+  }
+
+  func setAutomaticActivationEnabled(_ enabled: Bool) {
+    automaticScheduleStore.setEnabled(enabled)
+    automaticActivationEnabled = enabled
+    automaticActivationError = nil
+    if enabled {
+      startAutomaticActivationSchedulerIfNeeded()
+    } else {
+      stopAutomaticActivationScheduler()
     }
   }
 
@@ -277,6 +323,7 @@ final class UsageStore: ObservableObject {
     guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
     let account = accountStates[index].account
     guard account.isManaged else { return }
+    stopAutomaticActivationScheduler()
     cancelRefresh()
     if authenticationAccountID == accountID {
       cancelAuthentication(discardPendingAccount: false)
@@ -284,6 +331,8 @@ final class UsageStore: ObservableObject {
     do {
       try registry.removeManagedAccount(account)
       accountStates.remove(at: index)
+      automaticScheduleStore.remove(accountID: accountID)
+      automaticActivationInProgressAccountIDs.remove(accountID)
       showAccountManagementNotice("\(account.title) 연결을 삭제했습니다.")
       if recentlyAddedAccountID == accountID {
         recentlyAddedAccountID = nil
@@ -291,6 +340,7 @@ final class UsageStore: ObservableObject {
     } catch {
       showAccountManagementError(error.localizedDescription)
     }
+    startAutomaticActivationSchedulerIfNeeded()
   }
 
   func copyDeviceLoginCode() {
@@ -342,6 +392,7 @@ final class UsageStore: ObservableObject {
 
   private func refreshNow(_ account: UsageAccount) async {
     setRefreshing(true, for: account.id)
+    defer { setRefreshing(false, for: account.id) }
     if let index = accountStates.firstIndex(where: { $0.id == account.id }),
       case .loaded = accountStates[index].state
     {
@@ -353,10 +404,12 @@ final class UsageStore: ObservableObject {
     do {
       let runtime = try runtime(for: account)
       defer { withExtendedLifetime(runtime) {} }
-      let snapshot = try await client.fetchUsage(
-        codexURL: runtime.executableURL,
-        environmentOverride: runtime.environment
-      )
+      let snapshot = try await accountOperationGate.withPermit(for: account.id) {
+        try await client.fetchUsage(
+          codexURL: runtime.executableURL,
+          environmentOverride: runtime.environment
+        )
+      }
       guard !Task.isCancelled else { return }
       updateAccountMetadata(
         accountID: account.id,
@@ -377,7 +430,6 @@ final class UsageStore: ObservableObject {
     } catch {
       setState(.failed(.serverError(error.localizedDescription)), for: account.id)
     }
-    setRefreshing(false, for: account.id)
   }
 
   private func runtime(for account: UsageAccount) throws -> CodexRuntime {
@@ -390,6 +442,7 @@ final class UsageStore: ObservableObject {
 
   private func beginAuthentication(mode: AuthenticationMode, runtime: CodexRuntime) {
     cancelAuthentication(discardPendingAccount: true)
+    stopAutomaticActivationScheduler()
     authenticationMode = mode
     switch mode {
     case .adding(let account):
@@ -465,6 +518,7 @@ final class UsageStore: ObservableObject {
           "이미 등록된 계정/워크스페이스 연결입니다: \(duplicate.title)"
         )
         pendingWorkspaceName = ""
+        startAutomaticActivationSchedulerIfNeeded()
         return
       }
 
@@ -502,6 +556,7 @@ final class UsageStore: ObservableObject {
       pendingWorkspaceName = ""
       showAccountManagementNotice("\(account.title) 계정을 다시 연결했습니다.")
     }
+    startAutomaticActivationSchedulerIfNeeded()
   }
 
   private func failAuthentication(mode: AuthenticationMode, error: Error) {
@@ -516,6 +571,7 @@ final class UsageStore: ObservableObject {
     if case .adding(let account) = mode {
       try? registry.discardPendingAccount(account)
     }
+    startAutomaticActivationSchedulerIfNeeded()
   }
 
   private func cancelAuthentication(discardPendingAccount: Bool) {
@@ -532,6 +588,112 @@ final class UsageStore: ObservableObject {
     authenticationMode = nil
     authenticationAccountID = nil
     pendingWorkspaceName = ""
+    startAutomaticActivationSchedulerIfNeeded()
+  }
+
+  private func startAutomaticActivationSchedulerIfNeeded() {
+    guard automaticActivationEnabled, automaticActivationTask == nil else { return }
+    automaticActivationTask = Task { [weak self] in
+      guard let self else { return }
+      await self.runAutomaticActivationLoop()
+    }
+  }
+
+  private func stopAutomaticActivationScheduler() {
+    automaticActivationTask?.cancel()
+    automaticActivationTask = nil
+    automaticActivationInProgressAccountIDs.removeAll()
+  }
+
+  private func runAutomaticActivationLoop() async {
+    while !Task.isCancelled, automaticActivationEnabled {
+      await runDueAutomaticActivations()
+      guard !Task.isCancelled, automaticActivationEnabled else { return }
+      do {
+        try await Task.sleep(for: AutomaticUsageSchedulePolicy.schedulerPollInterval)
+      } catch {
+        return
+      }
+    }
+  }
+
+  private func runDueAutomaticActivations() async {
+    let now = Date()
+    let dueAccounts = accountStates.compactMap { viewState -> UsageAccount? in
+      guard viewState.id != authenticationAccountID else { return nil }
+      guard !automaticActivationInProgressAccountIDs.contains(viewState.id) else { return nil }
+      if case .needsAuthentication = viewState.state { return nil }
+      let nextDate = automaticScheduleStore.entry(for: viewState.id).nextAttemptDate()
+      return nextDate <= now ? viewState.account : nil
+    }
+    guard !dueAccounts.isEmpty else { return }
+    automaticActivationError = nil
+
+    let jobs = dueAccounts.map { account -> (UsageAccount, Date, String) in
+      let attemptAt = Date()
+      let previousExpression = automaticScheduleStore.entry(for: account.id).lastExpression
+      let expression = automaticPromptGenerator.makeExpression(excluding: previousExpression)
+      automaticScheduleStore.recordAttempt(
+        accountID: account.id,
+        at: attemptAt,
+        expression: expression
+      )
+      automaticActivationInProgressAccountIDs.insert(account.id)
+      return (account, attemptAt, expression)
+    }
+
+    await withTaskGroup(of: Void.self) { group in
+      for (account, attemptAt, expression) in jobs {
+        group.addTask { [weak self] in
+          guard let self else { return }
+          await self.performAutomaticActivation(
+            account: account,
+            attemptAt: attemptAt,
+            expression: expression
+          )
+        }
+      }
+      await group.waitForAll()
+    }
+  }
+
+  private func performAutomaticActivation(
+    account: UsageAccount,
+    attemptAt: Date,
+    expression: String
+  ) async {
+    defer { automaticActivationInProgressAccountIDs.remove(account.id) }
+
+    do {
+      let runtime = try runtime(for: account)
+      defer { withExtendedLifetime(runtime) {} }
+      let prompt = automaticPromptGenerator.prompt(for: expression)
+      let workingDirectoryURL = FileManager.default.temporaryDirectory
+      try await accountOperationGate.withPermit(for: account.id) {
+        try await automaticUsageClient.performRequest(
+          codexURL: runtime.executableURL,
+          environmentOverride: runtime.environment,
+          workingDirectoryURL: workingDirectoryURL,
+          prompt: prompt
+        )
+      }
+      guard !Task.isCancelled else { return }
+      automaticScheduleStore.recordSuccess(
+        accountID: account.id,
+        requestStartedAt: attemptAt
+      )
+      await refreshNow(account)
+    } catch is CancellationError {
+      return
+    } catch {
+      guard !Task.isCancelled else { return }
+      let message = "\(account.title): \(error.localizedDescription)"
+      if let existing = automaticActivationError, !existing.isEmpty {
+        automaticActivationError = "\(existing)\n\(message)"
+      } else {
+        automaticActivationError = message
+      }
+    }
   }
 
   private func cancelRefresh() {

@@ -20,7 +20,9 @@ struct UsageStoreNotificationTests {
     store.removeManagedAccount(accountID: accountID)
 
     #expect(store.accountManagementNotice != nil)
-    try await Task.sleep(for: .milliseconds(120))
+    await waitUntil(timeout: .seconds(5)) {
+      store.accountManagementNotice == nil
+    }
     #expect(store.accountManagementNotice == nil)
   }
 
@@ -64,8 +66,22 @@ struct UsageStoreNotificationTests {
     store.renameWorkspace(accountID: accountID, workspaceName: "개발팀")
 
     #expect(store.accountManagementError != nil)
-    try await Task.sleep(for: .milliseconds(120))
+    await waitUntil(timeout: .seconds(5)) {
+      store.accountManagementError == nil
+    }
     #expect(store.accountManagementError == nil)
+  }
+}
+
+@MainActor
+private func waitUntil(
+  timeout: Duration,
+  condition: @MainActor () -> Bool
+) async {
+  let clock = ContinuousClock()
+  let deadline = clock.now.advanced(by: timeout)
+  while !condition(), clock.now < deadline {
+    try? await Task.sleep(for: .milliseconds(10))
   }
 }
 

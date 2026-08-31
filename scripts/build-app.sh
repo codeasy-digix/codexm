@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="${0:A:h:h}"
 APP_NAME="Codex Usage.app"
 OUTPUT_APP="$ROOT_DIR/dist/$APP_NAME"
+OUTPUT_ARCHIVE="$ROOT_DIR/dist/$APP_NAME.zip"
 STAGING_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/codex-usage-app.XXXXXX")"
 trap 'rm -rf "$STAGING_ROOT"' EXIT
 APP_DIR="$STAGING_ROOT/$APP_NAME"
@@ -46,6 +47,10 @@ codesign --verify --deep --strict "$APP_DIR"
 
 rm -rf "$OUTPUT_APP"
 mkdir -p "$ROOT_DIR/dist"
+rm -f "$OUTPUT_ARCHIVE"
+COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --keepParent --norsrc "$APP_DIR" "$OUTPUT_ARCHIVE"
 /usr/bin/ditto --norsrc "$APP_DIR" "$OUTPUT_APP"
+xattr -cr "$OUTPUT_APP"
 
 echo "$OUTPUT_APP"
+echo "$OUTPUT_ARCHIVE"

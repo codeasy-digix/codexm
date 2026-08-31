@@ -3,19 +3,19 @@
 set -euo pipefail
 
 ROOT_DIR="${0:A:h:h}"
-RUNTIME_VERSION="${CODEX_RUNTIME_VERSION:-0.144.4}"
+RUNTIME_VERSION="${CODEX_RUNTIME_VERSION:-0.149.1}"
 ARCHITECTURE="$(uname -m)"
 
 case "$ARCHITECTURE" in
   arm64)
     PACKAGE_SUFFIX="darwin-arm64"
     TARGET_TRIPLE="aarch64-apple-darwin"
-    EXPECTED_INTEGRITY="6J3g498cM2oA7vYIJhpuGJlnIi/M5JdYmjB5BZ1Of5HQ0ziIlplFSvH801oVy9J5TQFp642ODzOu/ZEokDUXsg=="
+    EXPECTED_INTEGRITY="6X84kTCbnTgPIJ2EdcPsrvwS0Wxsqpa+bCswGmRf4BjhcQ5nPMnBC6yCAaCMj+vrbXQHj+L6sa9FaR4QkmA1qw=="
     ;;
   x86_64)
     PACKAGE_SUFFIX="darwin-x64"
     TARGET_TRIPLE="x86_64-apple-darwin"
-    EXPECTED_INTEGRITY="k1HC8gdbAy+VmMbekYkhM+r+QE2Xfgd67n1VSp94tjz7aXVKoalHcDkdKNM/uUQ8o2tvbiwhHSUftJF8Sm9/Lw=="
+    EXPECTED_INTEGRITY="MfLBQLfcElJL9tvj6y45qVHHMGSXCPnQOixuD3/Zq0g1BW/eFizkrGLdn48cFpc+l8cK+gt5nYG5pQYwVs6g4A=="
     ;;
   *)
     echo "Unsupported macOS architecture: $ARCHITECTURE" >&2
@@ -30,22 +30,6 @@ if [[ -n "${CODEX_RUNTIME_PATH:-}" ]]; then
   fi
   echo "$CODEX_RUNTIME_PATH"
   exit 0
-fi
-
-if (( $+commands[codex] )); then
-  LAUNCHER="${commands[codex]}"
-  if /usr/bin/file "$LAUNCHER" | /usr/bin/grep -q 'Mach-O'; then
-    echo "$LAUNCHER"
-    exit 0
-  fi
-
-  RESOLVED_LAUNCHER="${LAUNCHER:A}"
-  PACKAGE_ROOT="${RESOLVED_LAUNCHER:h:h}"
-  NATIVE_CANDIDATE="$PACKAGE_ROOT/node_modules/@openai/codex-$PACKAGE_SUFFIX/vendor/$TARGET_TRIPLE/bin/codex"
-  if [[ -x "$NATIVE_CANDIDATE" ]]; then
-    echo "$NATIVE_CANDIDATE"
-    exit 0
-  fi
 fi
 
 CACHE_DIR="$ROOT_DIR/.build/codex-runtime/$RUNTIME_VERSION/$TARGET_TRIPLE"
