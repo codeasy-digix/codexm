@@ -41,7 +41,7 @@ struct AutomaticUsageActivationTests {
     )
   }
 
-  @Test("Retries a failed request after fifteen minutes")
+  @Test("Retries a failed request after thirty minutes")
   func retriesFailedRequest() throws {
     let suiteName = "AutomaticUsageActivationTests.retry"
     let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -56,6 +56,45 @@ struct AutomaticUsageActivationTests {
       store.entry(for: "account-a").nextAttemptDate()
         == attemptAt.addingTimeInterval(AutomaticUsageSchedulePolicy.retryInterval)
     )
+  }
+
+  @Test("Persists a thirty-minute gap between account request starts")
+  func persistsGlobalAccountSpacing() throws {
+    let suiteName = "AutomaticUsageActivationTests.global-spacing"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defaults.removePersistentDomain(forName: suiteName)
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = AutomaticUsageScheduleStore(defaults: defaults)
+    let attemptAt = Date(timeIntervalSince1970: 2_000_000_000)
+
+    #expect(store.nextGlobalAttemptDate() == .distantPast)
+    store.recordAttempt(accountID: "account-a", at: attemptAt, expression: "21 / 3")
+
+    let restored = AutomaticUsageScheduleStore(defaults: defaults)
+    #expect(
+      restored.nextGlobalAttemptDate()
+        == attemptAt.addingTimeInterval(AutomaticUsageSchedulePolicy.accountSpacingInterval)
+    )
+  }
+
+  @Test("Serializes app-server work across different accounts")
+  func serializesOperationsAcrossAccounts() async throws {
+    let gate = AccountOperationGate()
+    let probe = OperationConcurrencyProbe()
+
+    async let first: Void = gate.withPermit(for: "account-a") {
+      await probe.enter()
+      try await Task.sleep(for: .milliseconds(40))
+      await probe.leave()
+    }
+    async let second: Void = gate.withPermit(for: "account-b") {
+      await probe.enter()
+      try await Task.sleep(for: .milliseconds(40))
+      await probe.leave()
+    }
+
+    _ = try await (first, second)
+    #expect(await probe.maximumConcurrentCount() == 1)
   }
 
   @Test("Removes deleted account schedule data")
@@ -83,5 +122,23 @@ struct AutomaticUsageActivationTests {
     #expect(next != previous)
     #expect(prompt.contains(next))
     #expect(prompt.contains("도구를 사용하거나 파일을 읽지 마세요"))
+  }
+}
+
+private actor OperationConcurrencyProbe {
+  private var activeCount = 0
+  private var maximumCount = 0
+
+  func enter() {
+    activeCount += 1
+    maximumCount = max(maximumCount, activeCount)
+  }
+
+  func leave() {
+    activeCount -= 1
+  }
+
+  func maximumConcurrentCount() -> Int {
+    maximumCount
   }
 }

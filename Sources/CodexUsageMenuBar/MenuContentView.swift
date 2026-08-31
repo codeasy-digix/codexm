@@ -292,7 +292,7 @@ struct MenuContentView: View {
       .controlSize(.small)
 
       Text(
-        "각 연결에 5시간마다 사용 가능한 가장 가벼운 모델의 low 산술 요청 1회를 보냅니다. 소량의 Codex 사용량을 소비하며 앱이 실행 중일 때만 동작합니다."
+        "각 연결에 5시간마다 가벼운 low 산술 요청 1회를 보냅니다. 한 번에 한 연결만 실행하며, 연결 간 시작 시각을 최소 30분 간격으로 둡니다."
       )
       .font(.caption2)
       .foregroundStyle(.secondary)
@@ -342,9 +342,7 @@ struct MenuContentView: View {
     var reservedHeight: CGFloat = 315
 
     if store.isAuthenticating || store.deviceLoginInfo != nil {
-      reservedHeight +=
-        store.deviceLoginInfo == nil
-        ? 72 : ((store.isAddingAccount || store.isPairingSystemDefault) ? 205 : 150)
+      reservedHeight += store.deviceLoginInfo == nil ? 72 : (store.isAddingAccount ? 205 : 150)
     }
     if pendingDeletionAccount != nil { reservedHeight += 124 }
     if store.accountManagementError != nil || store.accountManagementNotice != nil {
@@ -359,9 +357,7 @@ struct MenuContentView: View {
     switch viewState.state {
     case .loaded(let snapshot):
       return ((snapshot.availableResetCredits ?? 0) > 0 ? 174 : 152) + 24
-    case .needsAuthentication:
-      return viewState.account.isSystemDefault ? 166 : 132
-    case .loading, .failed:
+    case .loading, .needsAuthentication, .failed:
       return 132
     }
   }
@@ -447,12 +443,6 @@ private struct AccountUsageCard: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(.quaternary, in: Capsule())
-          Text("격리")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.blue)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(Color.blue.opacity(0.1), in: Capsule())
         }
 
         Spacer()
@@ -470,11 +460,7 @@ private struct AccountUsageCard: View {
         store.refresh(accountID: viewState.id)
       }
 
-      if viewState.account.isSystemDefault {
-        Button("격리 연결 다시 설정", systemImage: "person.badge.key") {
-          store.connectSystemDefaultIsolatedLogin()
-        }
-      } else if viewState.account.isManaged {
+      if viewState.account.isManaged {
         Button("계정 표시 이름 변경", systemImage: "pencil") {
           draftName = viewState.account.displayName ?? viewState.account.title
           isRenaming = true
@@ -689,13 +675,11 @@ private struct AccountUsageCard: View {
         .foregroundStyle(.orange)
 
       if viewState.account.isSystemDefault {
-        Text(systemDefaultIsolationInstruction)
+        Text("현재 머신에서 Codex CLI가 사용하는 .codex 폴더를 연결합니다. 다시 로그인하지 않습니다.")
           .font(.caption2)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-        Button(systemDefaultIsolationButtonTitle) {
-          store.connectSystemDefaultIsolatedLogin()
-        }
+        Button("기본 Codex 로그인 연결") { store.connectExistingCodexLogin() }
           .controlSize(.small)
       } else {
         Button("다시 로그인") { store.relogin(accountID: viewState.id) }
@@ -703,30 +687,6 @@ private struct AccountUsageCard: View {
       }
     }
     .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-  }
-
-  private var systemDefaultIsolationInstruction: String {
-    switch store.systemDefaultIsolationIssue {
-    case .sourceLoginUnavailable:
-      return "기본 .codex의 계정 식별자를 읽을 수 없습니다. 폴더 접근을 승인한 뒤 같은 계정/워크스페이스를 앱 전용 저장소에 한 번 로그인하세요."
-    case .sourceIdentityUnavailable:
-      return "기본 .codex에서 계정/워크스페이스를 확인할 수 없습니다. Codex CLI 로그인을 확인한 뒤 다시 연결하세요."
-    case .identityMismatch:
-      return "기본 .codex가 바뀌었거나 다른 계정/워크스페이스로 로그인했습니다. 같은 연결을 선택해 다시 인증해야 요청이 재개됩니다."
-    case .isolatedLoginRequired, .none:
-      return "~/.codex는 식별 확인에만 읽습니다. 사용량 조회·토큰 갱신·5시간 자동 요청용 앱 전용 저장소에 같은 계정/워크스페이스를 한 번 로그인하세요."
-    }
-  }
-
-  private var systemDefaultIsolationButtonTitle: String {
-    switch store.systemDefaultIsolationIssue {
-    case .sourceLoginUnavailable:
-      return "기본 .codex 확인 및 격리 연결"
-    case .identityMismatch:
-      return "같은 계정으로 다시 격리 연결"
-    case .sourceIdentityUnavailable, .isolatedLoginRequired, .none:
-      return "기본 계정 격리 연결"
-    }
   }
 
   private func errorView(_ error: CodexUsageError) -> some View {

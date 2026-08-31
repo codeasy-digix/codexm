@@ -84,53 +84,6 @@ struct CodexAccountIdentityReader: @unchecked Sendable {
   }
 }
 
-enum SystemDefaultIsolationError: LocalizedError, Equatable, Sendable {
-  case sourceLoginUnavailable
-  case sourceIdentityUnavailable
-  case isolatedLoginRequired
-  case identityMismatch
-
-  var errorDescription: String? {
-    switch self {
-    case .sourceLoginUnavailable:
-      return "현재 머신의 기본 .codex 로그인 정보를 읽을 수 없습니다."
-    case .sourceIdentityUnavailable:
-      return "기본 .codex에서 계정/워크스페이스 식별자를 확인할 수 없습니다."
-    case .isolatedLoginRequired:
-      return "기본 계정용 앱 전용 로그인 연결이 필요합니다."
-    case .identityMismatch:
-      return "앱 전용 로그인과 현재 머신의 기본 계정/워크스페이스가 다릅니다."
-    }
-  }
-}
-
-struct SystemDefaultIsolationValidator: Sendable {
-  private let identityReader: CodexAccountIdentityReader
-
-  init(identityReader: CodexAccountIdentityReader = CodexAccountIdentityReader()) {
-    self.identityReader = identityReader
-  }
-
-  @discardableResult
-  func validate(sourceCodexHomeURL: URL, isolatedCodexHomeURL: URL) throws -> String {
-    guard let sourceFingerprint = identityReader.fingerprint(codexHomeURL: sourceCodexHomeURL)
-    else {
-      throw SystemDefaultIsolationError.sourceIdentityUnavailable
-    }
-    guard
-      let isolatedFingerprint = identityReader.fingerprint(
-        codexHomeURL: isolatedCodexHomeURL
-      )
-    else {
-      throw SystemDefaultIsolationError.isolatedLoginRequired
-    }
-    guard sourceFingerprint == isolatedFingerprint else {
-      throw SystemDefaultIsolationError.identityMismatch
-    }
-    return sourceFingerprint
-  }
-}
-
 enum UsageAccountKind: String, Codable, Equatable, Sendable {
   case systemDefault
   case managed
@@ -240,10 +193,6 @@ struct UsageAccountRegistry: @unchecked Sendable {
     applicationSupportURL.appending(path: "Staging", directoryHint: .isDirectory)
   }
 
-  var systemDefaultRootURL: URL {
-    applicationSupportURL.appending(path: "SystemDefault", directoryHint: .isDirectory)
-  }
-
   var registryURL: URL {
     applicationSupportURL.appending(path: "accounts.json", directoryHint: .notDirectory)
   }
@@ -285,30 +234,6 @@ struct UsageAccountRegistry: @unchecked Sendable {
     guard account.isManaged else { throw UsageAccountRegistryError.invalidAccountIdentifier }
     let root = try validatedChildURL(root: stagingRootURL, identifier: account.id)
     return root.appending(path: "CodexHome", directoryHint: .isDirectory)
-  }
-
-  func systemDefaultCodexHomeURL() throws -> URL {
-    try prepareRootDirectories()
-    try createPrivateDirectory(at: systemDefaultRootURL)
-    let codexHome = systemDefaultRootURL.appending(
-      path: "CodexHome",
-      directoryHint: .isDirectory
-    )
-    try createPrivateDirectory(at: codexHome)
-    try writeManagedConfig(to: codexHome)
-    var resourceValues = URLResourceValues()
-    resourceValues.isExcludedFromBackup = true
-    var root = systemDefaultRootURL
-    try? root.setResourceValues(resourceValues)
-    return codexHome
-  }
-
-  func clearSystemDefaultAuthentication() throws {
-    let codexHome = try systemDefaultCodexHomeURL()
-    let authURL = codexHome.appending(path: "auth.json", directoryHint: .notDirectory)
-    if fileManager.fileExists(atPath: authURL.path) {
-      try fileManager.removeItem(at: authURL)
-    }
   }
 
   func managedCodexHomeURL(for account: UsageAccount) throws -> URL {

@@ -2,7 +2,8 @@ import Foundation
 
 struct AutomaticUsageSchedulePolicy: Sendable {
   static let activationInterval: TimeInterval = 5 * 60 * 60
-  static let retryInterval: TimeInterval = 15 * 60
+  static let retryInterval: TimeInterval = 30 * 60
+  static let accountSpacingInterval: TimeInterval = 30 * 60
   static let schedulerPollInterval: Duration = .seconds(30)
 }
 
@@ -37,6 +38,7 @@ struct AutomaticUsageScheduleEntry: Codable, Equatable, Sendable {
 final class AutomaticUsageScheduleStore {
   static let enabledKey = "AutomaticFiveHourActivationEnabled"
   static let scheduleKey = "AutomaticFiveHourActivationSchedule"
+  static let lastGlobalAttemptKey = "AutomaticFiveHourActivationLastGlobalAttemptAt"
 
   private let defaults: UserDefaults
   private let encoder = JSONEncoder()
@@ -65,6 +67,16 @@ final class AutomaticUsageScheduleStore {
     value.lastExpression = expression
     values[accountID] = value
     save(values)
+    defaults.set(date, forKey: Self.lastGlobalAttemptKey)
+  }
+
+  func nextGlobalAttemptDate(
+    spacingInterval: TimeInterval = AutomaticUsageSchedulePolicy.accountSpacingInterval
+  ) -> Date {
+    guard let lastAttemptAt = defaults.object(forKey: Self.lastGlobalAttemptKey) as? Date else {
+      return .distantPast
+    }
+    return lastAttemptAt.addingTimeInterval(spacingInterval)
   }
 
   func recordSuccess(accountID: String, requestStartedAt date: Date) {
@@ -129,43 +141,37 @@ struct AutomaticUsagePromptGenerator: Sendable {
 }
 
 actor AccountOperationGate {
-  private var activeAccountIDs = Set<String>()
-  private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+  private var isActive = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
 
   func withPermit<Value: Sendable>(
-    for accountID: String,
+    for _: String,
     operation: @Sendable () async throws -> Value
   ) async throws -> Value {
-    await acquire(accountID)
-    defer { release(accountID) }
+    await acquire()
+    defer { release() }
     try Task.checkCancellation()
     return try await operation()
   }
 
-  private func acquire(_ accountID: String) async {
-    guard activeAccountIDs.contains(accountID) else {
-      activeAccountIDs.insert(accountID)
+  private func acquire() async {
+    guard isActive else {
+      isActive = true
       return
     }
 
     await withCheckedContinuation { continuation in
-      waiters[accountID, default: []].append(continuation)
+      waiters.append(continuation)
     }
   }
 
-  private func release(_ accountID: String) {
-    guard var accountWaiters = waiters[accountID], !accountWaiters.isEmpty else {
-      activeAccountIDs.remove(accountID)
-      waiters.removeValue(forKey: accountID)
+  private func release() {
+    guard !waiters.isEmpty else {
+      isActive = false
       return
     }
 
-    let next = accountWaiters.removeFirst()
-    if accountWaiters.isEmpty {
-      waiters.removeValue(forKey: accountID)
-    } else {
-      waiters[accountID] = accountWaiters
-    }
+    let next = waiters.removeFirst()
     next.resume()
   }
 }
@@ -301,7 +307,7 @@ private final class AutomaticUsageAppServerSession: @unchecked Sendable {
           "clientInfo": [
             "name": "codex_usage_menubar",
             "title": "Codex Usage",
-            "version": "1.5.0",
+            "version": "1.5.1",
           ]
         ],
       ])

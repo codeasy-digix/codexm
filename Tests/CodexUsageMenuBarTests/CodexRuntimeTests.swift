@@ -5,14 +5,17 @@ import Testing
 
 @Suite("Bundled Codex runtime")
 struct CodexRuntimeTests {
-  @Test("Exposes the existing Codex home only as read-only identity access")
-  func readsExistingLoginIdentity() throws {
+  @Test("Reuses an existing Codex login without asking the user to sign in again")
+  func reusesExistingLogin() throws {
     let fixture = try Fixture(authenticated: true)
     defer { fixture.remove() }
 
-    let access = try fixture.locator.locateSystemCodexHomeIdentity()
+    let runtime = try fixture.locator.locate()
 
-    #expect(access.codexHomeURL == fixture.systemCodexHome)
+    #expect(runtime.executableURL == fixture.executable)
+    #expect(runtime.codexHomeURL == fixture.systemCodexHome)
+    #expect(runtime.environment["CODEX_HOME"] == fixture.systemCodexHome.path)
+    #expect(runtime.environment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
   }
 
   @Test("Keeps the default account disconnected when the machine has no Codex login")
@@ -21,24 +24,8 @@ struct CodexRuntimeTests {
     defer { fixture.remove() }
 
     #expect(throws: CodexRuntimeError.defaultCodexHomeUnavailable) {
-      try fixture.locator.locateSystemCodexHomeIdentity()
+      try fixture.locator.locateDefaultAccount()
     }
-  }
-
-  @Test("Runs the default connection only from its app-owned isolated Codex home")
-  func usesIsolatedDefaultAccountHome() throws {
-    let fixture = try Fixture(authenticated: true)
-    defer { fixture.remove() }
-    let registry = UsageAccountRegistry(applicationSupportURL: fixture.applicationSupport)
-    let isolatedHome = try registry.systemDefaultCodexHomeURL()
-
-    let runtime = try fixture.locator.locateManagedAccount(codexHomeURL: isolatedHome)
-
-    #expect(runtime.executableURL == fixture.executable)
-    #expect(runtime.codexHomeURL == isolatedHome)
-    #expect(runtime.codexHomeURL != fixture.systemCodexHome)
-    #expect(runtime.environment["CODEX_HOME"] == isolatedHome.path)
-    #expect(runtime.environment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
   }
 
   @Test("Uses an explicitly managed Codex home for an added account")
@@ -95,6 +82,7 @@ private struct Fixture {
       defaults: defaults,
       environment: ["UNRELATED": "preserved"],
       runtimeURLOverride: executable,
+      applicationSupportURL: applicationSupport,
       systemCodexHomeURL: systemCodexHome
     )
   }

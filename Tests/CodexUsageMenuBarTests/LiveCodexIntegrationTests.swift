@@ -16,7 +16,10 @@ struct LiveCodexIntegrationTests {
       environment["CODEX_RUNTIME_PATH"].map(URL.init(fileURLWithPath:))
       ?? CodexLocator().locate()
     let executable = try #require(codex)
-    let runtime = try isolatedDefaultRuntime(executable: executable)
+    let runtime = try CodexRuntimeLocator(
+      environment: ["HOME": FileManager.default.homeDirectoryForCurrentUser.path],
+      runtimeURLOverride: executable
+    ).locate()
     let snapshot = try await CodexAppServerClient()
       .fetchUsage(
         codexURL: runtime.executableURL,
@@ -45,7 +48,10 @@ struct LiveCodexIntegrationTests {
       environment["CODEX_RUNTIME_PATH"].map(URL.init(fileURLWithPath:))
       ?? CodexLocator().locate()
     let executable = try #require(codex)
-    let runtime = try isolatedDefaultRuntime(executable: executable)
+    let runtime = try CodexRuntimeLocator(
+      environment: ["HOME": FileManager.default.homeDirectoryForCurrentUser.path],
+      runtimeURLOverride: executable
+    ).locate()
     let expression = AutomaticUsagePromptGenerator().makeExpression(excluding: nil)
 
     try await CodexAutomaticUsageClient().performRequest(
@@ -67,21 +73,5 @@ struct LiveCodexIntegrationTests {
     let path = try #require(environment["PATH"])
     #expect(path.hasPrefix("/Users/example/.nvm/versions/node/v25/bin:"))
     #expect(path.contains("/usr/bin:/bin"))
-  }
-
-  private func isolatedDefaultRuntime(executable: URL) throws -> CodexRuntime {
-    let locator = CodexRuntimeLocator(
-      environment: ["HOME": FileManager.default.homeDirectoryForCurrentUser.path],
-      runtimeURLOverride: executable
-    )
-    let sourceAccess = try locator.locateSystemCodexHomeIdentity()
-    let isolatedHome = try UsageAccountRegistry().systemDefaultCodexHomeURL()
-    try SystemDefaultIsolationValidator().validate(
-      sourceCodexHomeURL: sourceAccess.codexHomeURL,
-      isolatedCodexHomeURL: isolatedHome
-    )
-    let runtime = try locator.locateManagedAccount(codexHomeURL: isolatedHome)
-    withExtendedLifetime(sourceAccess) {}
-    return runtime
   }
 }
