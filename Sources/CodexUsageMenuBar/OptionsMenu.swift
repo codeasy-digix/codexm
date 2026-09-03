@@ -2,6 +2,7 @@ import SwiftUI
 
 struct OptionsMenu: View {
   @ObservedObject var preferences: AppPreferences
+  @ObservedObject var store: UsageStore
 
   var body: some View {
     Menu {
@@ -9,6 +10,20 @@ struct OptionsMenu: View {
         ForEach(MenuBarIconStyle.allCases) { style in
           Label(style.title, systemImage: style.systemImage)
             .tag(style)
+        }
+      }
+
+      Divider()
+
+      Picker(
+        "기본 계정 갱신 주기",
+        selection: Binding(
+          get: { store.systemDefaultRefreshInterval },
+          set: { store.setSystemDefaultRefreshInterval($0) }
+        )
+      ) {
+        ForEach(SystemDefaultRefreshInterval.allCases) { interval in
+          Text(interval.title).tag(interval)
         }
       }
     } label: {

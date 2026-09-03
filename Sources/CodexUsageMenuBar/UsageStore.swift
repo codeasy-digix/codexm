@@ -31,6 +31,7 @@ final class UsageStore: ObservableObject {
   @Published private(set) var accountManagementNotice: String?
   @Published private(set) var recentlyAddedAccountID: String?
   @Published private(set) var pendingWorkspaceName = ""
+  @Published private(set) var systemDefaultRefreshInterval: SystemDefaultRefreshInterval
   @Published private(set) var automaticActivationEnabled: Bool
   @Published private(set) var automaticActivationInProgressAccountIDs = Set<String>()
   @Published private(set) var automaticActivationError: String?
@@ -56,6 +57,7 @@ final class UsageStore: ObservableObject {
   private var refreshOperationID: UUID?
   private var timerTask: Task<Void, Never>?
   private var systemDefaultRefreshTask: Task<Void, Never>?
+  private var isSystemDefaultScheduledRefreshInProgress = false
   private var automaticActivationTask: Task<Void, Never>?
   private var authenticationTask: Task<Void, Never>?
   private var authenticationErrorDismissTask: Task<Void, Never>?
@@ -87,6 +89,7 @@ final class UsageStore: ObservableObject {
     self.automaticPromptGenerator = automaticPromptGenerator
     self.accountOperationGate = accountOperationGate
     self.refreshSchedule = refreshSchedule
+    self.systemDefaultRefreshInterval = refreshSchedule.systemDefaultInterval
     self.noticeDismissDelay = noticeDismissDelay
     self.errorDismissDelay = errorDismissDelay
     self.automaticActivationEnabled = automaticScheduleStore.isEnabled
@@ -181,29 +184,24 @@ final class UsageStore: ObservableObject {
     guard timerTask == nil else { return }
     refreshAll()
     startAutomaticActivationSchedulerIfNeeded()
-
-    if refreshSchedule.systemDefaultIntervalSeconds < UsageRefreshSchedule.standardIntervalSeconds {
-      systemDefaultRefreshTask = Task { [weak self] in
-        while !Task.isCancelled {
-          guard let interval = self?.refreshSchedule.systemDefaultInterval else { return }
-          do {
-            try await Task.sleep(for: interval)
-          } catch {
-            return
-          }
-          guard !Task.isCancelled else { return }
-          self?.refreshSystemDefaultIfStale()
-        }
-      }
-    }
+    startSystemDefaultRefreshScheduler()
 
     timerTask = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(UsageRefreshSchedule.standardIntervalSeconds))
+        try? await Task.sleep(
+          for: .seconds(UsageRefreshSchedule.managedAccountIntervalSeconds)
+        )
         guard !Task.isCancelled else { return }
-        self?.refreshAll()
+        self?.refreshManagedAccountsIfIdle()
       }
     }
+  }
+
+  func setSystemDefaultRefreshInterval(_ interval: SystemDefaultRefreshInterval) {
+    guard interval != systemDefaultRefreshInterval else { return }
+    refreshSchedule.setSystemDefaultInterval(interval)
+    systemDefaultRefreshInterval = interval
+    startSystemDefaultRefreshScheduler()
   }
 
   func setAutomaticActivationEnabled(_ enabled: Bool) {
@@ -249,6 +247,7 @@ final class UsageStore: ObservableObject {
 
   func refresh(accountID: String) {
     guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
+    guard !isRefreshing(accountID: accountID) else { return }
     cancelRefresh()
     let operationID = UUID()
     refreshOperationID = operationID
@@ -259,7 +258,23 @@ final class UsageStore: ObservableObject {
     }
   }
 
-  private func refreshSystemDefaultIfStale() {
+  private func startSystemDefaultRefreshScheduler() {
+    systemDefaultRefreshTask?.cancel()
+    let interval = systemDefaultRefreshInterval.duration
+    systemDefaultRefreshTask = Task { [weak self] in
+      while !Task.isCancelled {
+        do {
+          try await Task.sleep(for: interval)
+        } catch {
+          return
+        }
+        guard !Task.isCancelled else { return }
+        await self?.refreshSystemDefaultOnSchedule()
+      }
+    }
+  }
+
+  private func refreshSystemDefaultOnSchedule() async {
     guard refreshTask == nil, !isRefreshingAll else { return }
     guard
       let viewState = accountStates.first(where: { $0.account.isSystemDefault }),
@@ -268,17 +283,30 @@ final class UsageStore: ObservableObject {
       return
     }
     if case .needsAuthentication = viewState.state { return }
-    if case .loaded(let snapshot) = viewState.state,
-      Date().timeIntervalSince(snapshot.fetchedAt)
-        < TimeInterval(refreshSchedule.systemDefaultIntervalSeconds)
-    {
-      return
-    }
-    refresh(accountID: viewState.id)
+    isSystemDefaultScheduledRefreshInProgress = true
+    defer { isSystemDefaultScheduledRefreshInProgress = false }
+    await refreshNow(viewState.account)
   }
 
   private func isRefreshing(accountID: String) -> Bool {
     accountStates.first(where: { $0.id == accountID })?.isRefreshing ?? false
+  }
+
+  private func refreshManagedAccountsIfIdle() {
+    guard refreshTask == nil else { return }
+    let accounts = accountStates.map(\.account).filter(\.isManaged)
+    guard !accounts.isEmpty else { return }
+    let operationID = UUID()
+    refreshOperationID = operationID
+    refreshTask = Task { [weak self] in
+      guard let self else { return }
+      defer { self.finishRefreshOperation(operationID, wasRefreshingAll: false) }
+      for account in accounts {
+        guard !Task.isCancelled else { return }
+        guard !self.isRefreshing(accountID: account.id) else { continue }
+        await self.refreshNow(account)
+      }
+    }
   }
 
   func connectExistingCodexLogin() {
@@ -748,6 +776,11 @@ final class UsageStore: ObservableObject {
     refreshOperationID = nil
     isRefreshingAll = false
     for index in accountStates.indices {
+      if isSystemDefaultScheduledRefreshInProgress,
+        accountStates[index].account.isSystemDefault
+      {
+        continue
+      }
       accountStates[index].isRefreshing = false
     }
   }

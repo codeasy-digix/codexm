@@ -105,7 +105,7 @@ struct MenuContentView: View {
       }
 
       Spacer()
-      OptionsMenu(preferences: preferences)
+      OptionsMenu(preferences: preferences, store: store)
 
       Button { store.refreshAll() } label: {
         if store.isRefreshingAll {
