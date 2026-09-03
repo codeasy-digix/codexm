@@ -3,7 +3,7 @@ import Testing
 
 @testable import CodexUsageMenuBar
 
-@Suite("Transient account notifications")
+@Suite("Transient account notifications", .serialized)
 struct UsageStoreNotificationTests {
   @Test("Automatically dismisses a successful connection notice")
   @MainActor
@@ -33,18 +33,18 @@ struct UsageStoreNotificationTests {
     defer { fixture.remove() }
     let store = UsageStore(
       registry: fixture.registry,
-      noticeDismissDelay: .milliseconds(120),
-      errorDismissDelay: .milliseconds(200)
+      noticeDismissDelay: .seconds(2),
+      errorDismissDelay: .seconds(3)
     )
     let accountIDs = store.accountStates.filter { $0.account.isManaged }.map(\.id)
     #expect(accountIDs.count == 2)
 
     store.removeManagedAccount(accountID: accountIDs[0])
-    try await Task.sleep(for: .milliseconds(70))
+    try await Task.sleep(for: .milliseconds(1_100))
     store.removeManagedAccount(accountID: accountIDs[1])
     let newerNotice = try #require(store.accountManagementNotice)
 
-    try await Task.sleep(for: .milliseconds(70))
+    try await Task.sleep(for: .milliseconds(1_100))
     #expect(store.accountManagementNotice == newerNotice)
     store.clearAccountManagementNotice()
     #expect(store.accountManagementNotice == nil)
