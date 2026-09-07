@@ -15,8 +15,26 @@ final class UsageStore: ObservableObject {
     var account: UsageAccount
     var state: AccountLoadState
     var isRefreshing: Bool
+    var lastRefreshError: CodexUsageError? = nil
 
     var id: String { account.id }
+
+    mutating func apply(snapshot: UsageSnapshot) {
+      state = .loaded(snapshot)
+      lastRefreshError = nil
+    }
+
+    mutating func applyRefreshFailure(
+      _ error: CodexUsageError,
+      authenticationRequired: Bool = false
+    ) {
+      if case .loaded = state {
+        lastRefreshError = error
+      } else {
+        state = authenticationRequired ? .needsAuthentication : .failed(error)
+        lastRefreshError = nil
+      }
+    }
   }
 
   @Published private(set) var accountStates: [AccountViewState]
@@ -39,6 +57,12 @@ final class UsageStore: ObservableObject {
   private enum AuthenticationMode {
     case adding(UsageAccount)
     case relogin(UsageAccount)
+
+    var account: UsageAccount {
+      switch self {
+      case .adding(let account), .relogin(let account): return account
+      }
+    }
   }
 
   private let registry: UsageAccountRegistry
@@ -64,6 +88,9 @@ final class UsageStore: ObservableObject {
   private var accountManagementErrorDismissTask: Task<Void, Never>?
   private var accountManagementNoticeDismissTask: Task<Void, Never>?
   private var authenticationMode: AuthenticationMode?
+  private var lastRefreshAllRequestedAt: Date?
+
+  private static let refreshAllDebounceInterval: TimeInterval = 5
 
   init(
     registry: UsageAccountRegistry = UsageAccountRegistry(),
@@ -120,6 +147,7 @@ final class UsageStore: ObservableObject {
     authenticationErrorDismissTask?.cancel()
     accountManagementErrorDismissTask?.cancel()
     accountManagementNoticeDismissTask?.cancel()
+    client.shutdown()
   }
 
   var primaryAccountState: AccountLoadState {
@@ -227,9 +255,18 @@ final class UsageStore: ObservableObject {
   }
 
   func refreshAll() {
-    cancelRefresh()
+    guard refreshTask == nil, !isRefreshingAll, !isSystemDefaultScheduledRefreshInProgress else {
+      return
+    }
+    let now = Date()
+    if let lastRefreshAllRequestedAt,
+      now.timeIntervalSince(lastRefreshAllRequestedAt) < Self.refreshAllDebounceInterval
+    {
+      return
+    }
     let accounts = accountStates.map(\.account)
     guard !accounts.isEmpty else { return }
+    lastRefreshAllRequestedAt = now
     isRefreshingAll = true
     let operationID = UUID()
     refreshOperationID = operationID
@@ -247,8 +284,10 @@ final class UsageStore: ObservableObject {
 
   func refresh(accountID: String) {
     guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
+    guard refreshTask == nil, !isRefreshingAll, !isSystemDefaultScheduledRefreshInProgress else {
+      return
+    }
     guard !isRefreshing(accountID: accountID) else { return }
-    cancelRefresh()
     let operationID = UUID()
     refreshOperationID = operationID
     refreshTask = Task { [weak self] in
@@ -405,6 +444,7 @@ final class UsageStore: ObservableObject {
     if authenticationAccountID == accountID {
       cancelAuthentication(discardPendingAccount: false)
     }
+    client.invalidateSession(sessionID: accountID)
     do {
       try registry.removeManagedAccount(account)
       accountStates.remove(at: index)
@@ -481,10 +521,19 @@ final class UsageStore: ObservableObject {
     do {
       let runtime = try runtime(for: account)
       defer { withExtendedLifetime(runtime) {} }
+      let identityRevision = identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
       let snapshot = try await accountOperationGate.withPermit(for: account.id) {
         try await client.fetchUsage(
+          sessionID: account.id,
+          diagnosticLabel: account.isSystemDefault ? "default" : "managed",
+          identityRevision: identityRevision,
           codexURL: runtime.executableURL,
-          environmentOverride: runtime.environment
+          environmentOverride: runtime.environment,
+          onUpdate: { [weak self] snapshot in
+            Task { @MainActor [weak self] in
+              self?.applyServerUpdate(snapshot, accountID: account.id)
+            }
+          }
         )
       }
       guard !Task.isCancelled else { return }
@@ -493,19 +542,25 @@ final class UsageStore: ObservableObject {
         snapshot: snapshot,
         workspaceFingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
       )
-      setState(.loaded(snapshot), for: account.id)
+      setSnapshot(snapshot, for: account.id)
     } catch is CancellationError {
       return
     } catch CodexRuntimeError.defaultCodexHomeUnavailable {
-      setState(.needsAuthentication, for: account.id)
+      recordRefreshFailure(
+        .notAuthenticated("기본 Codex 로그인 정보를 찾을 수 없습니다."),
+        authenticationRequired: true,
+        for: account.id
+      )
     } catch let error as CodexUsageError {
+      let authenticationRequired: Bool
       if case .notAuthenticated = error {
-        setState(.needsAuthentication, for: account.id)
+        authenticationRequired = true
       } else {
-        setState(.failed(error), for: account.id)
+        authenticationRequired = false
       }
+      recordRefreshFailure(error, authenticationRequired: authenticationRequired, for: account.id)
     } catch {
-      setState(.failed(.serverError(error.localizedDescription)), for: account.id)
+      recordRefreshFailure(.serverError(error.localizedDescription), for: account.id)
     }
   }
 
@@ -525,14 +580,16 @@ final class UsageStore: ObservableObject {
     case .adding(let account):
       authenticationAccountID = account.id
       pendingWorkspaceName = account.normalizedWorkspaceName ?? ""
+      client.invalidateSession(sessionID: account.id)
     case .relogin(let account):
       authenticationAccountID = account.id
       pendingWorkspaceName = ""
+      client.invalidateSession(sessionID: account.id)
     }
     isAuthenticating = true
     deviceLoginInfo = nil
 
-    authenticationTask = Task { [weak self, authenticationClient, client] in
+    authenticationTask = Task { [weak self, authenticationClient, client, identityReader] in
       guard let self else { return }
       do {
         try await authenticationClient.login(runtime: runtime) { [weak self] info in
@@ -545,6 +602,9 @@ final class UsageStore: ObservableObject {
         }
         guard !Task.isCancelled else { return }
         let snapshot = try await client.fetchUsage(
+          sessionID: mode.account.id,
+          diagnosticLabel: mode.account.isSystemDefault ? "default" : "managed",
+          identityRevision: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL),
           codexURL: runtime.executableURL,
           environmentOverride: runtime.environment
         )
@@ -601,6 +661,7 @@ final class UsageStore: ObservableObject {
 
       do {
         try registry.commitPendingAccount(account)
+        client.invalidateSession(sessionID: account.id)
         accountStates.append(
           AccountViewState(
             account: account,
@@ -627,7 +688,7 @@ final class UsageStore: ObservableObject {
         snapshot: snapshot,
         workspaceFingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
       )
-      setState(.loaded(snapshot), for: account.id)
+      setSnapshot(snapshot, for: account.id)
       authenticationMode = nil
       authenticationAccountID = nil
       pendingWorkspaceName = ""
@@ -646,6 +707,7 @@ final class UsageStore: ObservableObject {
     pendingWorkspaceName = ""
 
     if case .adding(let account) = mode {
+      client.invalidateSession(sessionID: account.id)
       try? registry.discardPendingAccount(account)
     }
     startAutomaticActivationSchedulerIfNeeded()
@@ -660,6 +722,7 @@ final class UsageStore: ObservableObject {
     if discardPendingAccount,
       case .adding(let account) = authenticationMode
     {
+      client.invalidateSession(sessionID: account.id)
       try? registry.discardPendingAccount(account)
     }
     authenticationMode = nil
@@ -797,6 +860,29 @@ final class UsageStore: ObservableObject {
   private func setState(_ state: AccountLoadState, for accountID: String) {
     guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
     accountStates[index].state = state
+  }
+
+  private func setSnapshot(_ snapshot: UsageSnapshot, for accountID: String) {
+    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
+    accountStates[index].apply(snapshot: snapshot)
+  }
+
+  private func recordRefreshFailure(
+    _ error: CodexUsageError,
+    authenticationRequired: Bool = false,
+    for accountID: String
+  ) {
+    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
+    accountStates[index].applyRefreshFailure(
+      error,
+      authenticationRequired: authenticationRequired
+    )
+  }
+
+  private func applyServerUpdate(_ snapshot: UsageSnapshot, accountID: String) {
+    guard accountStates.contains(where: { $0.id == accountID }) else { return }
+    updateAccountMetadata(accountID: accountID, snapshot: snapshot, workspaceFingerprint: nil)
+    setSnapshot(snapshot, for: accountID)
   }
 
   private func setRefreshing(_ refreshing: Bool, for accountID: String) {

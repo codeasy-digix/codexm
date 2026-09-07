@@ -446,6 +446,15 @@ private struct AccountUsageCard: View {
         }
 
         Spacer()
+        if let error = viewState.lastRefreshError {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .font(.caption2)
+            .foregroundStyle(.orange)
+            .help(
+              "최근 갱신 실패: \(error.errorDescription ?? "사용량을 가져오지 못했습니다.") 마지막 정상값을 표시 중입니다."
+            )
+            .accessibilityLabel("최근 갱신 실패, 마지막 정상값 표시 중")
+        }
         if viewState.isRefreshing {
           ProgressView().controlSize(.small)
         }
