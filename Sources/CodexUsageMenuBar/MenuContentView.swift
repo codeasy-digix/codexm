@@ -292,7 +292,7 @@ struct MenuContentView: View {
       .controlSize(.small)
 
       Text(
-        "각 연결에 5시간마다 가벼운 low 산술 요청 1회를 보냅니다. 한 번에 한 연결만 실행하며, 연결 간 시작 시각을 최소 30분 간격으로 둡니다."
+        "5h 한도가 있는 연결에만 5시간마다 가벼운 low 산술 요청 1회를 보냅니다. 한 번에 한 연결만 실행하며, 연결 간 시작 시각을 최소 30분 간격으로 둡니다."
       )
       .font(.caption2)
       .foregroundStyle(.secondary)
@@ -584,7 +584,7 @@ private struct AccountUsageCard: View {
         }
 
         if let fiveHourLimit = snapshot.fiveHourLimit {
-          limitResetView("5시간", limit: fiveHourLimit, color: .accentColor)
+          limitResetView("5h:", limit: fiveHourLimit, color: .accentColor)
         }
 
         if let weeklyLimit = snapshot.weeklyLimit {

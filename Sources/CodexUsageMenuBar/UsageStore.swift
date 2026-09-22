@@ -19,6 +19,11 @@ final class UsageStore: ObservableObject {
 
     var id: String { account.id }
 
+    var isAutomaticActivationEligible: Bool {
+      guard case .loaded(let snapshot) = state else { return false }
+      return snapshot.fiveHourLimit != nil
+    }
+
     mutating func apply(snapshot: UsageSnapshot) {
       state = .loaded(snapshot)
       lastRefreshError = nil
@@ -192,9 +197,7 @@ final class UsageStore: ObservableObject {
     let now = Date()
     guard let nextAccountDate = accountStates.compactMap({ viewState -> Date? in
       guard viewState.id != authenticationAccountID else { return nil }
-      if case .needsAuthentication = viewState.state {
-        return nil
-      }
+      guard viewState.isAutomaticActivationEligible else { return nil }
       return max(
         now,
         automaticScheduleStore.entry(for: viewState.id).nextAttemptDate()
@@ -765,7 +768,7 @@ final class UsageStore: ObservableObject {
     let dueAccount = accountStates.enumerated().compactMap {
       index, viewState -> (index: Int, nextDate: Date, account: UsageAccount)? in
       guard viewState.id != authenticationAccountID else { return nil }
-      if case .needsAuthentication = viewState.state { return nil }
+      guard viewState.isAutomaticActivationEligible else { return nil }
       let nextDate = automaticScheduleStore.entry(for: viewState.id).nextAttemptDate()
       guard nextDate <= now else { return nil }
       return (index, nextDate, viewState.account)

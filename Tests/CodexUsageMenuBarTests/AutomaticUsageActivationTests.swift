@@ -112,6 +112,56 @@ struct AutomaticUsageActivationTests {
     #expect(store.entry(for: "account-a") == AutomaticUsageScheduleEntry())
   }
 
+  @Test("Only enables automatic activation for a loaded five-hour limit")
+  func requiresFiveHourLimit() {
+    let account = UsageAccount.systemDefault
+    let weeklyOnlySnapshot = UsageSnapshot(
+      weeklyLimit: UsageLimitWindow(
+        usedPercent: 20,
+        windowDurationMinutes: 10_080,
+        resetsAt: nil
+      ),
+      planType: "pro",
+      availableResetCredits: nil,
+      accountEmail: "test@example.com",
+      fetchedAt: Date()
+    )
+    let fiveHourSnapshot = UsageSnapshot(
+      fiveHourLimit: UsageLimitWindow(
+        usedPercent: 10,
+        windowDurationMinutes: 300,
+        resetsAt: nil
+      ),
+      weeklyLimit: weeklyOnlySnapshot.weeklyLimit,
+      planType: "plus",
+      availableResetCredits: nil,
+      accountEmail: "test@example.com",
+      fetchedAt: Date()
+    )
+
+    #expect(
+      !UsageStore.AccountViewState(
+        account: account,
+        state: .loading,
+        isRefreshing: false
+      ).isAutomaticActivationEligible
+    )
+    #expect(
+      !UsageStore.AccountViewState(
+        account: account,
+        state: .loaded(weeklyOnlySnapshot),
+        isRefreshing: false
+      ).isAutomaticActivationEligible
+    )
+    #expect(
+      UsageStore.AccountViewState(
+        account: account,
+        state: .loaded(fiveHourSnapshot),
+        isRefreshing: false
+      ).isAutomaticActivationEligible
+    )
+  }
+
   @Test("Generates a different compact arithmetic request")
   func generatesDifferentPrompt() {
     let generator = AutomaticUsagePromptGenerator()
