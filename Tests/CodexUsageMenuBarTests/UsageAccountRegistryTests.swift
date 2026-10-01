@@ -61,7 +61,7 @@ struct UsageAccountRegistryTests {
     #expect(exact.matches(fallback))
   }
 
-  @Test("Uses a user-defined workspace name while keeping a short local reference")
+  @Test("Shows only a user-defined workspace name and never a hash fallback")
   func workspaceDisplayName() {
     var account = UsageAccount(
       id: UUID().uuidString,
@@ -75,7 +75,7 @@ struct UsageAccountRegistryTests {
     )
 
     #expect(account.workspaceReference == "ABCDEF12")
-    #expect(account.workspaceDisplayLabel == "워크스페이스 #ABCDEF12")
+    #expect(account.workspaceDisplayLabel == nil)
     #expect(account.workspaceReference?.contains("34567890") == false)
 
     account.workspaceName = "  개발팀  "
@@ -265,6 +265,57 @@ struct UsageAccountRegistryTests {
 
     #expect(loaded.map(\.id) == [UsageAccount.systemDefaultID])
     #expect(!FileManager.default.fileExists(atPath: pendingHome.path))
+  }
+
+  @Test("Persists the connection order including a moved default account")
+  func persistsAccountOrder() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = UsageAccountRegistry(applicationSupportURL: root)
+    let first = try registry.beginManagedAccount()
+    try registry.commitPendingAccount(first)
+    var second = try registry.beginManagedAccount()
+    try registry.commitPendingAccount(second)
+    let order = [second.id, UsageAccount.systemDefaultID, first.id]
+
+    try registry.saveAccountOrder(order)
+    #expect(try registry.loadAccounts().map(\.id) == order)
+    second.workspaceName = "개발팀"
+    try registry.updateAccount(second)
+    var defaultAccount = UsageAccount.systemDefault
+    defaultAccount.workspaceName = "개인"
+    try registry.updateAccount(defaultAccount)
+    #expect(try registry.loadAccounts().map(\.id) == order)
+
+    let third = try registry.beginManagedAccount()
+    try registry.commitPendingAccount(third)
+    #expect(try registry.loadAccounts().map(\.id) == order + [third.id])
+    try registry.removeManagedAccount(second)
+    #expect(try registry.loadAccounts().map(\.id) == [UsageAccount.systemDefaultID, first.id, third.id])
+  }
+
+  @Test("Reordering does not delete a pending device login")
+  func reordersWithoutDiscardingPendingLogin() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = UsageAccountRegistry(applicationSupportURL: root)
+    _ = try registry.loadAccounts()
+    let pending = try registry.beginManagedAccount()
+    let pendingHome = try registry.pendingCodexHomeURL(for: pending)
+    let config = pendingHome.appending(path: "config.toml")
+
+    try registry.saveAccountOrder([UsageAccount.systemDefaultID])
+    #expect(FileManager.default.fileExists(atPath: config.path))
+    try registry.commitPendingAccount(pending)
+    #expect(try registry.loadAccounts().map(\.id) == [UsageAccount.systemDefaultID, pending.id])
+  }
+
+  @Test("Normalizes stale and duplicate ordering metadata without losing accounts")
+  func normalizesAccountOrder() {
+    #expect(AccountOrder.normalized(["b", "removed", "b"], availableIDs: ["a", "b", "c"]) == ["b", "a", "c"])
+    #expect(AccountOrder.moving("a", to: "c", in: ["a", "b", "c"]) == ["b", "c", "a"])
+    #expect(AccountOrder.moving("c", to: "a", in: ["a", "b", "c"]) == ["c", "a", "b"])
+    #expect(AccountOrder.moving("missing", to: "a", in: ["a", "b"]) == ["a", "b"])
   }
 
   private func temporaryRoot() -> URL {

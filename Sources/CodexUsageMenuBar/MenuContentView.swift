@@ -1,10 +1,13 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MenuContentView: View {
   @ObservedObject var store: UsageStore
   @ObservedObject var preferences: AppPreferences
   @State private var pendingDeletionAccount: UsageAccount?
+  @State private var draggedAccountID: String?
+  @State private var previewOrder: [String] = []
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -57,7 +60,9 @@ struct MenuContentView: View {
     .animation(.easeInOut(duration: 0.2), value: store.accountManagementNotice)
     .animation(.easeInOut(duration: 0.2), value: store.authenticationError)
     .onAppear { store.refreshAll() }
+    .onDisappear { endAccountDrag() }
     .onChange(of: store.accountStates.map(\.id)) { accountIDs in
+      endAccountDrag()
       if let pendingDeletionAccount,
         !accountIDs.contains(pendingDeletionAccount.id)
       {
@@ -70,13 +75,28 @@ struct MenuContentView: View {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(spacing: 10) {
-          ForEach(store.accountStates) { accountState in
+          ForEach(visibleAccountStates) { accountState in
             AccountUsageCard(
               viewState: accountState,
               store: store,
-              onRequestDelete: { pendingDeletionAccount = accountState.account }
+              onRequestDelete: { pendingDeletionAccount = accountState.account },
+              onBeginDrag: {
+                previewOrder = store.accountStates.map(\.id)
+                draggedAccountID = accountState.id
+              },
+              onEndDrag: endAccountDrag
             )
             .id(accountState.id)
+            .opacity(draggedAccountID == accountState.id ? 0.6 : 1)
+            .onDrop(
+              of: [.codexUsageAccountOrder],
+              delegate: AccountCardDropDelegate(
+                targetID: accountState.id,
+                draggedAccountID: $draggedAccountID,
+                previewOrder: $previewOrder,
+                onCommit: store.reorderAccounts
+              )
+            )
           }
         }
         .padding(.vertical, 1)
@@ -88,6 +108,17 @@ struct MenuContentView: View {
       }
     }
     .animation(.easeInOut(duration: 0.18), value: accountListHeight)
+  }
+
+  private var visibleAccountStates: [UsageStore.AccountViewState] {
+    guard draggedAccountID != nil else { return store.accountStates }
+    let order = AccountOrder.normalized(previewOrder, availableIDs: store.accountStates.map(\.id))
+    return order.compactMap { id in store.accountStates.first { $0.id == id } }
+  }
+
+  private func endAccountDrag() {
+    draggedAccountID = nil
+    previewOrder = []
   }
 
   private var header: some View {
@@ -356,9 +387,9 @@ struct MenuContentView: View {
   private func estimatedCardHeight(_ viewState: UsageStore.AccountViewState) -> CGFloat {
     switch viewState.state {
     case .loaded(let snapshot):
-      return ((snapshot.availableResetCredits ?? 0) > 0 ? 174 : 152) + 24
+      return snapshot.fiveHourLimit != nil && snapshot.weeklyLimit != nil ? 112 : 104
     case .loading, .needsAuthentication, .failed:
-      return 132
+      return 106
     }
   }
 
@@ -385,10 +416,12 @@ struct MenuContentView: View {
   }
 }
 
-private struct AccountUsageCard: View {
+struct AccountUsageCard: View {
   let viewState: UsageStore.AccountViewState
   @ObservedObject var store: UsageStore
   let onRequestDelete: () -> Void
+  var onBeginDrag: () -> Void = {}
+  var onEndDrag: () -> Void = {}
 
   @State private var isRenaming = false
   @State private var draftName = ""
@@ -396,10 +429,8 @@ private struct AccountUsageCard: View {
   @State private var draftWorkspaceName = ""
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 6) {
       accountHeader
-
-      workspaceRow
 
       switch viewState.state {
       case .loading:
@@ -412,7 +443,7 @@ private struct AccountUsageCard: View {
         errorView(error)
       }
     }
-    .padding(12)
+    .padding(10)
     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11))
     .overlay {
       RoundedRectangle(cornerRadius: 11)
@@ -422,7 +453,7 @@ private struct AccountUsageCard: View {
 
   @ViewBuilder
   private var accountHeader: some View {
-    HStack(spacing: 7) {
+    HStack(spacing: 5) {
       if isRenaming {
         TextField("표시 이름", text: $draftName)
           .textFieldStyle(.roundedBorder)
@@ -432,20 +463,23 @@ private struct AccountUsageCard: View {
         Button { isRenaming = false } label: { Image(systemName: "xmark") }
           .buttonStyle(.plain)
       } else {
-        Text(viewState.account.title)
-          .font(.callout.weight(.semibold))
+        Text(headerTitle)
+          .font(.caption.weight(.semibold))
           .lineLimit(1)
+          .truncationMode(.middle)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .help(headerTitle)
 
         if viewState.account.isSystemDefault {
           Text("기본")
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 5)
+            .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(.quaternary, in: Capsule())
         }
 
-        Spacer()
+        workspaceControl
         if let error = viewState.lastRefreshError {
           Image(systemName: "exclamationmark.triangle.fill")
             .font(.caption2)
@@ -459,8 +493,31 @@ private struct AccountUsageCard: View {
           ProgressView().controlSize(.small)
         }
         accountMenu
+        AccountDragHandle(
+          accountID: viewState.id,
+          label: headerTitle,
+          onBegin: onBeginDrag,
+          onEnd: onEndDrag
+        )
       }
     }
+  }
+
+  private var headerTitle: String {
+    let email: String?
+    if case .loaded(let snapshot) = viewState.state {
+      email = snapshot.accountEmail ?? viewState.account.lastKnownEmail
+    } else {
+      email = viewState.account.lastKnownEmail
+    }
+    guard let email, !email.isEmpty else { return viewState.account.title }
+    if viewState.account.isManaged,
+      let name = viewState.account.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !name.isEmpty, name != email
+    {
+      return "\(name) · \(email)"
+    }
+    return email
   }
 
   private var accountMenu: some View {
@@ -490,14 +547,13 @@ private struct AccountUsageCard: View {
   }
 
   @ViewBuilder
-  private var workspaceRow: some View {
-    HStack(spacing: 6) {
+  private var workspaceControl: some View {
+    HStack(spacing: 4) {
       if isRenamingWorkspace {
-        Image(systemName: "building.2")
-          .foregroundStyle(.secondary)
         TextField("워크스페이스 이름", text: $draftWorkspaceName)
           .textFieldStyle(.roundedBorder)
           .controlSize(.small)
+          .frame(width: 82)
           .onSubmit { saveWorkspaceName() }
         Button { saveWorkspaceName() } label: {
           Image(systemName: "checkmark")
@@ -510,14 +566,12 @@ private struct AccountUsageCard: View {
         .buttonStyle(.plain)
         .help("취소")
       } else {
-        Label(
-          viewState.account.workspaceDisplayLabel ?? "워크스페이스 이름 미지정",
-          systemImage: "building.2"
-        )
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .help(workspaceHelp)
+        Text(viewState.account.normalizedWorkspaceName ?? "이름 설정")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .frame(maxWidth: 78)
+          .help(workspaceHelp)
 
         Button {
           draftWorkspaceName = viewState.account.normalizedWorkspaceName ?? ""
@@ -528,19 +582,10 @@ private struct AccountUsageCard: View {
         }
         .buttonStyle(.plain)
         .help("워크스페이스 이름 수정")
-
-        Spacer(minLength: 4)
-
-        if viewState.account.normalizedWorkspaceName != nil,
-          let reference = viewState.account.workspaceReference
-        {
-          Text("#\(reference)")
-            .font(.caption2.monospaced())
-            .foregroundStyle(.tertiary)
-            .help("중복 연결 판별용 로컬 참조값")
-        }
       }
     }
+    .font(.caption2)
+    .fixedSize(horizontal: true, vertical: false)
   }
 
   private var workspaceHelp: String {
@@ -561,28 +606,16 @@ private struct AccountUsageCard: View {
   }
 
   private func usageView(_ snapshot: UsageSnapshot) -> some View {
-    HStack(alignment: .top, spacing: 12) {
+    let ringSize: CGFloat = snapshot.fiveHourLimit != nil && snapshot.weeklyLimit != nil ? 64 : 56
+    return HStack(alignment: .center, spacing: 10) {
       DualUsageRing(
         fiveHourLimit: snapshot.fiveHourLimit,
-        weeklyLimit: snapshot.weeklyLimit
+        weeklyLimit: snapshot.weeklyLimit,
+        diameter: ringSize
       )
-      .frame(width: 98, height: 98)
+      .frame(width: ringSize, height: ringSize)
 
-      VStack(alignment: .leading, spacing: 6) {
-        if let email = snapshot.accountEmail, !email.isEmpty {
-          Label(email, systemImage: "person.crop.circle")
-            .font(.caption.weight(.medium))
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .help(email)
-        }
-
-        if let plan = snapshot.planDisplayName {
-          Label("ChatGPT \(plan)", systemImage: "creditcard")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-
+      VStack(alignment: .leading, spacing: 5) {
         if let fiveHourLimit = snapshot.fiveHourLimit {
           limitResetView("5h:", limit: fiveHourLimit, color: .accentColor)
         }
@@ -614,16 +647,18 @@ private struct AccountUsageCard: View {
         let countdown = limit.resetCountdown() ?? "곧 초기화"
         Text(
           countdown == "곧 초기화"
-            ? "\(title) 곧 초기화 · \(resetsAt.formatted(date: .abbreviated, time: .shortened))"
-            : "\(title) \(countdown) 후 · \(resetsAt.formatted(date: .abbreviated, time: .shortened))"
+            ? "\(title) 곧 초기화 · \(CompactUsageDate.string(resetsAt))"
+            : "\(title) \(countdown) 후 · \(CompactUsageDate.string(resetsAt))"
         )
+        .help("\(title) \(countdown) · \(resetsAt.formatted(date: .complete, time: .shortened))")
       } else {
         Text("\(title) 초기화 시각 정보 없음")
       }
     }
     .font(.caption2)
     .foregroundStyle(.secondary)
-    .fixedSize(horizontal: false, vertical: true)
+    .lineLimit(1)
+    .minimumScaleFactor(0.8)
   }
 
   private func accessibilityUsageLabel(_ snapshot: UsageSnapshot) -> String {
@@ -640,37 +675,14 @@ private struct AccountUsageCard: View {
 
   @ViewBuilder
   private func resetCreditsView(_ snapshot: UsageSnapshot) -> some View {
-    if let count = snapshot.availableResetCredits, count > 0 {
-      VStack(alignment: .leading, spacing: 2) {
-        Label("리셋 크레딧 \(count)개", systemImage: "arrow.counterclockwise.circle")
-          .font(.caption.weight(.medium))
-
-        if let expiresAt = snapshot.earliestResetCreditExpiration {
-          Text(
-            "\(snapshot.hasCompleteResetCreditDetails ? "가장 빠른 소멸" : "확인된 크레딧 소멸") "
-              + expiresAt.formatted(date: .abbreviated, time: .shortened)
-          )
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          if let countdown = snapshot.resetCreditExpirationCountdown() {
-            Text(countdown == "곧 소멸" ? countdown : "\(countdown) 후")
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-          }
-        } else {
-          Text("소멸 시각 정보 없음")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-
-        if snapshot.resetCreditDetails != nil,
-          Int64(snapshot.availableResetCreditDetails.count) < count
-        {
-          Text("상세 정보 \(snapshot.availableResetCreditDetails.count)/\(count)개 제공됨")
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-        }
-      }
+    if let summary = CompactResetCreditSummary(snapshot: snapshot) {
+      Text(summary.text)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.72)
+        .help(summary.detail)
+        .accessibilityLabel(summary.detail)
     }
   }
 
@@ -728,23 +740,43 @@ private struct AccountUsageCard: View {
 struct DualUsageRing: View {
   let fiveHourLimit: UsageLimitWindow?
   let weeklyLimit: UsageLimitWindow?
+  var diameter: CGFloat = 98
+
+  private var hasBothLimits: Bool { fiveHourLimit != nil && weeklyLimit != nil }
+  private var outerSize: CGFloat { diameter - 6 }
 
   var body: some View {
     ZStack {
-      Circle()
-        .stroke(Color.accentColor.opacity(0.14), lineWidth: 8)
-        .frame(width: 92, height: 92)
-      progressRing(limit: fiveHourLimit, baseColor: .accentColor, size: 92, lineWidth: 8)
-
-      Circle()
-        .stroke(Color.purple.opacity(0.14), lineWidth: 7)
-        .frame(width: 68, height: 68)
-      progressRing(limit: weeklyLimit, baseColor: .purple, size: 68, lineWidth: 7)
+      if hasBothLimits {
+        ring(limit: fiveHourLimit, color: .accentColor, size: outerSize, lineWidth: diameter * 0.082)
+        ring(limit: weeklyLimit, color: .purple, size: outerSize * 0.739, lineWidth: diameter * 0.071)
+      } else {
+        ring(
+          limit: fiveHourLimit ?? weeklyLimit,
+          color: fiveHourLimit != nil ? .accentColor : .purple,
+          size: outerSize,
+          lineWidth: diameter * 0.082
+        )
+      }
 
       VStack(spacing: 1) {
-        limitValue("5h", limit: fiveHourLimit, color: .accentColor)
-        limitValue("7d", limit: weeklyLimit, color: .purple)
+        if fiveHourLimit != nil || weeklyLimit == nil {
+          limitValue("5h", limit: fiveHourLimit, color: .accentColor)
+        }
+        if weeklyLimit != nil {
+          limitValue("7d", limit: weeklyLimit, color: .purple)
+        }
       }
+    }
+    .frame(width: diameter, height: diameter)
+  }
+
+  private func ring(limit: UsageLimitWindow?, color: Color, size: CGFloat, lineWidth: CGFloat) -> some View {
+    ZStack {
+      Circle()
+        .stroke(color.opacity(0.14), lineWidth: lineWidth)
+        .frame(width: size, height: size)
+      progressRing(limit: limit, baseColor: color, size: size, lineWidth: lineWidth)
     }
   }
 
@@ -779,7 +811,12 @@ struct DualUsageRing: View {
       Text(limit.map { "\($0.remainingPercent)%" } ?? "—")
         .foregroundStyle(.primary)
     }
-    .font(.system(size: 9.5, weight: .semibold, design: .rounded).monospacedDigit())
+    .font(
+      .system(
+        size: hasBothLimits ? max(7.8, 9.5 * diameter / 98) : 9.5,
+        weight: .semibold, design: .rounded
+      ).monospacedDigit()
+    )
   }
 
   private func progressColor(base: Color, progress: Double) -> Color {

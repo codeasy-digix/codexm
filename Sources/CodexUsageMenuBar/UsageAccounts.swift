@@ -128,7 +128,7 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
     if let normalizedWorkspaceName {
       return "워크스페이스 \(normalizedWorkspaceName)"
     }
-    return workspaceReference.map { "워크스페이스 #\($0)" }
+    return nil
   }
 
   var normalizedWorkspaceName: String? {
@@ -169,6 +169,7 @@ struct UsageAccountRegistry: @unchecked Sendable {
     let version: Int
     var accounts: [UsageAccount]
     var systemDefaultWorkspaceName: String? = nil
+    var accountOrder: [String]? = nil
   }
 
   private let fileManager: FileManager
@@ -204,8 +205,20 @@ struct UsageAccountRegistry: @unchecked Sendable {
     let payload = try loadPayload()
     var systemDefault = UsageAccount.systemDefault
     systemDefault.workspaceName = payload.systemDefaultWorkspaceName
-    return [systemDefault] + payload.accounts.filter(\.isManaged)
+    let accounts = [systemDefault] + payload.accounts.filter(\.isManaged)
       .sorted { $0.createdAt < $1.createdAt }
+    let order = AccountOrder.normalized(payload.accountOrder ?? [], availableIDs: accounts.map(\.id))
+    return order.compactMap { id in accounts.first { $0.id == id } }
+  }
+
+  /// Reads only registry metadata: reordering must not clean up an active device login.
+  func saveAccountOrder(_ accountIDs: [String]) throws {
+    let payload = try loadPayload()
+    try savePayload(
+      accounts: payload.accounts,
+      systemDefaultWorkspaceName: payload.systemDefaultWorkspaceName,
+      accountOrder: accountIDs
+    )
   }
 
   func beginManagedAccount() throws -> UsageAccount {
@@ -286,7 +299,8 @@ struct UsageAccountRegistry: @unchecked Sendable {
       let payload = try loadPayload()
       try savePayload(
         accounts: payload.accounts,
-        systemDefaultWorkspaceName: account.normalizedWorkspaceName
+        systemDefaultWorkspaceName: account.normalizedWorkspaceName,
+        accountOrder: payload.accountOrder
       )
       return
     }
@@ -386,13 +400,15 @@ struct UsageAccountRegistry: @unchecked Sendable {
     let payload = try loadPayload()
     try savePayload(
       accounts: accounts,
-      systemDefaultWorkspaceName: payload.systemDefaultWorkspaceName
+      systemDefaultWorkspaceName: payload.systemDefaultWorkspaceName,
+      accountOrder: payload.accountOrder
     )
   }
 
   private func savePayload(
     accounts: [UsageAccount],
-    systemDefaultWorkspaceName: String?
+    systemDefaultWorkspaceName: String?,
+    accountOrder: [String]?
   ) throws {
     try prepareRootDirectories()
     let encoder = JSONEncoder()
@@ -400,9 +416,12 @@ struct UsageAccountRegistry: @unchecked Sendable {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let data = try encoder.encode(
       Payload(
-        version: 2,
+        version: 3,
         accounts: accounts,
-        systemDefaultWorkspaceName: systemDefaultWorkspaceName
+        systemDefaultWorkspaceName: systemDefaultWorkspaceName,
+        accountOrder: accountOrder.map {
+          AccountOrder.normalized($0, availableIDs: [UsageAccount.systemDefaultID] + accounts.map(\.id))
+        }
       )
     )
     try data.write(to: registryURL, options: .atomic)

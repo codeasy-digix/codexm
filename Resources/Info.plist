@@ -19,15 +19,28 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-	<string>1.5.5</string>
+	<string>1.6.0</string>
     <key>CFBundleVersion</key>
-	<string>19</string>
+	<string>20</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.codeasy.CodexUsage.account-order</string>
+            <key>UTTypeDescription</key>
+            <string>Codex Usage connection order</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+        </dict>
+    </array>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Codeasy</string>
 </dict>

@@ -438,6 +438,25 @@ final class UsageStore: ObservableObject {
     pendingWorkspaceName = workspaceName
   }
 
+  @discardableResult
+  func reorderAccounts(accountIDs: [String]) -> Bool {
+    let currentIDs = accountStates.map(\.id)
+    guard accountIDs.count == currentIDs.count,
+      Set(accountIDs) == Set(currentIDs)
+    else { return false }
+    guard accountIDs != currentIDs else { return true }
+    do {
+      try registry.saveAccountOrder(accountIDs)
+      let currentStates = accountStates
+      accountStates = accountIDs.compactMap { id in currentStates.first { $0.id == id } }
+      clearAccountManagementError()
+      return true
+    } catch {
+      showAccountManagementError("연결 순서를 저장하지 못했습니다. \(error.localizedDescription)")
+      return false
+    }
+  }
+
   func removeManagedAccount(accountID: String) {
     guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
     let account = accountStates[index].account
@@ -672,7 +691,6 @@ final class UsageStore: ObservableObject {
             isRefreshing: false
           )
         )
-        sortAccountStates()
         recentlyAddedAccountID = account.id
         let workspaceLabel = account.workspaceDisplayLabel.map { " · \($0)" } ?? ""
         showAccountManagementNotice(
@@ -910,15 +928,6 @@ final class UsageStore: ObservableObject {
       } catch {
         showAccountManagementError(error.localizedDescription)
       }
-    }
-  }
-
-  private func sortAccountStates() {
-    accountStates.sort { lhs, rhs in
-      if lhs.account.isSystemDefault != rhs.account.isSystemDefault {
-        return lhs.account.isSystemDefault
-      }
-      return lhs.account.createdAt < rhs.account.createdAt
     }
   }
 
