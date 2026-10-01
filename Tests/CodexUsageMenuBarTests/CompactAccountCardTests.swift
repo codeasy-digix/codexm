@@ -68,7 +68,8 @@ struct CompactAccountCardTests {
       state: .loaded(snapshot(credits: 3, details: [credit(now.addingTimeInterval(172_800))])),
       isRefreshing: false
     )
-    let content = AccountUsageCard(viewState: viewState, store: store, onRequestDelete: {})
+    let content = AccountUsageCard(viewState: viewState, store: store,
+      preferences: AppPreferences(), onRequestDelete: {})
       .frame(width: 392)
       .padding(14)
       .background(Color(nsColor: .windowBackgroundColor))

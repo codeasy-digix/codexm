@@ -20,11 +20,40 @@ enum AppLanguage: String, CaseIterable, Sendable {
   }
 }
 
+enum AppLanguagePreference: String, CaseIterable, Identifiable, Sendable {
+  case system
+  case english = "en"
+  case korean = "ko"
+  case chinese = "zh-Hans"
+  case hindi = "hi"
+
+  static let defaultsKey = "AppLanguagePreference"
+  var id: Self { self }
+
+  var title: String {
+    guard let language = AppLanguage(rawValue: rawValue) else {
+      return L10n.text("options.language_system")
+    }
+    // Native names stay recognizable even when the current UI language changes.
+    return L10n.catalog(for: language)["language.name"] ?? language.rawValue
+  }
+
+  func resolve(preferredLanguages: [String]) -> AppLanguage {
+    AppLanguage(rawValue: rawValue) ?? AppLanguage.resolve(preferredLanguages: preferredLanguages)
+  }
+
+  static func load(from defaults: UserDefaults = .standard) -> Self {
+    defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .system
+  }
+}
+
 enum L10n {
   @TaskLocal static var languageOverride: AppLanguage?
 
   static var language: AppLanguage {
-    languageOverride ?? AppLanguage.resolve(preferredLanguages: Locale.preferredLanguages)
+    // UserDefaults is thread-safe: background diagnostics and UI use the same
+    // persisted preference without sharing mutable, actor-isolated state.
+    languageOverride ?? AppLanguagePreference.load().resolve(preferredLanguages: Locale.preferredLanguages)
   }
 
   static var locale: Locale {
@@ -69,6 +98,7 @@ enum L10n {
   static func diagnosticData() -> Data {
     let report: [String: Any] = [
       "language": language.rawValue, "locale": locale.identifier,
+      "languagePreference": AppLanguagePreference.load().rawValue,
       "resources": resourceBundle.bundleURL.path,
       "catalogsComplete": catalogsAreComplete,
       "catalogCounts": Dictionary(uniqueKeysWithValues: AppLanguage.allCases.map {
@@ -76,6 +106,7 @@ enum L10n {
       }),
       "autoRefreshTitle": text("auto.title"), "close": text("common.close"),
       "about": text("about.title"),
+      "languageMenu": text("options.language"),
     ]
     return (try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])) ?? Data()
   }

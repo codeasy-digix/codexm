@@ -6,7 +6,7 @@
 
 앱은 계정 정보를 수집하는 개발자 서버를 운영하지 않습니다. 인증·상태 조회·선택적 모델 요청은 OpenAI와 통신하며, 추가 연결의 로그인 저장소와 표시 설정은 Mac에 보관합니다. 상세한 범위와 주의사항은 아래 개인정보 항목을 참고하세요.
 
-English overview: Monitor multiple Codex accounts and workspaces in one native menu-bar panel. Optional 5h auto-refresh sends small, staggered model requests while the app runs; it consumes allowance and cannot override OpenAI's limits. There is no developer-operated account-data collection server. The UI follows macOS language settings in English, Korean, Simplified Chinese or Hindi, with English as the fallback.
+English overview: Monitor multiple Codex accounts and workspaces in one native menu-bar panel. Optional 5h auto-refresh sends small, staggered model requests while the app runs; it consumes allowance and cannot override OpenAI's limits. There is no developer-operated account-data collection server. Choose English, Korean, Simplified Chinese or Hindi in Options → Language, or follow macOS language settings with English as the fallback. Language changes apply immediately and are saved on this Mac.
 
 ## 주요 기능
 
@@ -40,6 +40,7 @@ English overview: Monitor multiple Codex accounts and workspaces in one native m
 - 자동 갱신 옆의 `?` 버튼에서 사용량 소비, 예약 방식, 여러 장비 사용 주의사항 안내
 - 옵션의 **이 제품에 관하여**에서 제품 설명·개인정보 범위·소스 코드·오픈소스 라이선스 확인
 - 모든 앱 문구·도움말·접근성 레이블·남은 시간·오류 설명에 영어/한국어/중국어 간체/힌디어 지원
+- 기어 옵션의 **언어** 메뉴에서 시스템 설정 따르기 또는 네 언어를 선택하고 즉시 적용·저장
 
 앱은 함께 배포되는 Codex 네이티브 실행 파일과 공식 로컬 app-server 프로토콜인 `account/rateLimits/read` 및 `account/rateLimits/updated`를 사용합니다. 각 계정은 하나의 초기화된 app-server 연결을 계속 재사용하고, 연결이 실제로 종료되거나 시간 초과되면 자동 연속 재시도하지 않고 다음 예약 주기에 새 연결을 만듭니다. 앱은 중복 계정 판별과 외부 계정 전환 감지를 위해 `auth.json`의 계정/워크스페이스 식별자만 단방향 해시로 비교하며, 액세스·리프레시·ID 토큰 값은 판별에 사용하거나 별도로 저장·복사하지 않습니다.
 
@@ -62,7 +63,7 @@ English overview: Monitor multiple Codex accounts and workspaces in one native m
 
 ## 언어
 
-영어(`en`), 한국어(`ko`), 중국어 간체(`zh-Hans`), 힌디어(`hi`)를 지원합니다. macOS의 선호 언어 또는 앱별 언어 설정을 따르며, 지원하지 않거나 올바르지 않은 언어 설정은 영어로 표시합니다. 중국어 지역/스크립트 설정은 간체 번역을 사용합니다. 언어를 바꾼 뒤 앱을 다시 실행하면 적용됩니다. 이메일·인증 코드·사용자가 입력한 이름·기술 식별자는 바꾸지 않습니다. 원본 서버/시스템 오류 세부정보와 법적 라이선스 원문은 번역된 설명과 함께 원문으로 제공합니다.
+기어 옵션 → **언어**에서 **시스템 설정 따르기**, **English**, **한국어**, **简体中文**, **हिन्दी** 중 선택할 수 있습니다. 기본값은 시스템 설정 따르기이며 macOS의 선호 언어 또는 앱별 언어 설정을 사용합니다. 지원하지 않거나 올바르지 않은 시스템 언어는 영어로 표시하고, 중국어 지역/스크립트 설정은 간체 번역을 사용합니다. 앱에서 직접 언어를 선택하면 macOS 설정보다 우선하며 메뉴·계정 카드·열려 있는 도움말 창에 재실행 없이 즉시 적용됩니다. 선택은 해당 Mac에 저장되어 다음 실행에도 유지됩니다. 이미 발생한 일시적인 알림·원본 진단 메시지는 발생 당시 표현을 유지할 수 있습니다. 이메일·인증 코드·사용자가 입력한 이름·기술 식별자는 바꾸지 않습니다. 언어 선택 메뉴의 각 언어 이름은 해당 언어의 표기를 유지합니다. 원본 서버/시스템 오류 세부정보와 법적 라이선스 원문은 번역된 설명과 함께 원문으로 제공합니다.
 
 ## 요구 사항
 

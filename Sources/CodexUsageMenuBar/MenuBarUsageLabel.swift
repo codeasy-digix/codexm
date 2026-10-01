@@ -60,6 +60,7 @@ enum MenuBarIndicator: Equatable {
 struct MenuBarUsageLabel: View {
   let indicator: MenuBarIndicator
   var style: MenuBarIconStyle = .terminal
+  @ObservedObject var preferences: AppPreferences
 
   var body: some View {
     Image(nsImage: CodexMenuBarIconRenderer.image(for: indicator, style: style))

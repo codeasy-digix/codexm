@@ -39,8 +39,9 @@ final class ProductInformationPresenter {
   static let shared = ProductInformationPresenter()
   private var controllers: [ProductInformationKind: NSWindowController] = [:]
 
-  func show(_ kind: ProductInformationKind) {
+  func show(_ kind: ProductInformationKind, preferences: AppPreferences) {
     if let controller = controllers[kind] {
+      controller.window?.title = kind.title
       NSApp.activate(ignoringOtherApps: true)
       controller.showWindow(nil)
       controller.window?.makeKeyAndOrderFront(nil)
@@ -58,7 +59,9 @@ final class ProductInformationPresenter {
     panel.becomesKeyOnlyIfNeeded = false
     panel.hidesOnDeactivate = false
     panel.contentView = NSHostingView(rootView: ProductInformationView(
-      kind: kind, onClose: { [weak panel] in panel?.close() }))
+      kind: kind, preferences: preferences,
+      onClose: { [weak panel] in panel?.close() },
+      onLanguageChange: { [weak panel] in panel?.title = kind.title }))
     panel.center()
     let controller = NSWindowController(window: panel)
     controllers[kind] = controller
@@ -70,7 +73,9 @@ final class ProductInformationPresenter {
 
 struct ProductInformationView: View {
   let kind: ProductInformationKind
+  @ObservedObject var preferences: AppPreferences
   var onClose: () -> Void = {}
+  var onLanguageChange: () -> Void = {}
 
   var body: some View {
     VStack(spacing: 0) {
@@ -99,7 +104,7 @@ struct ProductInformationView: View {
               Link(L10n.text("about.repository"),
                 destination: URL(string: "https://github.com/codeasy-digix/codexm")!)
               Button(L10n.text("about.licenses")) {
-                ProductInformationPresenter.shared.show(.licenses)
+                ProductInformationPresenter.shared.show(.licenses, preferences: preferences)
               }
             }
           } else if kind == .licenses {
@@ -122,6 +127,7 @@ struct ProductInformationView: View {
       .padding(14)
     }
     .environment(\.locale, L10n.locale)
+    .onChange(of: preferences.languagePreference) { _ in onLanguageChange() }
   }
 
   static var licenseText: String {

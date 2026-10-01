@@ -53,7 +53,7 @@ struct MenuBarUsageLabelTests {
     #expect(nativeImage.isTemplate)
     #expect(nativeImage.size == CodexMenuBarIconRenderer.size)
 
-    let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 18, weekly: 64))
+    let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 18, weekly: 64), preferences: AppPreferences())
       .padding(10)
       .background(Color.white)
       .environment(\.colorScheme, .light)
@@ -97,7 +97,7 @@ struct MenuBarUsageLabelTests {
     #expect(nativeImage.isTemplate)
     #expect(nativeImage.tiffRepresentation != nil)
 
-    let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 82, weekly: 0))
+    let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 82, weekly: 0), preferences: AppPreferences())
       .padding(10)
       .background(Color.white)
       .environment(\.colorScheme, .light)
@@ -123,7 +123,7 @@ struct MenuBarUsageLabelTests {
     #expect(indicator.weeklyRemainingFraction == 0.64)
     #expect(CodexMenuBarIconRenderer.circularAttributedText(for: indicator).string == "18%")
 
-    let content = MenuBarUsageLabel(indicator: indicator, style: .circular)
+    let content = MenuBarUsageLabel(indicator: indicator, style: .circular, preferences: AppPreferences())
       .padding(10)
       .background(Color.white)
       .environment(\.colorScheme, .light)

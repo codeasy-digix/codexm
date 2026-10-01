@@ -6,6 +6,14 @@ struct OptionsMenu: View {
 
   var body: some View {
     Menu {
+      Picker(L10n.text("options.language"), selection: $preferences.languagePreference) {
+        ForEach(AppLanguagePreference.allCases) { language in
+          Text(language.title).tag(language)
+        }
+      }
+
+      Divider()
+
       Picker(L10n.text("options.icon"), selection: $preferences.menuBarIconStyle) {
         ForEach(MenuBarIconStyle.allCases) { style in
           Label(style.title, systemImage: style.systemImage)
@@ -29,7 +37,7 @@ struct OptionsMenu: View {
 
       Divider()
       Button(L10n.text("about.title"), systemImage: "info.circle") {
-        ProductInformationPresenter.shared.show(.about)
+        ProductInformationPresenter.shared.show(.about, preferences: preferences)
       }
     } label: {
       Image(systemName: "gearshape")

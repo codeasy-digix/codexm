@@ -1,4 +1,7 @@
 "app.title" = "Codex Usage";
+"language.name" = "English";
+"options.language" = "Language";
+"options.language_system" = "Follow system settings";
 "common.cancel" = "Cancel";
 "common.close" = "Close";
 "common.save" = "Save";

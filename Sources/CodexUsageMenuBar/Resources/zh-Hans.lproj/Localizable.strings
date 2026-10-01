@@ -1,4 +1,7 @@
 "app.title" = "Codex Usage";
+"language.name" = "简体中文";
+"options.language" = "语言";
+"options.language_system" = "跟随系统设置";
 "common.cancel" = "取消";
 "common.close" = "关闭";
 "common.save" = "保存";

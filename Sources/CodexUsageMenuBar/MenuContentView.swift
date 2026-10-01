@@ -79,6 +79,7 @@ struct MenuContentView: View {
             AccountUsageCard(
               viewState: accountState,
               store: store,
+              preferences: preferences,
               onRequestDelete: { pendingDeletionAccount = accountState.account },
               onBeginDrag: {
                 previewOrder = store.accountStates.map(\.id)
@@ -328,7 +329,7 @@ struct MenuContentView: View {
         .toggleStyle(.switch)
         .controlSize(.small)
 
-        Button { ProductInformationPresenter.shared.show(.automaticRefresh) } label: {
+        Button { ProductInformationPresenter.shared.show(.automaticRefresh, preferences: preferences) } label: {
           Image(systemName: "questionmark.circle")
             .font(.system(size: 14))
             .frame(width: 22, height: 22)
@@ -453,6 +454,7 @@ struct MenuContentView: View {
 struct AccountUsageCard: View {
   let viewState: UsageStore.AccountViewState
   @ObservedObject var store: UsageStore
+  @ObservedObject var preferences: AppPreferences
   let onRequestDelete: () -> Void
   var onBeginDrag: () -> Void = {}
   var onEndDrag: () -> Void = {}

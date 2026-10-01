@@ -39,9 +39,16 @@ final class AppPreferences: ObservableObject {
     }
   }
 
+  @Published var languagePreference: AppLanguagePreference {
+    didSet {
+      defaults.set(languagePreference.rawValue, forKey: AppLanguagePreference.defaultsKey)
+    }
+  }
+
   init(defaults: UserDefaults = .standard) {
     self.defaults = defaults
     self.menuBarIconStyle = defaults.string(forKey: Key.menuBarIconStyle)
       .flatMap(MenuBarIconStyle.init(rawValue:)) ?? .terminal
+    self.languagePreference = AppLanguagePreference.load(from: defaults)
   }
 }

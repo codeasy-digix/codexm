@@ -25,7 +25,8 @@ struct CodexUsageMenuBarApp: App {
       MenuContentView(store: store, preferences: preferences)
         .environment(\.locale, L10n.locale)
     } label: {
-      MenuBarUsageLabel(indicator: menuBarIndicator, style: preferences.menuBarIconStyle)
+      MenuBarUsageLabel(indicator: menuBarIndicator, style: preferences.menuBarIconStyle,
+        preferences: preferences)
     }
     .menuBarExtraStyle(.window)
   }

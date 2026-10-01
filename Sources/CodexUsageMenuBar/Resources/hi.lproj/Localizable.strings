@@ -1,4 +1,7 @@
 "app.title" = "Codex Usage";
+"language.name" = "हिन्दी";
+"options.language" = "भाषा";
+"options.language_system" = "सिस्टम सेटिंग के अनुसार";
 "common.cancel" = "रद्द करें";
 "common.close" = "बंद करें";
 "common.save" = "सहेजें";

@@ -1,4 +1,7 @@
 "app.title" = "Codex Usage";
+"language.name" = "한국어";
+"options.language" = "언어";
+"options.language_system" = "시스템 설정 따르기";
 "common.cancel" = "취소";
 "common.close" = "닫기";
 "common.save" = "저장";

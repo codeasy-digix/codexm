@@ -19,6 +19,24 @@ struct LocalizationTests {
     #expect(AppLanguage.resolve(preferredLanguages: []) == .english)
   }
 
+  @Test("Explicit choices override OS language and use stable native menu names", arguments: AppLanguagePreference.allCases)
+  func resolvesLanguagePreference(_ preference: AppLanguagePreference) {
+    if preference == .system {
+      #expect(preference.resolve(preferredLanguages: ["ko-KR"]) == .korean)
+      #expect(preference.resolve(preferredLanguages: ["fr-FR"]) == .english)
+      #expect(preference.resolve(preferredLanguages: []) == .english)
+    } else {
+      let language = AppLanguage(rawValue: preference.rawValue)
+      #expect(preference.resolve(preferredLanguages: ["fr-FR"]) == language)
+      #expect(preference.resolve(preferredLanguages: ["ko-KR"]) == language)
+      for currentLanguage in AppLanguage.allCases {
+        L10n.$languageOverride.withValue(currentLanguage) {
+          #expect(preference.title == L10n.catalog(for: preference.resolve(preferredLanguages: []))["language.name"])
+        }
+      }
+    }
+  }
+
   @Test("Every language has the same nonempty keys and safe format arguments", arguments: AppLanguage.allCases)
   func validatesCatalogs(_ language: AppLanguage) throws {
     let english = L10n.catalog(for: .english)
@@ -112,6 +130,30 @@ struct LocalizationTests {
 @Suite("Localized layout")
 @MainActor
 struct LocalizedLayoutTests {
+  @Test("An already-hosted information panel observes language changes without being recreated")
+  func observesLiveLanguageChanges() async throws {
+    let suiteName = "LocalizedLayoutTests.liveLanguage.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = AppPreferences(defaults: defaults)
+    var languageChanges = 0
+    let hosting = NSHostingView(rootView: ProductInformationView(kind: .about,
+      preferences: preferences, onLanguageChange: { languageChanges += 1 }))
+    hosting.frame = NSRect(x: 0, y: 0, width: 440, height: 620)
+    hosting.layoutSubtreeIfNeeded()
+    let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+
+    preferences.languagePreference = .hindi
+    for _ in 0..<25 {
+      hosting.layoutSubtreeIfNeeded()
+      if languageChanges > 0 { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(languageChanges == 1)
+    #expect(AppLanguagePreference.load(from: defaults) == .hindi)
+  }
+
   @Test("Renders compact account cards in every language", arguments: AppLanguage.allCases)
   func rendersCards(_ language: AppLanguage) throws {
     try L10n.$languageOverride.withValue(language) {
@@ -129,7 +171,8 @@ struct LocalizedLayoutTests {
           expiresAt: now.addingTimeInterval(172800), title: nil, description: nil)],
         accountEmail: "owner@example.com", fetchedAt: now)
       let card = AccountUsageCard(viewState: UsageStore.AccountViewState(account: account,
-        state: .loaded(snapshot), isRefreshing: false), store: store, onRequestDelete: {})
+        state: .loaded(snapshot), isRefreshing: false), store: store,
+        preferences: AppPreferences(), onRequestDelete: {})
         .frame(width: 392).padding(14).background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, L10n.locale).environment(\.colorScheme, .light)
       let hosting = NSHostingView(rootView: card)
@@ -149,7 +192,8 @@ struct LocalizedLayoutTests {
   func rendersInformation(_ language: AppLanguage) throws {
     try L10n.$languageOverride.withValue(language) {
       for kind in [ProductInformationKind.about, .automaticRefresh] {
-        let content = ProductInformationView(kind: kind).frame(width: 440, height: 620)
+        let content = ProductInformationView(kind: kind, preferences: AppPreferences())
+          .frame(width: 440, height: 620)
           .background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, .light)
         // ImageRenderer does not render native ScrollView/Menu controls. Use
         // AppKit's offscreen display cache to verify the actual hosted view.
