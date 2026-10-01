@@ -3,7 +3,14 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
-    <string>ko</string>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>ko</string>
+        <string>zh-Hans</string>
+        <string>hi</string>
+    </array>
     <key>CFBundleDisplayName</key>
     <string>Codex Usage</string>
     <key>CFBundleExecutable</key>
@@ -19,9 +26,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-	<string>1.6.0</string>
+	<string>1.7.0</string>
     <key>CFBundleVersion</key>
-	<string>20</string>
+	<string>21</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

@@ -13,7 +13,9 @@ struct UsageRefreshScheduleTests {
     )
     #expect(
       SystemDefaultRefreshInterval.allCases.map(\.title)
-        == ["30초", "1분", "5분", "10분", "30분", "1시간"]
+        == [L10n.text("duration.seconds", 30), L10n.text("duration.minutes", 1),
+          L10n.text("duration.minutes", 5), L10n.text("duration.minutes", 10),
+          L10n.text("duration.minutes", 30), L10n.text("duration.hours", 1)]
     )
   }
 

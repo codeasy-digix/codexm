@@ -171,7 +171,7 @@ struct AutomaticUsageActivationTests {
 
     #expect(next != previous)
     #expect(prompt.contains(next))
-    #expect(prompt.contains("도구를 사용하거나 파일을 읽지 마세요"))
+    #expect(prompt.contains("Do not use tools or read files"))
   }
 }
 

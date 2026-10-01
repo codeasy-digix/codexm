@@ -148,7 +148,7 @@ struct UsageModelsTests {
     #expect(snapshot.availableResetCreditDetails.count == 2)
     #expect(snapshot.earliestResetCreditExpiration == Date(timeIntervalSince1970: 1_791_000_000))
     #expect(
-      snapshot.resetCreditExpirationCountdown(relativeTo: snapshot.fetchedAt) == "1시간"
+      snapshot.resetCreditExpirationCountdown(relativeTo: snapshot.fetchedAt) == L10n.text("duration.hours", 1)
     )
     #expect(!snapshot.hasCompleteResetCreditDetails)
     #expect(snapshot.planDisplayName == "Business")
@@ -180,7 +180,7 @@ struct UsageModelsTests {
     )
 
     #expect(snapshot.hasCompleteResetCreditDetails)
-    #expect(snapshot.resetCreditExpirationCountdown(relativeTo: now) == "곧 소멸")
+    #expect(snapshot.resetCreditExpirationCountdown(relativeTo: now) == L10n.text("credit.expiring_soon"))
   }
 
   @Test("Handles the current single primary weekly payload")
@@ -263,18 +263,18 @@ struct UsageModelsTests {
 
     #expect(
       snapshot(resetAfter: 2 * 86_400 + 3 * 3_600, from: now)
-        .weeklyLimit?.resetCountdown(relativeTo: now) == "2일 3시간"
+        .weeklyLimit?.resetCountdown(relativeTo: now) == L10n.text("duration.days_hours", 2, 3)
     )
     #expect(
       snapshot(resetAfter: 5 * 3_600 + 25 * 60, from: now)
-        .weeklyLimit?.resetCountdown(relativeTo: now) == "5시간 25분"
+        .weeklyLimit?.resetCountdown(relativeTo: now) == L10n.text("duration.hours_minutes", 5, 25)
     )
     #expect(
-      snapshot(resetAfter: 45, from: now).weeklyLimit?.resetCountdown(relativeTo: now) == "1분"
+      snapshot(resetAfter: 45, from: now).weeklyLimit?.resetCountdown(relativeTo: now) == L10n.text("duration.minutes", 1)
     )
     #expect(
       snapshot(resetAfter: -1, from: now).weeklyLimit?.resetCountdown(relativeTo: now)
-        == "곧 초기화"
+        == L10n.text("usage.reset_soon")
     )
   }
 

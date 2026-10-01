@@ -61,7 +61,7 @@ struct UsageAccountRegistryTests {
     #expect(exact.matches(fallback))
   }
 
-  @Test("Shows only a user-defined workspace name and never a hash fallback")
+  @Test("Shows a user-defined workspace name or a short hash fallback")
   func workspaceDisplayName() {
     var account = UsageAccount(
       id: UUID().uuidString,
@@ -75,12 +75,13 @@ struct UsageAccountRegistryTests {
     )
 
     #expect(account.workspaceReference == "ABCDEF12")
-    #expect(account.workspaceDisplayLabel == nil)
+    #expect(account.workspaceDisplayLabel == L10n.text("account.workspace_label", "#ABCDEF12"))
+    #expect(account.title == "#ABCDEF12")
     #expect(account.workspaceReference?.contains("34567890") == false)
 
     account.workspaceName = "  개발팀  "
     #expect(account.normalizedWorkspaceName == "개발팀")
-    #expect(account.workspaceDisplayLabel == "워크스페이스 개발팀")
+    #expect(account.workspaceDisplayLabel == L10n.text("account.workspace_label", "개발팀"))
     #expect(account.workspaceReference == "ABCDEF12")
   }
 
@@ -152,9 +153,9 @@ struct UsageAccountRegistryTests {
 
     let restored = try registry.loadAccounts()
     #expect(restored[0].normalizedWorkspaceName == "개인")
-    #expect(restored[0].workspaceDisplayLabel == "워크스페이스 개인")
+    #expect(restored[0].workspaceDisplayLabel == L10n.text("account.workspace_label", "개인"))
     #expect(restored[1].normalizedWorkspaceName == "개발팀")
-    #expect(restored[1].workspaceDisplayLabel == "워크스페이스 개발팀")
+    #expect(restored[1].workspaceDisplayLabel == L10n.text("account.workspace_label", "개발팀"))
 
     defaultAccount = restored[0]
     defaultAccount.workspaceName = "   "
@@ -243,7 +244,8 @@ struct UsageAccountRegistryTests {
 
     #expect(accounts.count == 2)
     #expect(accounts[1].isManaged)
-    #expect(accounts[1].displayName == "이전 앱 계정")
+    #expect(accounts[1].displayName == nil)
+    #expect(accounts[1].title.hasPrefix("#"))
     #expect(!FileManager.default.fileExists(atPath: legacyHome.path))
     #expect(
       FileManager.default.fileExists(

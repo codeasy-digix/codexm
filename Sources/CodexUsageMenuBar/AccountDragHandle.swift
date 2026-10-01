@@ -22,8 +22,8 @@ struct AccountDragHandle: View {
       .overlay {
         AccountDragSource(accountID: accountID, label: label, onBegin: onBegin, onEnd: onEnd)
       }
-      .help("드래그해서 연결 순서 변경")
-      .accessibilityLabel("\(label) 연결 순서 변경")
+      .help(L10n.text("account.drag_help"))
+      .accessibilityLabel(L10n.text("account.drag_label", label))
   }
 }
 

@@ -94,6 +94,7 @@ final class UsageStore: ObservableObject {
   private var accountManagementNoticeDismissTask: Task<Void, Never>?
   private var authenticationMode: AuthenticationMode?
   private var lastRefreshAllRequestedAt: Date?
+  private var pendingRefreshAll = false
 
   private static let refreshAllDebounceInterval: TimeInterval = 5
 
@@ -134,7 +135,7 @@ final class UsageStore: ObservableObject {
       self.accountStates = [
         AccountViewState(
           account: .systemDefault,
-          state: .failed(.serverError(error.localizedDescription)),
+          state: .failed(.serverError(L10n.errorDescription(error))),
           isRefreshing: false
         )
       ]
@@ -166,6 +167,10 @@ final class UsageStore: ObservableObject {
     }.max()
   }
 
+  var canRequestManualRefresh: Bool {
+    refreshTask == nil && !isRefreshingAll && !isSystemDefaultScheduledRefreshInProgress
+  }
+
   var isAddingAccount: Bool {
     if case .adding = authenticationMode { return true }
     return false
@@ -173,23 +178,23 @@ final class UsageStore: ObservableObject {
 
   var authenticationTitle: String {
     if let account = authenticationAccount {
-      return "\(account.title) 다시 로그인"
+      return L10n.text("auth.relogin_title", account.title)
     }
-    return "계정 또는 워크스페이스 추가"
+    return L10n.text("auth.add")
   }
 
   var authenticationInstruction: String {
     if authenticationAccount != nil {
-      return "열린 브라우저에서 아래 코드를 입력하고, 이 연결에서 사용할 계정과 워크스페이스를 선택하세요."
+      return L10n.text("auth.instruction_existing")
     }
-    return "열린 브라우저에서 아래 코드를 입력한 뒤 사용할 계정과 워크스페이스를 선택하세요. 같은 계정의 다른 워크스페이스도 별도로 추가할 수 있습니다."
+    return L10n.text("auth.instruction_new")
   }
 
   var authenticationCompletionNote: String {
     if authenticationAccount != nil {
-      return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 계정 정보가 바로 갱신됩니다."
+      return L10n.text("auth.completion_existing")
     }
-    return "코드는 클립보드에 자동으로 복사했습니다. 인증이 끝나면 독립된 CODEX_HOME 연결로 바로 추가됩니다."
+    return L10n.text("auth.completion_new")
   }
 
   var nextAutomaticActivationDate: Date? {
@@ -258,9 +263,14 @@ final class UsageStore: ObservableObject {
   }
 
   func refreshAll() {
-    guard refreshTask == nil, !isRefreshingAll, !isSystemDefaultScheduledRefreshInProgress else {
+    // A panel opened during an individual/scheduled read still needs the
+    // other connections checked. Coalesce those requests into one next pass.
+    guard !isRefreshingAll else { return }
+    guard refreshTask == nil, !isSystemDefaultScheduledRefreshInProgress else {
+      pendingRefreshAll = true
       return
     }
+    pendingRefreshAll = false
     let now = Date()
     if let lastRefreshAllRequestedAt,
       now.timeIntervalSince(lastRefreshAllRequestedAt) < Self.refreshAllDebounceInterval
@@ -326,7 +336,10 @@ final class UsageStore: ObservableObject {
     }
     if case .needsAuthentication = viewState.state { return }
     isSystemDefaultScheduledRefreshInProgress = true
-    defer { isSystemDefaultScheduledRefreshInProgress = false }
+    defer {
+      isSystemDefaultScheduledRefreshInProgress = false
+      drainPendingRefreshAll()
+    }
     await refreshNow(viewState.account)
   }
 
@@ -354,9 +367,9 @@ final class UsageStore: ObservableObject {
   func connectExistingCodexLogin() {
     clearAuthenticationError()
     let panel = NSOpenPanel()
-    panel.title = "기본 Codex 로그인 연결"
-    panel.message = "Codex CLI가 사용하는 .codex 폴더를 선택하세요. 계정 로그인은 다시 하지 않습니다."
-    panel.prompt = "이 폴더 사용"
+    panel.title = L10n.text("auth.connect_default")
+    panel.message = L10n.text("auth.select_folder")
+    panel.prompt = L10n.text("auth.use_folder")
     panel.canChooseFiles = false
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = false
@@ -368,7 +381,7 @@ final class UsageStore: ObservableObject {
       try runtimeLocator.saveCodexHomeAccess(url)
       refresh(accountID: UsageAccount.systemDefaultID)
     } catch {
-      showAuthenticationError(error.localizedDescription)
+      showAuthenticationError(L10n.errorDescription(error))
     }
   }
 
@@ -384,7 +397,7 @@ final class UsageStore: ObservableObject {
       let runtime = try runtimeLocator.locateManagedAccount(codexHomeURL: home)
       beginAuthentication(mode: .adding(account), runtime: runtime)
     } catch {
-      showAuthenticationError(error.localizedDescription)
+      showAuthenticationError(L10n.errorDescription(error))
     }
   }
 
@@ -399,7 +412,7 @@ final class UsageStore: ObservableObject {
       let runtime = try runtime(for: account)
       beginAuthentication(mode: .relogin(account), runtime: runtime)
     } catch {
-      showAuthenticationError(error.localizedDescription)
+      showAuthenticationError(L10n.errorDescription(error))
     }
   }
 
@@ -415,7 +428,7 @@ final class UsageStore: ObservableObject {
     do {
       try registry.updateAccount(accountStates[index].account)
     } catch {
-      showAccountManagementError(error.localizedDescription)
+      showAccountManagementError(L10n.errorDescription(error))
     }
   }
 
@@ -430,7 +443,7 @@ final class UsageStore: ObservableObject {
       accountStates[index].account = account
       clearAccountManagementError()
     } catch {
-      showAccountManagementError(error.localizedDescription)
+      showAccountManagementError(L10n.errorDescription(error))
     }
   }
 
@@ -452,7 +465,7 @@ final class UsageStore: ObservableObject {
       clearAccountManagementError()
       return true
     } catch {
-      showAccountManagementError("연결 순서를 저장하지 못했습니다. \(error.localizedDescription)")
+      showAccountManagementError(L10n.text("account.order_failed", L10n.errorDescription(error)))
       return false
     }
   }
@@ -472,12 +485,12 @@ final class UsageStore: ObservableObject {
       accountStates.remove(at: index)
       automaticScheduleStore.remove(accountID: accountID)
       automaticActivationInProgressAccountIDs.remove(accountID)
-      showAccountManagementNotice("\(account.title) 연결을 삭제했습니다.")
+      showAccountManagementNotice(L10n.text("account.removed", account.title))
       if recentlyAddedAccountID == accountID {
         recentlyAddedAccountID = nil
       }
     } catch {
-      showAccountManagementError(error.localizedDescription)
+      showAccountManagementError(L10n.errorDescription(error))
     }
     startAutomaticActivationSchedulerIfNeeded()
   }
@@ -501,7 +514,7 @@ final class UsageStore: ObservableObject {
         try SMAppService.mainApp.unregister()
       }
     } catch {
-      launchAtLoginError = error.localizedDescription
+      launchAtLoginError = L10n.errorDescription(error)
     }
     refreshLaunchAtLoginState()
   }
@@ -569,7 +582,7 @@ final class UsageStore: ObservableObject {
       return
     } catch CodexRuntimeError.defaultCodexHomeUnavailable {
       recordRefreshFailure(
-        .notAuthenticated("기본 Codex 로그인 정보를 찾을 수 없습니다."),
+        .notAuthenticated(L10n.text("error.default_missing")),
         authenticationRequired: true,
         for: account.id
       )
@@ -582,7 +595,7 @@ final class UsageStore: ObservableObject {
       }
       recordRefreshFailure(error, authenticationRequired: authenticationRequired, for: account.id)
     } catch {
-      recordRefreshFailure(.serverError(error.localizedDescription), for: account.id)
+      recordRefreshFailure(.serverError(L10n.errorDescription(error)), for: account.id)
     }
   }
 
@@ -674,7 +687,7 @@ final class UsageStore: ObservableObject {
         authenticationMode = nil
         authenticationAccountID = nil
         showAccountManagementError(
-          "이미 등록된 계정/워크스페이스 연결입니다: \(duplicate.title)"
+          L10n.text("account.duplicate", duplicate.title)
         )
         pendingWorkspaceName = ""
         startAutomaticActivationSchedulerIfNeeded()
@@ -694,11 +707,11 @@ final class UsageStore: ObservableObject {
         recentlyAddedAccountID = account.id
         let workspaceLabel = account.workspaceDisplayLabel.map { " · \($0)" } ?? ""
         showAccountManagementNotice(
-          "\(account.title)\(workspaceLabel) 연결을 추가했습니다."
+          L10n.text("account.added", account.title, workspaceLabel)
         )
       } catch {
         try? registry.discardPendingAccount(account)
-        showAccountManagementError(error.localizedDescription)
+        showAccountManagementError(L10n.errorDescription(error))
       }
       authenticationMode = nil
       authenticationAccountID = nil
@@ -713,7 +726,7 @@ final class UsageStore: ObservableObject {
       authenticationMode = nil
       authenticationAccountID = nil
       pendingWorkspaceName = ""
-      showAccountManagementNotice("\(account.title) 계정을 다시 연결했습니다.")
+      showAccountManagementNotice(L10n.text("account.reconnected", account.title))
     }
     startAutomaticActivationSchedulerIfNeeded()
   }
@@ -722,7 +735,7 @@ final class UsageStore: ObservableObject {
     isAuthenticating = false
     deviceLoginInfo = nil
     authenticationTask = nil
-    showAuthenticationError(error.localizedDescription)
+    showAuthenticationError(L10n.errorDescription(error))
     authenticationMode = nil
     authenticationAccountID = nil
     pendingWorkspaceName = ""
@@ -845,7 +858,7 @@ final class UsageStore: ObservableObject {
       return
     } catch {
       guard !Task.isCancelled else { return }
-      let message = "\(account.title): \(error.localizedDescription)"
+      let message = "\(account.title): \(L10n.errorDescription(error))"
       if let existing = automaticActivationError, !existing.isEmpty {
         automaticActivationError = "\(existing)\n\(message)"
       } else {
@@ -858,6 +871,7 @@ final class UsageStore: ObservableObject {
     refreshTask?.cancel()
     refreshTask = nil
     refreshOperationID = nil
+    pendingRefreshAll = false
     isRefreshingAll = false
     for index in accountStates.indices {
       if isSystemDefaultScheduledRefreshInProgress,
@@ -876,6 +890,12 @@ final class UsageStore: ObservableObject {
     if wasRefreshingAll {
       isRefreshingAll = false
     }
+    drainPendingRefreshAll()
+  }
+
+  private func drainPendingRefreshAll() {
+    guard pendingRefreshAll, canRequestManualRefresh else { return }
+    refreshAll()
   }
 
   private func setState(_ state: AccountLoadState, for accountID: String) {
@@ -926,7 +946,7 @@ final class UsageStore: ObservableObject {
       do {
         try registry.updateAccount(accountStates[index].account)
       } catch {
-        showAccountManagementError(error.localizedDescription)
+        showAccountManagementError(L10n.errorDescription(error))
       }
     }
   }

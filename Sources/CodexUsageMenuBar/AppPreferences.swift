@@ -9,9 +9,9 @@ enum MenuBarIconStyle: String, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .terminal:
-      return "5시간 숫자 + 주간 채움"
+      return L10n.text("options.icon_terminal")
     case .circular:
-      return "주간 원형 + 5시간 숫자"
+      return L10n.text("options.icon_circular")
     }
   }
 

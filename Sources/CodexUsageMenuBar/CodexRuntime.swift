@@ -44,11 +44,11 @@ enum CodexRuntimeError: LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .bundledRuntimeMissing:
-      return "앱에 포함된 Codex 런타임을 찾을 수 없습니다."
+      return L10n.text("error.runtime_missing")
     case .invalidCodexHome:
-      return "선택한 폴더에서 Codex 로그인 정보를 찾을 수 없습니다."
+      return L10n.text("error.invalid_home")
     case .defaultCodexHomeUnavailable:
-      return "기본 Codex 로그인 정보를 찾을 수 없습니다."
+      return L10n.text("error.default_missing")
     }
   }
 }

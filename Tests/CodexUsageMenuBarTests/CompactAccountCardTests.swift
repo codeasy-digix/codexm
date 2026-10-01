@@ -13,26 +13,26 @@ struct CompactAccountCardTests {
     let expiry = now.addingTimeInterval(172_800)
     let snapshot = snapshot(credits: 3, details: [credit(expiry), credit(expiry.addingTimeInterval(3600))])
     let summary = try #require(CompactResetCreditSummary(snapshot: snapshot, relativeTo: now))
-    #expect(summary.text.contains("리셋 3개"))
-    #expect(summary.text.contains("확인분"))
+    #expect(summary.text.contains(L10n.text("credit.count", 3)))
+    #expect(summary.text.contains(L10n.text("credit.confirmed")))
     #expect(summary.text.contains(CompactUsageDate.string(expiry, relativeTo: now)))
-    #expect(summary.text.contains("2일 후"))
-    #expect(summary.text.contains("상세 2/3"))
+    #expect(summary.text.contains(L10n.text("credit.after", L10n.text("duration.days", 2))))
+    #expect(summary.text.contains(L10n.text("credit.coverage", 2, 3)))
     #expect(!summary.text.contains("\n"))
-    #expect(summary.detail.contains("확인된 크레딧 소멸"))
+    #expect(summary.detail.contains(L10n.text("credit.confirmed_detail", L10n.date(expiry, style: .complete))))
 
     let complete = try #require(CompactResetCreditSummary(
       snapshot: self.snapshot(credits: 1, details: [credit(expiry)]), relativeTo: now))
-    #expect(complete.text.contains("최초"))
-    #expect(!complete.text.contains("상세"))
+    #expect(complete.text.contains(L10n.text("credit.earliest")))
+    #expect(!complete.text.contains(L10n.text("credit.coverage", 1, 1)))
   }
 
   @Test("Distinguishes missing expiration details and zero credits")
   func summarizesUnavailableExpiration() throws {
     let missing = try #require(CompactResetCreditSummary(snapshot: snapshot(credits: 2, details: nil)))
-    #expect(missing.text == "리셋 2개 · 소멸 시각 미제공")
+    #expect(missing.text == L10n.text("credit.count", 2) + " · " + L10n.text("credit.expiration_missing"))
     let zero = try #require(CompactResetCreditSummary(snapshot: snapshot(credits: 0, details: [])))
-    #expect(zero.text == "리셋 0개")
+    #expect(zero.text == L10n.text("credit.count", 0))
   }
 
   @Test("Keeps the default account as the menu-bar source after reordering")

@@ -128,7 +128,7 @@ struct AutomaticUsagePromptGenerator: Sendable {
   }
 
   func prompt(for expression: String) -> String {
-    "다음 산술식의 결과만 숫자로 답하세요. 도구를 사용하거나 파일을 읽지 마세요: \(expression)"
+    "Reply with only the numeric result of this arithmetic expression. Do not use tools or read files: \(expression)"
   }
 
   private func randomExpression() -> String {
@@ -292,7 +292,7 @@ private final class AutomaticUsageAppServerSession: @unchecked Sendable {
       self.parsingQueue.async {
         let stderr = self.standardErrorText()
         let message = stderr.isEmpty
-          ? "Codex 자동 요청이 종료되었습니다 (코드 \(process.terminationStatus))."
+          ? L10n.text("error.auto_exit", process.terminationStatus)
           : stderr
         self.finish(with: .failure(CodexUsageError.serverError(message)))
       }
@@ -315,7 +315,7 @@ private final class AutomaticUsageAppServerSession: @unchecked Sendable {
         try? await Task.sleep(for: timeout)
         guard !Task.isCancelled else { return }
         self?.finish(
-          with: .failure(CodexUsageError.serverError("Codex 자동 요청 시간이 초과되었습니다."))
+          with: .failure(CodexUsageError.serverError(L10n.text("error.auto_timeout")))
         )
       }
     } catch {
@@ -351,7 +351,7 @@ private final class AutomaticUsageAppServerSession: @unchecked Sendable {
 
     guard let identifier = (json["id"] as? NSNumber)?.intValue else { return }
     if let error = json["error"] as? [String: Any] {
-      let message = error["message"] as? String ?? "Codex 자동 요청에 실패했습니다."
+      let message = error["message"] as? String ?? L10n.text("error.auto_failed")
       finish(with: .failure(classifyServerError(message)))
       return
     }
@@ -474,7 +474,7 @@ private final class AutomaticUsageAppServerSession: @unchecked Sendable {
     }
 
     let error = turn["error"] as? [String: Any]
-    let message = error?["message"] as? String ?? "Codex 자동 요청 상태: \(status)"
+    let message = error?["message"] as? String ?? L10n.text("error.auto_status", status)
     finish(with: .failure(classifyServerError(message)))
   }
 

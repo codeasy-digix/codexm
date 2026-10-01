@@ -24,6 +24,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 
 cp "$ROOT_DIR/.build/release/CodexUsageMenuBar" "$CONTENTS_DIR/MacOS/CodexUsageMenuBar"
+cp -R "$ROOT_DIR/.build/release/CodexUsageMenuBar_CodexUsageMenuBar.bundle" "$CONTENTS_DIR/Resources/"
 RUNTIME_SOURCE="$("$ROOT_DIR/scripts/prepare-codex-runtime.sh")"
 cp "$RUNTIME_SOURCE" "$CONTENTS_DIR/MacOS/CodexRuntime"
 chmod 755 "$CONTENTS_DIR/MacOS/CodexRuntime"
@@ -31,6 +32,7 @@ cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/Resources/AppIcon.icns" "$CONTENTS_DIR/Resources/AppIcon.icns"
 cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$CONTENTS_DIR/Resources/THIRD_PARTY_NOTICES.md"
 cp "$ROOT_DIR/Resources/CodexRuntime-LICENSE.txt" "$CONTENTS_DIR/Resources/CodexRuntime-LICENSE.txt"
+cp "$ROOT_DIR/LICENSE" "$CONTENTS_DIR/Resources/LICENSE.txt"
 
 # Cloud-synced folders can attach Finder metadata to a newly created bundle.
 # Distribution signatures reject those extended attributes.

@@ -241,7 +241,7 @@ private final class AppServerSession: @unchecked Sendable {
     onUpdate: (@Sendable (UsageSnapshot) -> Void)?
   ) {
     guard phase != .stopped else {
-      continuation.resume(throwing: CodexUsageError.serverError("Codex 연결이 종료되었습니다."))
+      continuation.resume(throwing: CodexUsageError.serverError(L10n.text("error.connection_closed")))
       return
     }
 
@@ -310,7 +310,7 @@ private final class AppServerSession: @unchecked Sendable {
         let message = standardErrorText()
         let error = CodexUsageError.serverError(
           message.isEmpty
-            ? "Codex app-server가 종료되었습니다 (코드 \(process.terminationStatus))."
+            ? L10n.text("error.server_exit", process.terminationStatus)
             : message
         )
         stop(with: error, terminateProcess: false, notifyClient: true)
@@ -390,7 +390,7 @@ private final class AppServerSession: @unchecked Sendable {
 
   private func send(_ object: [String: Any]) throws {
     guard let standardInput else {
-      throw CodexUsageError.serverError("Codex 입력 연결을 사용할 수 없습니다.")
+      throw CodexUsageError.serverError(L10n.text("error.input_unavailable"))
     }
     var data = try JSONSerialization.data(withJSONObject: object)
     data.append(0x0A)

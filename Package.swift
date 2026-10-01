@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
   name: "CodexUsageMenuBar",
+  defaultLocalization: "en",
   platforms: [
     .macOS(.v13)
   ],
@@ -13,7 +14,8 @@ let package = Package(
   targets: [
     .executableTarget(
       name: "CodexUsageMenuBar",
-      path: "Sources/CodexUsageMenuBar"
+      path: "Sources/CodexUsageMenuBar",
+      resources: [.process("Resources")]
     ),
     .testTarget(
       name: "CodexUsageMenuBarTests",

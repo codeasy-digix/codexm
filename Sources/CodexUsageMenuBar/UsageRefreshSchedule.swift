@@ -12,12 +12,12 @@ enum SystemDefaultRefreshInterval: Int, CaseIterable, Identifiable, Sendable {
 
   var title: String {
     switch self {
-    case .seconds30: return "30초"
-    case .minute1: return "1분"
-    case .minutes5: return "5분"
-    case .minutes10: return "10분"
-    case .minutes30: return "30분"
-    case .hour1: return "1시간"
+    case .seconds30: return L10n.text("duration.seconds", 30)
+    case .minute1: return L10n.text("duration.minutes", 1)
+    case .minutes5: return L10n.text("duration.minutes", 5)
+    case .minutes10: return L10n.text("duration.minutes", 10)
+    case .minutes30: return L10n.text("duration.minutes", 30)
+    case .hour1: return L10n.text("duration.hours", 1)
     }
   }
 

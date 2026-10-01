@@ -42,17 +42,17 @@ enum MenuBarIndicator: Equatable {
   var accessibilityLabel: String {
     switch self {
     case .limits(let fiveHour?, let weekly?):
-      return "Codex 5시간 사용량 \(Self.clamped(fiveHour))퍼센트, 주간 사용량 \(Self.clamped(weekly))퍼센트 남음"
+      return L10n.text("usage.dual_remaining", Self.clamped(fiveHour), Self.clamped(weekly))
     case .limits(let fiveHour?, nil):
-      return "Codex 5시간 사용량 \(Self.clamped(fiveHour))퍼센트 남음"
+      return L10n.text("usage.five_remaining", Self.clamped(fiveHour))
     case .limits(nil, let weekly?):
-      return "Codex 주간 사용량 \(Self.clamped(weekly))퍼센트 남음"
+      return L10n.text("usage.weekly_remaining", Self.clamped(weekly))
     case .limits(nil, nil):
-      return "Codex 사용량을 확인할 수 없음"
+      return L10n.text("usage.unavailable")
     case .loading:
-      return "Codex 사용량을 불러오는 중"
+      return L10n.text("usage.loading")
     case .unavailable:
-      return "Codex 사용량을 확인할 수 없음"
+      return L10n.text("usage.unavailable")
     }
   }
 }

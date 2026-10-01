@@ -6,7 +6,7 @@ struct OptionsMenu: View {
 
   var body: some View {
     Menu {
-      Picker("메뉴바 아이콘", selection: $preferences.menuBarIconStyle) {
+      Picker(L10n.text("options.icon"), selection: $preferences.menuBarIconStyle) {
         ForEach(MenuBarIconStyle.allCases) { style in
           Label(style.title, systemImage: style.systemImage)
             .tag(style)
@@ -16,7 +16,7 @@ struct OptionsMenu: View {
       Divider()
 
       Picker(
-        "기본 계정 갱신 주기",
+        L10n.text("options.default_interval"),
         selection: Binding(
           get: { store.systemDefaultRefreshInterval },
           set: { store.setSystemDefaultRefreshInterval($0) }
@@ -26,6 +26,11 @@ struct OptionsMenu: View {
           Text(interval.title).tag(interval)
         }
       }
+
+      Divider()
+      Button(L10n.text("about.title"), systemImage: "info.circle") {
+        ProductInformationPresenter.shared.show(.about)
+      }
     } label: {
       Image(systemName: "gearshape")
         .frame(width: 16, height: 16)
@@ -33,7 +38,7 @@ struct OptionsMenu: View {
     .menuStyle(.borderlessButton)
     .menuIndicator(.hidden)
     .fixedSize()
-    .help("옵션")
-    .accessibilityLabel("옵션")
+    .help(L10n.text("common.options"))
+    .accessibilityLabel(L10n.text("common.options"))
   }
 }

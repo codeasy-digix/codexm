@@ -201,8 +201,8 @@ struct UsageSnapshot: Equatable, Sendable {
 
   func resetCreditExpirationCountdown(relativeTo date: Date = Date()) -> String? {
     guard let earliestResetCreditExpiration else { return nil }
-    let countdown = usageCountdown(to: earliestResetCreditExpiration, relativeTo: date)
-    return countdown == "곧 초기화" ? "곧 소멸" : countdown
+    if earliestResetCreditExpiration <= date { return L10n.text("credit.expiring_soon") }
+    return usageCountdown(to: earliestResetCreditExpiration, relativeTo: date)
   }
 
   var planDisplayName: String? {
@@ -234,26 +234,26 @@ enum CodexUsageError: LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .launchFailed(let message):
-      return "앱에 포함된 Codex 런타임을 실행하지 못했습니다. \(message)"
+      return L10n.text("error.launch", message)
     case .notAuthenticated:
-      return "Codex 계정 연결이 필요합니다."
+      return L10n.text("error.not_authenticated")
     case .unsupportedRuntime:
-      return "앱에 포함된 Codex 런타임에서 사용량 조회를 지원하지 않습니다."
+      return L10n.text("error.unsupported")
     case .serverError(let message):
-      return message.isEmpty ? "Codex에서 사용량을 가져오지 못했습니다." : message
+      return message.isEmpty ? L10n.text("error.server") : L10n.text("error.server_detail", message)
     case .invalidResponse:
-      return "Codex가 예상하지 못한 응답을 반환했습니다."
+      return L10n.text("error.invalid_response")
     case .noUsageLimit:
-      return "계정에서 Codex 사용량 한도를 찾지 못했습니다."
+      return L10n.text("error.no_limit")
     case .timedOut:
-      return "Codex 사용량 조회 시간이 초과되었습니다."
+      return L10n.text("error.timeout")
     }
   }
 }
 
 private func usageCountdown(to target: Date, relativeTo date: Date) -> String {
   let totalSeconds = Int(target.timeIntervalSince(date).rounded(.down))
-  guard totalSeconds > 0 else { return "곧 초기화" }
+  guard totalSeconds > 0 else { return L10n.text("usage.reset_soon") }
 
   let totalMinutes = max(1, totalSeconds / 60)
   let days = totalMinutes / (24 * 60)
@@ -261,10 +261,10 @@ private func usageCountdown(to target: Date, relativeTo date: Date) -> String {
   let minutes = totalMinutes % 60
 
   if days > 0 {
-    return hours > 0 ? "\(days)일 \(hours)시간" : "\(days)일"
+    return hours > 0 ? L10n.text("duration.days_hours", days, hours) : L10n.text("duration.days", days)
   }
   if hours > 0 {
-    return minutes > 0 ? "\(hours)시간 \(minutes)분" : "\(hours)시간"
+    return minutes > 0 ? L10n.text("duration.hours_minutes", hours, minutes) : L10n.text("duration.hours", hours)
   }
-  return "\(totalMinutes)분"
+  return L10n.text("duration.minutes", totalMinutes)
 }

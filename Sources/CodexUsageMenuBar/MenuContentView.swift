@@ -128,11 +128,13 @@ struct MenuContentView: View {
         .foregroundStyle(.tint)
 
       VStack(alignment: .leading, spacing: 1) {
-        Text("Codex Usage")
+        Text(L10n.text("app.title"))
           .font(.headline)
-        Text("연결 \(store.accountStates.count)개 · 5시간/주간 남은 사용량")
+        Text(L10n.text("header.connections", store.accountStates.count))
           .font(.caption)
           .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
       }
 
       Spacer()
@@ -148,8 +150,9 @@ struct MenuContentView: View {
         }
       }
       .buttonStyle(.plain)
-      .help("모든 계정 새로고침")
-      .disabled(store.isRefreshingAll)
+      .help(L10n.text("header.refresh_all"))
+      .accessibilityLabel(L10n.text("header.refresh_all"))
+      .disabled(!store.canRequestManualRefresh)
     }
   }
 
@@ -170,7 +173,7 @@ struct MenuContentView: View {
         if store.isAddingAccount {
           VStack(alignment: .leading, spacing: 4) {
             TextField(
-              "워크스페이스 이름 (선택)",
+              L10n.text("auth.workspace_optional"),
               text: Binding(
                 get: { store.pendingWorkspaceName },
                 set: { store.setPendingWorkspaceName($0) }
@@ -179,27 +182,28 @@ struct MenuContentView: View {
             .textFieldStyle(.roundedBorder)
             .controlSize(.small)
 
-            Text("예: 개인, 회사, 개발팀 · 입력하지 않아도 인증은 자동으로 완료됩니다.")
+            Text(L10n.text("auth.workspace_examples"))
               .font(.caption2)
               .foregroundStyle(.tertiary)
+              .fixedSize(horizontal: false, vertical: true)
           }
         }
         Text(info.userCode)
           .font(.system(.title3, design: .monospaced, weight: .bold))
           .textSelection(.enabled)
         HStack {
-          Button("코드 복사") { store.copyDeviceLoginCode() }
-          Button("인증 페이지 열기") { store.reopenDeviceLoginPage() }
+          Button(L10n.text("auth.copy_code")) { store.copyDeviceLoginCode() }
+          Button(L10n.text("auth.open_page")) { store.reopenDeviceLoginPage() }
           Spacer()
-          Button("취소", role: .cancel) { store.cancelCurrentAuthentication() }
+          Button(L10n.text("common.cancel"), role: .cancel) { store.cancelCurrentAuthentication() }
         }
         .controlSize(.small)
       } else {
         HStack(spacing: 8) {
           ProgressView().controlSize(.small)
-          Text("로그인 준비 중…").font(.caption)
+          Text(L10n.text("auth.preparing")).font(.caption)
           Spacer()
-          Button("취소", role: .cancel) { store.cancelCurrentAuthentication() }
+          Button(L10n.text("common.cancel"), role: .cancel) { store.cancelCurrentAuthentication() }
             .controlSize(.small)
         }
       }
@@ -210,10 +214,10 @@ struct MenuContentView: View {
 
   private func deleteConfirmationPanel(_ account: UsageAccount) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("\(account.title) 연결을 삭제할까요?", systemImage: "trash.fill")
+      Label(L10n.text("account.delete_title", account.title), systemImage: "trash.fill")
         .font(.callout.weight(.semibold))
 
-      Text("이 Mac에 저장된 로그인 정보와 전용 Codex 저장소가 함께 삭제됩니다.")
+      Text(L10n.text("account.delete_explanation"))
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -225,9 +229,9 @@ struct MenuContentView: View {
       }
 
       HStack {
-        Button("취소", role: .cancel) { pendingDeletionAccount = nil }
+        Button(L10n.text("common.cancel"), role: .cancel) { pendingDeletionAccount = nil }
         Spacer()
-        Button("연결 삭제", role: .destructive) {
+        Button(L10n.text("account.delete"), role: .destructive) {
           store.removeManagedAccount(accountID: account.id)
           pendingDeletionAccount = nil
         }
@@ -263,7 +267,8 @@ struct MenuContentView: View {
             .font(.caption.weight(.semibold))
         }
         .buttonStyle(.plain)
-        .help("닫기")
+        .help(L10n.text("common.close"))
+        .accessibilityLabel(L10n.text("common.close"))
       }
     }
     .padding(9)
@@ -277,9 +282,9 @@ struct MenuContentView: View {
       HStack(spacing: 7) {
         if store.isAuthenticating {
           ProgressView().controlSize(.small)
-          Text("계정/워크스페이스 인증 중…")
+          Text(L10n.text("auth.signing_in"))
         } else {
-          Label("계정 또는 워크스페이스 추가", systemImage: "person.crop.circle.badge.plus")
+          Label(L10n.text("auth.add"), systemImage: "person.crop.circle.badge.plus")
         }
       }
       .frame(maxWidth: .infinity)
@@ -292,7 +297,7 @@ struct MenuContentView: View {
   private var launchPreferences: some View {
     VStack(alignment: .leading, spacing: 5) {
       Toggle(
-        "로그인할 때 자동으로 열기",
+        L10n.text("options.launch"),
         isOn: Binding(
           get: { store.launchAtLoginEnabled },
           set: { store.setLaunchAtLogin($0) }
@@ -312,36 +317,41 @@ struct MenuContentView: View {
 
   private var automaticActivationPreferences: some View {
     VStack(alignment: .leading, spacing: 5) {
-      Toggle(
-        "5시간 한도 자동 시작 유지",
-        isOn: Binding(
-          get: { store.automaticActivationEnabled },
-          set: { store.setAutomaticActivationEnabled($0) }
+      HStack(spacing: 8) {
+        Toggle(
+          L10n.text("auto.title"),
+          isOn: Binding(
+            get: { store.automaticActivationEnabled },
+            set: { store.setAutomaticActivationEnabled($0) }
+          )
         )
-      )
-      .toggleStyle(.switch)
-      .controlSize(.small)
+        .toggleStyle(.switch)
+        .controlSize(.small)
 
-      Text(
-        "5h 한도가 있는 연결에만 5시간마다 가벼운 low 산술 요청 1회를 보냅니다. 한 번에 한 연결만 실행하며, 연결 간 시작 시각을 최소 30분 간격으로 둡니다."
-      )
-      .font(.caption2)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
+        Button { ProductInformationPresenter.shared.show(.automaticRefresh) } label: {
+          Image(systemName: "questionmark.circle")
+            .font(.system(size: 14))
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L10n.text("auto.help_button"))
+        .accessibilityLabel(L10n.text("auto.help_button"))
+      }
 
       if store.automaticActivationEnabled {
         if !store.automaticActivationInProgressAccountIDs.isEmpty {
           HStack(spacing: 5) {
             ProgressView().controlSize(.mini)
             Text(
-              "자동 요청 중 · \(store.automaticActivationInProgressAccountIDs.count)개 연결"
+              L10n.text("auto.in_progress", store.automaticActivationInProgressAccountIDs.count)
             )
           }
           .font(.caption2)
           .foregroundStyle(.secondary)
         } else if let nextDate = store.nextAutomaticActivationDate {
           Text(
-            "다음 자동 요청 \(nextDate.formatted(date: .abbreviated, time: .shortened))"
+            L10n.text("auto.next", L10n.date(nextDate))
           )
           .font(.caption2)
           .foregroundStyle(.tertiary)
@@ -370,18 +380,42 @@ struct MenuContentView: View {
     let currentScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
       ?? NSScreen.main
     let visibleHeight = currentScreen?.visibleFrame.height ?? 900
-    var reservedHeight: CGFloat = 315
+    var reservedHeight: CGFloat = 280
 
     if store.isAuthenticating || store.deviceLoginInfo != nil {
-      reservedHeight += store.deviceLoginInfo == nil ? 72 : (store.isAddingAccount ? 205 : 150)
+      if store.deviceLoginInfo == nil {
+        reservedHeight += 72
+      } else {
+        // Localized instructions can be substantially taller than Korean.
+        reservedHeight += 142 + textHeight(store.authenticationInstruction, size: 11)
+          + textHeight(store.authenticationCompletionNote, size: 10)
+        if store.isAddingAccount {
+          reservedHeight += 33 + textHeight(L10n.text("auth.workspace_examples"), size: 10)
+        }
+      }
     }
-    if pendingDeletionAccount != nil { reservedHeight += 124 }
-    if store.accountManagementError != nil || store.accountManagementNotice != nil {
-      reservedHeight += 54
+    if let account = pendingDeletionAccount {
+      reservedHeight += 100 + textHeight(L10n.text("account.delete_title", account.title), size: 13)
+        + textHeight(L10n.text("account.delete_explanation"), size: 11)
     }
-    if store.authenticationError != nil { reservedHeight += 54 }
+    if let message = store.accountManagementError ?? store.accountManagementNotice {
+      reservedHeight += max(54, textHeight(message, size: 11) + 26)
+    }
+    if let message = store.authenticationError {
+      reservedHeight += max(54, textHeight(message, size: 11) + 26)
+    }
+    if store.automaticActivationEnabled { reservedHeight += 20 }
+    if store.automaticActivationError != nil { reservedHeight += 34 }
+    if let message = store.launchAtLoginError { reservedHeight += textHeight(message, size: 10) + 5 }
 
     return min(580, max(118, visibleHeight - reservedHeight))
+  }
+
+  private func textHeight(_ text: String, size: CGFloat) -> CGFloat {
+    ceil((text as NSString).boundingRect(
+      with: NSSize(width: 356, height: CGFloat.greatestFiniteMagnitude),
+      options: [.usesLineFragmentOrigin, .usesFontLeading],
+      attributes: [.font: NSFont.systemFont(ofSize: size)]).height)
   }
 
   private func estimatedCardHeight(_ viewState: UsageStore.AccountViewState) -> CGFloat {
@@ -404,12 +438,12 @@ struct MenuContentView: View {
   private var footer: some View {
     HStack {
       if let fetchedAt = store.latestFetchedAt {
-        Text("업데이트 \(fetchedAt.formatted(date: .omitted, time: .shortened))")
+        Text(L10n.text("usage.updated", L10n.date(fetchedAt, style: .omitted)))
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
       Spacer()
-      Button("종료") { NSApplication.shared.terminate(nil) }
+      Button(L10n.text("common.quit")) { NSApplication.shared.terminate(nil) }
         .keyboardShortcut("q")
         .controlSize(.small)
     }
@@ -455,13 +489,17 @@ struct AccountUsageCard: View {
   private var accountHeader: some View {
     HStack(spacing: 5) {
       if isRenaming {
-        TextField("표시 이름", text: $draftName)
+        TextField(L10n.text("account.display_name"), text: $draftName)
           .textFieldStyle(.roundedBorder)
           .onSubmit { saveName() }
         Button { saveName() } label: { Image(systemName: "checkmark") }
           .buttonStyle(.plain)
+          .help(L10n.text("common.save"))
+          .accessibilityLabel(L10n.text("common.save"))
         Button { isRenaming = false } label: { Image(systemName: "xmark") }
           .buttonStyle(.plain)
+          .help(L10n.text("common.cancel"))
+          .accessibilityLabel(L10n.text("common.cancel"))
       } else {
         Text(headerTitle)
           .font(.caption.weight(.semibold))
@@ -471,7 +509,7 @@ struct AccountUsageCard: View {
           .help(headerTitle)
 
         if viewState.account.isSystemDefault {
-          Text("기본")
+          Text(L10n.text("common.default"))
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 4)
@@ -485,13 +523,22 @@ struct AccountUsageCard: View {
             .font(.caption2)
             .foregroundStyle(.orange)
             .help(
-              "최근 갱신 실패: \(error.errorDescription ?? "사용량을 가져오지 못했습니다.") 마지막 정상값을 표시 중입니다."
+              L10n.text("usage.last_error", error.errorDescription ?? L10n.text("common.unknown_error"))
             )
-            .accessibilityLabel("최근 갱신 실패, 마지막 정상값 표시 중")
+            .accessibilityLabel(L10n.text("usage.last_error_accessibility"))
         }
-        if viewState.isRefreshing {
-          ProgressView().controlSize(.small)
+        Button { store.refresh(accountID: viewState.id) } label: {
+          if viewState.isRefreshing {
+            ProgressView().controlSize(.small).frame(width: 22, height: 22)
+          } else {
+            Image(systemName: "arrow.clockwise").frame(width: 22, height: 22)
+              .contentShape(Rectangle())
+          }
         }
+        .buttonStyle(.plain)
+        .disabled(viewState.isRefreshing || !store.canRequestManualRefresh)
+        .help(L10n.text("common.refresh"))
+        .accessibilityLabel(L10n.text("common.refresh"))
         accountMenu
         AccountDragHandle(
           accountID: viewState.id,
@@ -511,31 +558,29 @@ struct AccountUsageCard: View {
       email = viewState.account.lastKnownEmail
     }
     guard let email, !email.isEmpty else { return viewState.account.title }
-    if viewState.account.isManaged,
-      let name = viewState.account.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-      !name.isEmpty, name != email
-    {
-      return "\(name) · \(email)"
+    if viewState.account.isManaged, viewState.account.title != email {
+      return "\(viewState.account.title) · \(email)"
     }
     return email
   }
 
   private var accountMenu: some View {
     Menu {
-      Button("새로고침", systemImage: "arrow.clockwise") {
-        store.refresh(accountID: viewState.id)
+      Button(L10n.text("account.rename_workspace"), systemImage: "text.cursor") {
+        draftWorkspaceName = viewState.account.normalizedWorkspaceName ?? ""
+        isRenamingWorkspace = true
       }
 
       if viewState.account.isManaged {
-        Button("계정 표시 이름 변경", systemImage: "pencil") {
-          draftName = viewState.account.displayName ?? viewState.account.title
+        Button(L10n.text("account.rename"), systemImage: "text.cursor") {
+          draftName = viewState.account.normalizedDisplayName ?? ""
           isRenaming = true
         }
-        Button("다시 로그인", systemImage: "person.badge.key") {
+        Button(L10n.text("common.relogin"), systemImage: "person.badge.key") {
           store.relogin(accountID: viewState.id)
         }
         Divider()
-        Button("연결 삭제", systemImage: "trash", role: .destructive) {
+        Button(L10n.text("account.delete"), systemImage: "trash", role: .destructive) {
           onRequestDelete()
         }
       }
@@ -543,14 +588,17 @@ struct AccountUsageCard: View {
       Image(systemName: "ellipsis.circle")
     }
     .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
     .fixedSize()
+    .help(L10n.text("common.options"))
+    .accessibilityLabel(L10n.text("common.options"))
   }
 
   @ViewBuilder
   private var workspaceControl: some View {
     HStack(spacing: 4) {
       if isRenamingWorkspace {
-        TextField("워크스페이스 이름", text: $draftWorkspaceName)
+        TextField(L10n.text("account.workspace_name"), text: $draftWorkspaceName)
           .textFieldStyle(.roundedBorder)
           .controlSize(.small)
           .frame(width: 82)
@@ -559,29 +607,22 @@ struct AccountUsageCard: View {
           Image(systemName: "checkmark")
         }
         .buttonStyle(.plain)
-        .help("워크스페이스 이름 저장")
+        .help(L10n.text("common.save"))
+        .accessibilityLabel(L10n.text("common.save"))
         Button { isRenamingWorkspace = false } label: {
           Image(systemName: "xmark")
         }
         .buttonStyle(.plain)
-        .help("취소")
-      } else {
-        Text(viewState.account.normalizedWorkspaceName ?? "이름 설정")
+        .help(L10n.text("common.cancel"))
+        .accessibilityLabel(L10n.text("common.cancel"))
+      } else if viewState.account.normalizedWorkspaceName != nil || viewState.account.isSystemDefault {
+        Text(viewState.account.normalizedWorkspaceName ?? viewState.account.shortDisplayReference)
           .font(.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .frame(maxWidth: 78)
           .help(workspaceHelp)
 
-        Button {
-          draftWorkspaceName = viewState.account.normalizedWorkspaceName ?? ""
-          isRenamingWorkspace = true
-        } label: {
-          Image(systemName: "pencil")
-            .font(.caption2.weight(.semibold))
-        }
-        .buttonStyle(.plain)
-        .help("워크스페이스 이름 수정")
       }
     }
     .font(.caption2)
@@ -590,15 +631,15 @@ struct AccountUsageCard: View {
 
   private var workspaceHelp: String {
     if viewState.account.normalizedWorkspaceName != nil {
-      return "이 Mac에서 직접 지정한 워크스페이스 표시 이름입니다."
+      return L10n.text("account.workspace_help_named")
     }
-    return "실제 워크스페이스 이름은 자동 조회되지 않습니다. 연필 버튼으로 알아보기 쉬운 이름을 지정하세요."
+    return L10n.text("account.workspace_help_unnamed")
   }
 
   private var loadingView: some View {
     HStack(spacing: 8) {
       ProgressView().controlSize(.small)
-      Text("사용량을 확인하는 중…")
+      Text(L10n.text("usage.loading"))
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -621,7 +662,7 @@ struct AccountUsageCard: View {
         }
 
         if let weeklyLimit = snapshot.weeklyLimit {
-          limitResetView("주간", limit: weeklyLimit, color: .purple)
+          limitResetView(L10n.text("common.weekly"), limit: weeklyLimit, color: .purple)
         }
 
         resetCreditsView(snapshot)
@@ -644,15 +685,14 @@ struct AccountUsageCard: View {
         .frame(width: 6, height: 6)
 
       if let resetsAt = limit.resetsAt {
-        let countdown = limit.resetCountdown() ?? "곧 초기화"
+        let countdown = limit.resetCountdown() ?? L10n.text("usage.reset_soon")
         Text(
-          countdown == "곧 초기화"
-            ? "\(title) 곧 초기화 · \(CompactUsageDate.string(resetsAt))"
-            : "\(title) \(countdown) 후 · \(CompactUsageDate.string(resetsAt))"
+          L10n.text(resetsAt <= Date() ? "usage.reset_line" : "usage.reset_after",
+            title, countdown, CompactUsageDate.string(resetsAt))
         )
-        .help("\(title) \(countdown) · \(resetsAt.formatted(date: .complete, time: .shortened))")
+        .help(L10n.text("usage.reset_line", title, countdown, L10n.date(resetsAt, style: .complete)))
       } else {
-        Text("\(title) 초기화 시각 정보 없음")
+        Text(L10n.text("usage.reset_unknown", title))
       }
     }
     .font(.caption2)
@@ -664,10 +704,10 @@ struct AccountUsageCard: View {
   private func accessibilityUsageLabel(_ snapshot: UsageSnapshot) -> String {
     var limits: [String] = []
     if let fiveHour = snapshot.fiveHourLimit {
-      limits.append("5시간 한도 \(fiveHour.remainingPercent)퍼센트 남음")
+      limits.append(L10n.text("usage.five_remaining", fiveHour.remainingPercent))
     }
     if let weekly = snapshot.weeklyLimit {
-      limits.append("주간 한도 \(weekly.remainingPercent)퍼센트 남음")
+      limits.append(L10n.text("usage.weekly_remaining", weekly.remainingPercent))
     }
     let workspace = viewState.account.workspaceDisplayLabel.map { ", \($0)" } ?? ""
     return "\(viewState.account.title)\(workspace), Codex " + limits.joined(separator: ", ")
@@ -689,21 +729,21 @@ struct AccountUsageCard: View {
   private var authenticationRequiredView: some View {
     VStack(alignment: .leading, spacing: 8) {
       Label(
-        "계정/워크스페이스 연결이 필요합니다",
+        L10n.text("auth.connection_required"),
         systemImage: "person.crop.circle.badge.exclamationmark"
       )
         .font(.caption.weight(.semibold))
         .foregroundStyle(.orange)
 
       if viewState.account.isSystemDefault {
-        Text("현재 머신에서 Codex CLI가 사용하는 .codex 폴더를 연결합니다. 다시 로그인하지 않습니다.")
+        Text(L10n.text("auth.default_explanation"))
           .font(.caption2)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-        Button("기본 Codex 로그인 연결") { store.connectExistingCodexLogin() }
+        Button(L10n.text("auth.connect_default")) { store.connectExistingCodexLogin() }
           .controlSize(.small)
       } else {
-        Button("다시 로그인") { store.relogin(accountID: viewState.id) }
+        Button(L10n.text("common.relogin")) { store.relogin(accountID: viewState.id) }
           .controlSize(.small)
       }
     }
@@ -713,14 +753,14 @@ struct AccountUsageCard: View {
   private func errorView(_ error: CodexUsageError) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Label(
-        error.errorDescription ?? "사용량을 가져오지 못했습니다.",
+        error.errorDescription ?? L10n.text("common.unknown_error"),
         systemImage: "exclamationmark.circle.fill"
       )
       .font(.caption.weight(.semibold))
       .foregroundStyle(.orange)
       .fixedSize(horizontal: false, vertical: true)
 
-      Button("다시 시도") { store.refresh(accountID: viewState.id) }
+      Button(L10n.text("common.retry")) { store.refresh(accountID: viewState.id) }
         .controlSize(.small)
     }
     .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)

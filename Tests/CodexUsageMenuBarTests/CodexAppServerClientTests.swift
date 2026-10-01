@@ -210,7 +210,7 @@ private func waitUntil(
   }
 }
 
-private struct MockAppServerFixture: Sendable {
+struct MockAppServerFixture: Sendable {
   let rootURL: URL
   let executableURL: URL
   let launchCountURL: URL

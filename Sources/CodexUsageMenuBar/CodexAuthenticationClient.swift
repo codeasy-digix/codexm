@@ -89,7 +89,7 @@ private final class DeviceLoginSession: @unchecked Sendable {
         let stderr = self.standardErrorText()
         let message =
           stderr.isEmpty
-          ? "Codex 로그인 프로세스가 종료되었습니다 (코드 \(process.terminationStatus))."
+          ? L10n.text("auth.process_exit", process.terminationStatus)
           : stderr
         self.finish(with: .failure(CodexUsageError.serverError(message)))
       }
@@ -149,7 +149,7 @@ private final class DeviceLoginSession: @unchecked Sendable {
       if (params["success"] as? Bool) == true {
         finish(with: .success(()))
       } else {
-        let error = params["error"] as? String ?? "ChatGPT 로그인에 실패했습니다."
+        let error = params["error"] as? String ?? L10n.text("auth.failed")
         finish(with: .failure(CodexUsageError.notAuthenticated(error)))
       }
       return
@@ -157,7 +157,7 @@ private final class DeviceLoginSession: @unchecked Sendable {
 
     guard let identifier = (json["id"] as? NSNumber)?.intValue else { return }
     if let error = json["error"] as? [String: Any] {
-      let message = error["message"] as? String ?? "ChatGPT 로그인에 실패했습니다."
+      let message = error["message"] as? String ?? L10n.text("auth.failed")
       finish(with: .failure(CodexUsageError.serverError(message)))
       return
     }

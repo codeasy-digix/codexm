@@ -105,7 +105,7 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
     UsageAccount(
       id: systemDefaultID,
       kind: .systemDefault,
-      displayName: "기본 계정",
+      displayName: nil,
       lastKnownEmail: nil,
       lastKnownPlanType: nil,
       createdAt: .distantPast
@@ -125,10 +125,21 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
   }
 
   var workspaceDisplayLabel: String? {
-    if let normalizedWorkspaceName {
-      return "워크스페이스 \(normalizedWorkspaceName)"
-    }
-    return nil
+    L10n.text("account.workspace_label", normalizedWorkspaceName ?? shortDisplayReference)
+  }
+
+  /// Unnamed connections keep a stable, non-secret display reference even
+  /// before a workspace fingerprint becomes available.
+  var shortDisplayReference: String {
+    let reference = workspaceReference ?? String(
+      SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined().prefix(8)
+    ).uppercased()
+    return "#\(reference)"
+  }
+
+  var normalizedDisplayName: String? {
+    let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return name.isEmpty ? nil : name
   }
 
   var normalizedWorkspaceName: String? {
@@ -137,10 +148,8 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
   }
 
   var title: String {
-    let trimmedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    if !trimmedName.isEmpty { return trimmedName }
-    if let email = lastKnownEmail, !email.isEmpty { return email }
-    return isSystemDefault ? "기본 계정" : "추가 계정"
+    if let normalizedDisplayName { return normalizedDisplayName }
+    return isSystemDefault ? L10n.text("account.default_name") : shortDisplayReference
   }
 }
 
@@ -153,13 +162,13 @@ enum UsageAccountRegistryError: LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .invalidAccountIdentifier:
-      return "계정 식별자가 올바르지 않습니다."
+      return L10n.text("account.invalid_id")
     case .pendingAccountMissing:
-      return "추가 중인 계정 정보를 찾을 수 없습니다."
+      return L10n.text("account.pending_missing")
     case .managedAccountMissing:
-      return "저장된 계정 정보를 찾을 수 없습니다."
+      return L10n.text("account.saved_missing")
     case .unsafeManagedPath:
-      return "안전하지 않은 계정 저장 경로입니다."
+      return L10n.text("account.unsafe_path")
     }
   }
 }
@@ -462,7 +471,7 @@ struct UsageAccountRegistry: @unchecked Sendable {
       let account = UsageAccount(
         id: identifier,
         kind: .managed,
-        displayName: "이전 앱 계정",
+        displayName: nil,
         lastKnownEmail: nil,
         lastKnownPlanType: nil,
         createdAt: Date()
