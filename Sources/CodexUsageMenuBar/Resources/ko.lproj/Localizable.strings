@@ -65,7 +65,7 @@
 "usage.five_remaining" = "5h 한도 %lld%% 남음";
 "usage.weekly_remaining" = "주간 한도 %lld%% 남음";
 "usage.dual_remaining" = "Codex 5h %lld%%, 주간 %lld%% 남음";
-"usage.split_bars_help" = "위 파란 막대: 5h 잔량. 아래 황금색 막대: 주간 잔량. 숫자는 5h 잔량이며 5h 한도가 없으면 주간 잔량을 표시합니다. 사선 패턴은 한도가 제공되지 않음을 뜻합니다.";
+"usage.weekly_bar_help" = "주황색 배경 막대는 주간 잔량이며 사용하면 오른쪽부터 줄어듭니다. 숫자는 5h 잔량이며 5h 한도가 없으면 주간 잔량을 표시합니다. 사선은 주간 정보가 제공되지 않음을 뜻하며 막대에 5h 값을 대신 사용하지 않습니다.";
 "usage.reset_soon" = "곧 초기화";
 "usage.reset_line" = "%@ %@ · %@";
 "usage.reset_after" = "%@ %@ 후 · %@";
@@ -91,7 +91,7 @@
 "credit.coverage" = "상세 %lld/%lld";
 "credit.coverage_detail" = "상세 정보 %lld/%lld개 제공됨";
 "options.icon" = "메뉴바 아이콘";
-"options.icon_terminal" = "5h 숫자 + 상·하 잔량 막대";
+"options.icon_terminal" = "5h 숫자 + 주간 막대";
 "options.icon_circular" = "주간 원형 + 5h 숫자";
 "options.default_interval" = "기본 계정 갱신 주기";
 "options.interval_help" = "이 주기는 기본 계정에만 적용됩니다. 추가 계정은 15분마다 갱신됩니다. 메뉴를 열면 모든 연결을 조회하며, 진행 중이거나 중복된 요청은 합쳐집니다.";

@@ -65,7 +65,7 @@
 "usage.five_remaining" = "5h limit: %lld%% remaining";
 "usage.weekly_remaining" = "Weekly limit: %lld%% remaining";
 "usage.dual_remaining" = "Codex 5h: %lld%% remaining; weekly: %lld%% remaining";
-"usage.split_bars_help" = "Top blue bar: 5h remaining. Bottom amber bar: weekly remaining. The number shows 5h (weekly if there is no 5h limit). Diagonal stripes mean the limit is not provided.";
+"usage.weekly_bar_help" = "Orange background bar: weekly remaining, draining from the right as allowance is used. The number shows 5h remaining (weekly if there is no 5h limit). Diagonal stripes mean weekly data is not provided; the bar never substitutes the 5h value.";
 "usage.reset_soon" = "Resetting soon";
 "usage.reset_line" = "%@ %@ · %@";
 "usage.reset_after" = "%@ resets in %@ · %@";
@@ -91,7 +91,7 @@
 "credit.coverage" = "Details %lld/%lld";
 "credit.coverage_detail" = "Details provided for %lld of %lld credits";
 "options.icon" = "Menu bar icon";
-"options.icon_terminal" = "5h number + top/bottom bars";
+"options.icon_terminal" = "5h number + weekly bar";
 "options.icon_circular" = "Weekly ring + 5h number";
 "options.default_interval" = "Default account refresh interval";
 "options.interval_help" = "Only the default account uses this interval. Additional accounts refresh every 15 minutes. Opening the menu checks all connections; concurrent or repeated requests are coalesced.";

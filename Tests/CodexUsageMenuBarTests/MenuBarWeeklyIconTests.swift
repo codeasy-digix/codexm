@@ -4,9 +4,9 @@ import Testing
 
 @testable import CodexUsageMenuBar
 
-@Suite("Split menu-bar usage icon")
+@Suite("Weekly menu-bar usage icon")
 @MainActor
-struct MenuBarSplitIconTests {
+struct MenuBarWeeklyIconTests {
   @Test("Missing windows stay missing, percentages clamp, and the ring retains its single-window fallback")
   func independentFractions() {
     let weeklyOnly = MenuBarIndicator.limits(fiveHour: nil, weekly: 73)
@@ -26,33 +26,25 @@ struct MenuBarSplitIconTests {
     }
   }
 
-  @Test("5h occupies the upper half, weekly the lower half, and both drain from the right")
+  @Test("The weekly bar occupies the full interior and drains from the right")
   func barGeometry() {
     let layout = MenuBarUsageBarLayout(bounds: NSRect(origin: .zero, size: CodexMenuBarIconRenderer.size))
-    #expect(layout.fiveHour.minY > layout.weekly.maxY)
-    #expect(layout.fiveHour.height == layout.weekly.height)
-    #expect(layout.fiveHour.width == layout.weekly.width)
-    #expect(layout.divider.height == 1.5)
-    #expect(layout.fiveHour.minY - layout.weekly.maxY == layout.divider.height)
-    #expect(layout.interior.contains(layout.fiveHour))
-    #expect(layout.interior.contains(layout.weekly))
-    let upper = MenuBarUsageBarLayout.fillRect(in: layout.fiveHour, fraction: 0.18)
-    let lower = MenuBarUsageBarLayout.fillRect(in: layout.weekly, fraction: 0.64)
-    #expect(upper.minX == layout.fiveHour.minX)
-    #expect(lower.minX == layout.weekly.minX)
-    #expect(abs(upper.width / layout.fiveHour.width - 0.18) < 0.001)
-    #expect(abs(lower.width / layout.weekly.width - 0.64) < 0.001)
-    #expect(MenuBarUsageBarLayout.fillRect(in: layout.fiveHour, fraction: -1).width == 0)
-    #expect(MenuBarUsageBarLayout.fillRect(in: layout.weekly, fraction: 2).width == layout.weekly.width)
+    #expect(layout.outline.contains(layout.interior))
+    #expect(layout.interior.height == layout.outline.height - 1.5)
+    let fill = MenuBarUsageBarLayout.fillRect(in: layout.interior, fraction: 0.64)
+    #expect(fill.minX == layout.interior.minX)
+    #expect(fill.minY == layout.interior.minY)
+    #expect(fill.height == layout.interior.height)
+    #expect(abs(fill.width / layout.interior.width - 0.64) < 0.001)
+    #expect(MenuBarUsageBarLayout.fillRect(in: layout.interior, fraction: -1).width == 0)
+    #expect(MenuBarUsageBarLayout.fillRect(in: layout.interior, fraction: 2) == layout.interior)
   }
 
-  @Test("Bold text and underline have at least 6:1 contrast against both fills, tracks and divider",
+  @Test("Bold text and underline have at least 6:1 contrast against the orange fill and empty track",
     arguments: [ColorScheme.light, .dark])
   func readablePalette(_ scheme: ColorScheme) throws {
     let palette = MenuBarIconPalette.terminal(for: scheme)
-    for background in [palette.fiveHourFill, palette.weeklyFill, palette.fiveHourTrack,
-      palette.weeklyTrack, palette.track, palette.divider]
-    {
+    for background in [palette.weeklyFill, palette.track] {
       #expect(contrast(palette.text, background) >= 6)
       #expect(background.alphaComponent == 1)
     }
@@ -65,37 +57,51 @@ struct MenuBarSplitIconTests {
     #expect(!CodexMenuBarIconRenderer.image(for: .limits(fiveHour: 82, weekly: 20), colorScheme: scheme).isTemplate)
   }
 
-  @Test("Blue and amber remain different in both filled and empty lanes", arguments: [ColorScheme.light, .dark])
-  func distinctLaneColors(_ scheme: ColorScheme) throws {
+  @Test("Bright orange and dark text stay consistent in both appearances without a horizontal split",
+    arguments: [ColorScheme.light, .dark])
+  func singleOrangeBar(_ scheme: ColorScheme) throws {
     let palette = MenuBarIconPalette.terminal(for: scheme)
-    let upper = rgb(palette.fiveHourFill), lower = rgb(palette.weeklyFill)
-    #expect(upper[2] - upper[0] >= 0.4)
-    #expect(lower[0] - lower[2] >= 0.4)
-    let upperTrack = rgb(palette.fiveHourTrack), lowerTrack = rgb(palette.weeklyTrack)
-    #expect(upperTrack[2] - upperTrack[0] >= 0.1)
-    #expect(lowerTrack[0] - lowerTrack[2] >= 0.1)
+    let fill = rgb(palette.weeklyFill)
+    #expect(fill == [1, CGFloat(0xA7) / 255, CGFloat(0x26) / 255])
+    let light = MenuBarIconPalette.terminal(for: .light)
+    #expect(rgb(palette.weeklyFill) == rgb(light.weeklyFill))
+    #expect(rgb(palette.text) == rgb(light.text))
     for percent in [0, 50, 100] {
       let image = try bitmap(.limits(fiveHour: percent, weekly: percent), scheme: scheme)
-      #expect(pixel(image, x: 20, y: 18) != pixel(image, x: 20, y: 4))
+      #expect(pixel(image, x: 20, y: 18) == pixel(image, x: 20, y: 4))
     }
   }
 
-  @Test("Rasterized top and bottom bars respond only to their own window", arguments: [ColorScheme.light, .dark])
-  func independentBarPixels(_ scheme: ColorScheme) throws {
+  @Test("The whole background responds to weekly data only, independently of the displayed 5h number",
+    arguments: [ColorScheme.light, .dark])
+  func weeklyOnlyBarPixels(_ scheme: ColorScheme) throws {
     let baseline = try bitmap(.limits(fiveHour: 20, weekly: 20), scheme: scheme)
-    let changedTop = try bitmap(.limits(fiveHour: 80, weekly: 20), scheme: scheme)
-    let changedBottom = try bitmap(.limits(fiveHour: 20, weekly: 80), scheme: scheme)
+    let changedNumber = try bitmap(.limits(fiveHour: 80, weekly: 20), scheme: scheme)
+    let changedWeek = try bitmap(.limits(fiveHour: 20, weekly: 80), scheme: scheme)
+    let weeklyOnly = try bitmap(.limits(fiveHour: nil, weekly: 20), scheme: scheme)
     // Sample the bare track just inside the frame, outside the glyph ink.
-    #expect(pixel(baseline, x: 20, y: 18) != pixel(changedTop, x: 20, y: 18))
-    #expect(pixel(baseline, x: 20, y: 18) == pixel(changedBottom, x: 20, y: 18))
-    #expect(pixel(baseline, x: 20, y: 4) != pixel(changedBottom, x: 20, y: 4))
-    #expect(pixel(baseline, x: 20, y: 4) == pixel(changedTop, x: 20, y: 4))
-    let unknown = try bitmap(.limits(fiveHour: nil, weekly: 20), scheme: scheme)
-    let empty = try bitmap(.limits(fiveHour: 0, weekly: 20), scheme: scheme)
-    #expect(unknown.tiffRepresentation != empty.tiffRepresentation)
+    for y: CGFloat in [4, 18] {
+      #expect(pixel(baseline, x: 20, y: y) == pixel(changedNumber, x: 20, y: y))
+      #expect(pixel(baseline, x: 20, y: y) != pixel(changedWeek, x: 20, y: y))
+      #expect(pixel(baseline, x: 20, y: y) == pixel(weeklyOnly, x: 20, y: y))
+    }
+    #expect(MenuBarIndicator.limits(fiveHour: 80, weekly: 20).text == "80%")
+    #expect(MenuBarIndicator.limits(fiveHour: nil, weekly: 20).text == "20%")
   }
 
-  @Test("Glyph strokes stay visible instead of becoming holes on either differently colored lane", arguments: [ColorScheme.light, .dark])
+  @Test("Missing weekly data is visibly unknown, never 0% or a substitute 5h bar",
+    arguments: [ColorScheme.light, .dark])
+  func missingWeeklyBar(_ scheme: ColorScheme) throws {
+    let unknown = try bitmap(.limits(fiveHour: 42, weekly: nil), scheme: scheme)
+    let empty = try bitmap(.limits(fiveHour: 42, weekly: 0), scheme: scheme)
+    let substituted = try bitmap(.limits(fiveHour: 42, weekly: 42), scheme: scheme)
+    #expect(unknown.tiffRepresentation != empty.tiffRepresentation)
+    #expect(unknown.tiffRepresentation != substituted.tiffRepresentation)
+    #expect(MenuBarIndicator.limits(fiveHour: 42, weekly: nil).text == "42%")
+    #expect(MenuBarIndicator.limits(fiveHour: 42, weekly: nil).weeklyRemainingFraction == nil)
+  }
+
+  @Test("Glyph strokes stay visible instead of becoming holes across the weekly fill boundary", arguments: [ColorScheme.light, .dark])
   func stableGlyphPixels(_ scheme: ColorScheme) throws {
     let empty = try bitmap(.limits(fiveHour: 82, weekly: 0), scheme: scheme)
     let partial = try bitmap(.limits(fiveHour: 82, weekly: 47), scheme: scheme)
@@ -106,7 +112,7 @@ struct MenuBarSplitIconTests {
         let first = try #require(empty.colorAt(x: x, y: y))
         // Antialiased strokes legitimately blend with the changing background.
         // Their foreground tone and opaque track must not be cleared or
-        // replaced with either window's fill/track at the transition.
+        // replaced with the weekly fill/track at the transition.
         if hasForegroundTone(first, scheme: scheme) {
           coloredPixels += 1
           #expect(hasForegroundTone(try #require(partial.colorAt(x: x, y: y)), scheme: scheme))
@@ -124,7 +130,7 @@ struct MenuBarSplitIconTests {
     for language in AppLanguage.allCases {
       L10n.$languageOverride.withValue(language) {
         #expect(indicator.helpText(for: .terminal).contains(indicator.accessibilityLabel))
-        #expect(indicator.helpText(for: .terminal).contains(L10n.text("usage.split_bars_help")))
+        #expect(indicator.helpText(for: .terminal).contains(L10n.text("usage.weekly_bar_help")))
         #expect(indicator.helpText(for: .circular) == indicator.accessibilityLabel)
       }
     }
@@ -153,7 +159,7 @@ struct MenuBarSplitIconTests {
 
   @Test("Produces light and dark comparison previews for partial, full, empty and missing windows")
   func comparisonPreview() throws {
-    guard let directory = ProcessInfo.processInfo.environment["CODEX_SPLIT_ICON_PREVIEW_DIR"] else { return }
+    guard let directory = ProcessInfo.processInfo.environment["CODEX_WEEKLY_ICON_PREVIEW_DIR"] else { return }
     try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
     let examples: [(String, MenuBarIndicator)] = [
       ("5h 18% / week 64%", .limits(fiveHour: 18, weekly: 64)),
@@ -183,7 +189,7 @@ struct MenuBarSplitIconTests {
       }
       let bitmap = try #require(canvas.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
       let png = try #require(bitmap.representation(using: .png, properties: [:]))
-      try png.write(to: URL(fileURLWithPath: directory).appending(path: "split-\(scheme == .dark ? "dark" : "light").png"))
+      try png.write(to: URL(fileURLWithPath: directory).appending(path: "weekly-\(scheme == .dark ? "dark" : "light").png"))
     }
 
     let swatch = NSImage(size: NSSize(width: 320, height: 106), flipped: false) { _ in
