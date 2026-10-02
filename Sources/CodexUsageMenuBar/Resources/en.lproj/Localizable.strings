@@ -65,7 +65,7 @@
 "usage.five_remaining" = "5h limit: %lld%% remaining";
 "usage.weekly_remaining" = "Weekly limit: %lld%% remaining";
 "usage.dual_remaining" = "Codex 5h: %lld%% remaining; weekly: %lld%% remaining";
-"usage.split_bars_help" = "Top bar: 5h remaining. Bottom bar: weekly remaining. The number shows 5h (weekly if there is no 5h limit). Diagonal stripes mean the limit is not provided.";
+"usage.split_bars_help" = "Top blue bar: 5h remaining. Bottom amber bar: weekly remaining. The number shows 5h (weekly if there is no 5h limit). Diagonal stripes mean the limit is not provided.";
 "usage.reset_soon" = "Resetting soon";
 "usage.reset_line" = "%@ %@ · %@";
 "usage.reset_after" = "%@ resets in %@ · %@";

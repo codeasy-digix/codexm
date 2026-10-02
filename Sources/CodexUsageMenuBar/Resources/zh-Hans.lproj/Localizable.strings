@@ -65,7 +65,7 @@
 "usage.five_remaining" = "5h 限额：剩余 %lld%%";
 "usage.weekly_remaining" = "每周限额：剩余 %lld%%";
 "usage.dual_remaining" = "Codex 5h：剩余 %lld%%；每周：剩余 %lld%%";
-"usage.split_bars_help" = "上方进度条：5h 剩余额度。下方进度条：每周剩余额度。数字显示 5h 余额（没有 5h 限额时显示每周余额）。斜线表示未提供该限额。";
+"usage.split_bars_help" = "上方蓝色进度条：5h 剩余额度。下方琥珀色进度条：每周剩余额度。数字显示 5h 余额（没有 5h 限额时显示每周余额）。斜线表示未提供该限额。";
 "usage.reset_soon" = "即将重置";
 "usage.reset_line" = "%@ %@ · %@";
 "usage.reset_after" = "%@ %@后重置 · %@";

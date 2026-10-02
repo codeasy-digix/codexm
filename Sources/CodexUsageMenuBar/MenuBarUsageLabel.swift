@@ -85,21 +85,30 @@ struct MenuBarUsageLabel: View {
   }
 }
 
-/// Opaque, subdued tracks keep colored text readable over any menu-bar wallpaper.
+/// Cool blue and warm amber distinguish the windows even at matching percentages.
+/// Opaque tracks keep the text readable over any menu-bar wallpaper.
 /// Neither the glyph color nor its underline changes at a bar's fill boundary.
 struct MenuBarIconPalette {
   let text: NSColor
   let track: NSColor
-  let fill: NSColor
+  let fiveHourTrack: NSColor
+  let fiveHourFill: NSColor
+  let weeklyTrack: NSColor
+  let weeklyFill: NSColor
   let outline: NSColor
+  let divider: NSColor
 
   static func terminal(for colorScheme: ColorScheme) -> Self {
     if colorScheme == .dark {
-      return Self(text: color(0xB7D3E2), track: color(0x17242E),
-        fill: color(0x405464), outline: color(0x8797A1))
+      return Self(text: color(0xF8FAFC), track: color(0x17242E),
+        fiveHourTrack: color(0x142E40), fiveHourFill: color(0x1C628E),
+        weeklyTrack: color(0x3B2C16), weeklyFill: color(0x835717),
+        outline: color(0x8797A1), divider: color(0x071219))
     }
-    return Self(text: color(0x1F4C65), track: color(0xF0F3F5),
-      fill: color(0xACBBC5), outline: color(0x657580))
+    return Self(text: color(0x0B2232), track: color(0xF0F3F5),
+      fiveHourTrack: color(0xD6ECFA), fiveHourFill: color(0x39ADF0),
+      weeklyTrack: color(0xFFF4D8), weeklyFill: color(0xE3A03C),
+      outline: color(0x657580), divider: color(0xF8FBFD))
   }
 
   private static func color(_ rgb: UInt32) -> NSColor {
@@ -114,16 +123,20 @@ struct MenuBarUsageBarLayout {
   let interior: NSRect
   let fiveHour: NSRect
   let weekly: NSRect
+  let divider: NSRect
 
   init(bounds: NSRect) {
     outline = bounds.insetBy(dx: 1.5, dy: 2.5)
     interior = outline.insetBy(dx: 0.75, dy: 0.75)
-    let laneHeight = (interior.height - 1) / 2
+    let dividerHeight: CGFloat = 1.5
+    let laneHeight = (interior.height - dividerHeight) / 2
     // The image is not flipped: larger y values are the top of the menu bar.
-    fiveHour = NSRect(x: interior.minX, y: interior.midY + 0.5,
+    fiveHour = NSRect(x: interior.minX, y: interior.midY + dividerHeight / 2,
       width: interior.width, height: laneHeight)
     weekly = NSRect(x: interior.minX, y: interior.minY,
       width: interior.width, height: laneHeight)
+    divider = NSRect(x: interior.minX, y: interior.midY - dividerHeight / 2,
+      width: interior.width, height: dividerHeight)
   }
 
   static func fillRect(in lane: NSRect, fraction: CGFloat) -> NSRect {
@@ -172,16 +185,13 @@ enum CodexMenuBarIconRenderer {
       if case .limits = indicator {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(roundedRect: layout.interior, xRadius: 1.6, yRadius: 1.6).addClip()
-        drawLane(layout.fiveHour, fraction: indicator.fiveHourRemainingFraction, palette: palette)
-        drawLane(layout.weekly, fraction: indicator.weeklyRemainingFraction, palette: palette)
+        drawLane(layout.fiveHour, fraction: indicator.fiveHourRemainingFraction,
+          track: palette.fiveHourTrack, fill: palette.fiveHourFill, hatchColor: palette.outline)
+        drawLane(layout.weekly, fraction: indicator.weeklyRemainingFraction,
+          track: palette.weeklyTrack, fill: palette.weeklyFill, hatchColor: palette.outline)
+        palette.divider.setFill()
+        NSBezierPath(rect: layout.divider).fill()
         NSGraphicsContext.restoreGraphicsState()
-
-        let divider = NSBezierPath()
-        divider.move(to: NSPoint(x: layout.interior.minX, y: layout.interior.midY))
-        divider.line(to: NSPoint(x: layout.interior.maxX, y: layout.interior.midY))
-        divider.lineWidth = 0.5
-        palette.outline.withAlphaComponent(0.5).setStroke()
-        divider.stroke()
       }
 
       outline.lineWidth = 1
@@ -204,7 +214,11 @@ enum CodexMenuBarIconRenderer {
     return image
   }
 
-  private static func drawLane(_ lane: NSRect, fraction: CGFloat?, palette: MenuBarIconPalette) {
+  private static func drawLane(_ lane: NSRect, fraction: CGFloat?, track: NSColor,
+    fill: NSColor, hatchColor: NSColor)
+  {
+    track.setFill()
+    NSBezierPath(rect: lane).fill()
     guard let fraction else {
       // Missing is not 0%, nor a copy of the other window's remaining allowance.
       NSGraphicsContext.saveGraphicsState()
@@ -215,13 +229,13 @@ enum CodexMenuBarIconRenderer {
         hatch.line(to: NSPoint(x: x + lane.height, y: lane.maxY))
       }
       hatch.lineWidth = 0.5
-      palette.outline.withAlphaComponent(0.4).setStroke()
+      hatchColor.withAlphaComponent(0.4).setStroke()
       hatch.stroke()
       NSGraphicsContext.restoreGraphicsState()
       return
     }
     guard fraction > 0 else { return }
-    palette.fill.setFill()
+    fill.setFill()
     NSBezierPath(rect: MenuBarUsageBarLayout.fillRect(in: lane, fraction: fraction)).fill()
   }
 
@@ -273,7 +287,7 @@ enum CodexMenuBarIconRenderer {
     let text = NSMutableAttributedString(
       string: indicator.terminalText,
       attributes: [
-        .font: NSFont.monospacedSystemFont(ofSize: 12.6, weight: .semibold),
+        .font: NSFont.monospacedSystemFont(ofSize: 12.6, weight: .bold),
         .foregroundColor: textColor,
         .paragraphStyle: paragraph,
       ]

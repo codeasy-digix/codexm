@@ -32,6 +32,8 @@ struct MenuBarSplitIconTests {
     #expect(layout.fiveHour.minY > layout.weekly.maxY)
     #expect(layout.fiveHour.height == layout.weekly.height)
     #expect(layout.fiveHour.width == layout.weekly.width)
+    #expect(layout.divider.height == 1.5)
+    #expect(layout.fiveHour.minY - layout.weekly.maxY == layout.divider.height)
     #expect(layout.interior.contains(layout.fiveHour))
     #expect(layout.interior.contains(layout.weekly))
     let upper = MenuBarUsageBarLayout.fillRect(in: layout.fiveHour, fraction: 0.18)
@@ -44,18 +46,38 @@ struct MenuBarSplitIconTests {
     #expect(MenuBarUsageBarLayout.fillRect(in: layout.weekly, fraction: 2).width == layout.weekly.width)
   }
 
-  @Test("Colored glyphs and underline have at least 4.5:1 contrast against both bar tones",
+  @Test("Bold text and underline have at least 6:1 contrast against both fills, tracks and divider",
     arguments: [ColorScheme.light, .dark])
   func readablePalette(_ scheme: ColorScheme) throws {
     let palette = MenuBarIconPalette.terminal(for: scheme)
-    #expect(contrast(palette.text, palette.fill) >= 4.5)
-    #expect(contrast(palette.text, palette.track) >= 4.5)
+    for background in [palette.fiveHourFill, palette.weeklyFill, palette.fiveHourTrack,
+      palette.weeklyTrack, palette.track, palette.divider]
+    {
+      #expect(contrast(palette.text, background) >= 6)
+      #expect(background.alphaComponent == 1)
+    }
     #expect(palette.track.alphaComponent == 1)
-    #expect(palette.fill.alphaComponent == 1)
     let text = CodexMenuBarIconRenderer.attributedText(for: .limits(fiveHour: 82, weekly: 20), colorScheme: scheme)
     #expect(text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == palette.text)
     #expect(text.attribute(.underlineColor, at: 0, effectiveRange: nil) as? NSColor == palette.text)
+    let font = try #require(text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+    #expect(NSFontManager.shared.traits(of: font).contains(.boldFontMask))
     #expect(!CodexMenuBarIconRenderer.image(for: .limits(fiveHour: 82, weekly: 20), colorScheme: scheme).isTemplate)
+  }
+
+  @Test("Blue and amber remain different in both filled and empty lanes", arguments: [ColorScheme.light, .dark])
+  func distinctLaneColors(_ scheme: ColorScheme) throws {
+    let palette = MenuBarIconPalette.terminal(for: scheme)
+    let upper = rgb(palette.fiveHourFill), lower = rgb(palette.weeklyFill)
+    #expect(upper[2] - upper[0] >= 0.4)
+    #expect(lower[0] - lower[2] >= 0.4)
+    let upperTrack = rgb(palette.fiveHourTrack), lowerTrack = rgb(palette.weeklyTrack)
+    #expect(upperTrack[2] - upperTrack[0] >= 0.1)
+    #expect(lowerTrack[0] - lowerTrack[2] >= 0.1)
+    for percent in [0, 50, 100] {
+      let image = try bitmap(.limits(fiveHour: percent, weekly: percent), scheme: scheme)
+      #expect(pixel(image, x: 20, y: 18) != pixel(image, x: 20, y: 4))
+    }
   }
 
   @Test("Rasterized top and bottom bars respond only to their own window", arguments: [ColorScheme.light, .dark])
@@ -73,7 +95,7 @@ struct MenuBarSplitIconTests {
     #expect(unknown.tiffRepresentation != empty.tiffRepresentation)
   }
 
-  @Test("Colored glyph strokes stay visible instead of becoming holes on either bar tone", arguments: [ColorScheme.light, .dark])
+  @Test("Glyph strokes stay visible instead of becoming holes on either differently colored lane", arguments: [ColorScheme.light, .dark])
   func stableGlyphPixels(_ scheme: ColorScheme) throws {
     let empty = try bitmap(.limits(fiveHour: 82, weekly: 0), scheme: scheme)
     let partial = try bitmap(.limits(fiveHour: 82, weekly: 47), scheme: scheme)
@@ -83,12 +105,12 @@ struct MenuBarSplitIconTests {
       for x in 0..<empty.pixelsWide {
         let first = try #require(empty.colorAt(x: x, y: y))
         // Antialiased strokes legitimately blend with the changing background.
-        // Their recognizable blue tint and opaque track must not be cleared or
-        // replaced with the neutral fill/track at the transition.
-        if hasGlyphTint(first, scheme: scheme) {
+        // Their foreground tone and opaque track must not be cleared or
+        // replaced with either window's fill/track at the transition.
+        if hasForegroundTone(first, scheme: scheme) {
           coloredPixels += 1
-          #expect(hasGlyphTint(try #require(partial.colorAt(x: x, y: y)), scheme: scheme))
-          #expect(hasGlyphTint(try #require(full.colorAt(x: x, y: y)), scheme: scheme))
+          #expect(hasForegroundTone(try #require(partial.colorAt(x: x, y: y)), scheme: scheme))
+          #expect(hasForegroundTone(try #require(full.colorAt(x: x, y: y)), scheme: scheme))
           #expect(first.alphaComponent > 0.99)
         }
       }
@@ -121,7 +143,7 @@ struct MenuBarSplitIconTests {
     var coloredPixels = 0
     for y in 0..<bitmap.pixelsHigh {
       for x in 0..<bitmap.pixelsWide {
-        if let color = bitmap.colorAt(x: x, y: y), hasGlyphTint(color, scheme: scheme) {
+        if let color = bitmap.colorAt(x: x, y: y), hasForegroundTone(color, scheme: scheme) {
           coloredPixels += 1
         }
       }
@@ -137,6 +159,7 @@ struct MenuBarSplitIconTests {
       ("5h 18% / week 64%", .limits(fiveHour: 18, weekly: 64)),
       ("5h 64% / week 18%", .limits(fiveHour: 64, weekly: 18)),
       ("5h 47% / week 53%", .limits(fiveHour: 47, weekly: 53)),
+      ("Both half full", .limits(fiveHour: 50, weekly: 50)),
       ("Both full", .limits(fiveHour: 100, weekly: 100)),
       ("Both empty", .limits(fiveHour: 0, weekly: 0)),
       ("Weekly only", .limits(fiveHour: nil, weekly: 73)),
@@ -162,6 +185,24 @@ struct MenuBarSplitIconTests {
       let png = try #require(bitmap.representation(using: .png, properties: [:]))
       try png.write(to: URL(fileURLWithPath: directory).appending(path: "split-\(scheme == .dark ? "dark" : "light").png"))
     }
+
+    let swatch = NSImage(size: NSSize(width: 320, height: 106), flipped: false) { _ in
+      for (index, scheme) in [ColorScheme.light, .dark].enumerated() {
+        let x = CGFloat(index) * 160
+        (scheme == .dark ? NSColor(srgbRed: 0.1, green: 0.12, blue: 0.15, alpha: 1) : NSColor.white).setFill()
+        NSBezierPath(rect: NSRect(x: x, y: 0, width: 160, height: 106)).fill()
+        let image = CodexMenuBarIconRenderer.image(for: .limits(fiveHour: 18, weekly: 64), colorScheme: scheme)
+        image.draw(in: NSRect(x: x + 15.5, y: 12, width: 129, height: 66))
+        NSAttributedString(string: scheme == .dark ? "Dark" : "Light",
+          attributes: [.font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: scheme == .dark ? NSColor.white : NSColor.black])
+          .draw(at: NSPoint(x: x + 15.5, y: 83))
+      }
+      return true
+    }
+    let bitmap = try #require(swatch.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+    let png = try #require(bitmap.representation(using: .png, properties: [:]))
+    try png.write(to: URL(fileURLWithPath: directory).appending(path: "swatch.png"))
   }
 
   private func bitmap(_ indicator: MenuBarIndicator, scheme: ColorScheme) throws -> NSBitmapImageRep {
@@ -193,11 +234,11 @@ struct MenuBarSplitIconTests {
     return [c.redComponent, c.greenComponent, c.blueComponent]
   }
 
-  private func hasGlyphTint(_ color: NSColor, scheme: ColorScheme) -> Bool {
+  private func hasForegroundTone(_ color: NSColor, scheme: ColorScheme) -> Bool {
+    guard color.alphaComponent > 0.99 else { return false }
     let values = rgb(color)
-    return scheme == .dark
-      ? values[0] > 0.62 && values[2] - values[0] > 0.1
-      : values[0] < 0.4 && values[2] - values[0] > 0.14
+    let foreground = rgb(MenuBarIconPalette.terminal(for: scheme).text)
+    return zip(values, foreground).allSatisfy { abs($0 - $1) < 0.2 }
   }
 
   private func contrast(_ first: NSColor, _ second: NSColor) -> Double {

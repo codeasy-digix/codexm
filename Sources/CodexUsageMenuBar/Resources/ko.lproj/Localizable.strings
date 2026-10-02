@@ -65,7 +65,7 @@
 "usage.five_remaining" = "5h 한도 %lld%% 남음";
 "usage.weekly_remaining" = "주간 한도 %lld%% 남음";
 "usage.dual_remaining" = "Codex 5h %lld%%, 주간 %lld%% 남음";
-"usage.split_bars_help" = "위 막대: 5h 잔량. 아래 막대: 주간 잔량. 숫자는 5h 잔량이며 5h 한도가 없으면 주간 잔량을 표시합니다. 사선 패턴은 한도가 제공되지 않음을 뜻합니다.";
+"usage.split_bars_help" = "위 파란 막대: 5h 잔량. 아래 황금색 막대: 주간 잔량. 숫자는 5h 잔량이며 5h 한도가 없으면 주간 잔량을 표시합니다. 사선 패턴은 한도가 제공되지 않음을 뜻합니다.";
 "usage.reset_soon" = "곧 초기화";
 "usage.reset_line" = "%@ %@ · %@";
 "usage.reset_after" = "%@ %@ 후 · %@";
