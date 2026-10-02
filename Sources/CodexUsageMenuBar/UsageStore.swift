@@ -48,7 +48,8 @@ final class UsageStore: ObservableObject {
   @Published private(set) var launchAtLoginError: String?
   @Published private(set) var isAuthenticating = false
   @Published private(set) var authenticationAccountID: String?
-  @Published private(set) var deviceLoginInfo: DeviceLoginInfo?
+  @Published private(set) var loginChallenge: CodexLoginChallenge?
+  @Published private(set) var authenticationMethod: CodexLoginMethod?
   @Published private(set) var authenticationError: String?
   @Published private(set) var accountManagementError: String?
   @Published private(set) var accountManagementNotice: String?
@@ -74,6 +75,7 @@ final class UsageStore: ObservableObject {
   private let runtimeLocator: CodexRuntimeLocator
   private let client: CodexAppServerClient
   private let authenticationClient: CodexAuthenticationClient
+  private let authorizationPageOpener: @MainActor (URL) -> Bool
   private let identityReader: CodexAccountIdentityReader
   private let automaticUsageClient: CodexAutomaticUsageClient
   private let automaticScheduleStore: AutomaticUsageScheduleStore
@@ -93,6 +95,7 @@ final class UsageStore: ObservableObject {
   private var accountManagementErrorDismissTask: Task<Void, Never>?
   private var accountManagementNoticeDismissTask: Task<Void, Never>?
   private var authenticationMode: AuthenticationMode?
+  private var authenticationAttemptID: UUID?
   private var lastRefreshAllRequestedAt: Date?
   private var pendingRefreshAll = false
 
@@ -103,6 +106,7 @@ final class UsageStore: ObservableObject {
     runtimeLocator: CodexRuntimeLocator = CodexRuntimeLocator(),
     client: CodexAppServerClient = CodexAppServerClient(),
     authenticationClient: CodexAuthenticationClient = CodexAuthenticationClient(),
+    authorizationPageOpener: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
     identityReader: CodexAccountIdentityReader = CodexAccountIdentityReader(),
     automaticUsageClient: CodexAutomaticUsageClient = CodexAutomaticUsageClient(),
     automaticScheduleStore: AutomaticUsageScheduleStore = AutomaticUsageScheduleStore(),
@@ -116,6 +120,7 @@ final class UsageStore: ObservableObject {
     self.runtimeLocator = runtimeLocator
     self.client = client
     self.authenticationClient = authenticationClient
+    self.authorizationPageOpener = authorizationPageOpener
     self.identityReader = identityReader
     self.automaticUsageClient = automaticUsageClient
     self.automaticScheduleStore = automaticScheduleStore
@@ -176,6 +181,11 @@ final class UsageStore: ObservableObject {
     return false
   }
 
+  var deviceLoginInfo: DeviceLoginInfo? {
+    guard case .deviceCode(let info) = loginChallenge else { return nil }
+    return info
+  }
+
   var authenticationTitle: String {
     if let account = authenticationAccount {
       return L10n.text("auth.relogin_title", account.title)
@@ -184,6 +194,9 @@ final class UsageStore: ObservableObject {
   }
 
   var authenticationInstruction: String {
+    if authenticationMethod == .browser {
+      return L10n.text(authenticationAccount != nil ? "auth.browser_instruction_existing" : "auth.browser_instruction_new")
+    }
     if authenticationAccount != nil {
       return L10n.text("auth.instruction_existing")
     }
@@ -191,6 +204,9 @@ final class UsageStore: ObservableObject {
   }
 
   var authenticationCompletionNote: String {
+    if authenticationMethod == .browser {
+      return L10n.text(authenticationAccount != nil ? "auth.browser_completion_existing" : "auth.browser_completion_new")
+    }
     if authenticationAccount != nil {
       return L10n.text("auth.completion_existing")
     }
@@ -385,7 +401,7 @@ final class UsageStore: ObservableObject {
     }
   }
 
-  func startAddingAccount() {
+  func startAddingAccount(method: CodexLoginMethod = .deviceCode) {
     cancelAuthentication(discardPendingAccount: true)
     clearAuthenticationError()
     clearAccountManagementError()
@@ -395,22 +411,25 @@ final class UsageStore: ObservableObject {
       let account = try registry.beginManagedAccount()
       let home = try registry.pendingCodexHomeURL(for: account)
       let runtime = try runtimeLocator.locateManagedAccount(codexHomeURL: home)
-      beginAuthentication(mode: .adding(account), runtime: runtime)
+      beginAuthentication(mode: .adding(account), method: method, runtime: runtime)
     } catch {
       showAuthenticationError(L10n.errorDescription(error))
     }
   }
 
-  func relogin(accountID: String) {
+  func relogin(accountID: String, method: CodexLoginMethod = .deviceCode) {
     guard !isAuthenticating else { return }
-    guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
+    // The system default must remain this Mac's existing login, not an app-owned sign-in target.
+    guard let account = accountStates.first(where: { $0.id == accountID })?.account,
+      account.isManaged
+    else { return }
     clearAuthenticationError()
     clearAccountManagementError()
     clearAccountManagementNotice()
 
     do {
       let runtime = try runtime(for: account)
-      beginAuthentication(mode: .relogin(account), runtime: runtime)
+      beginAuthentication(mode: .relogin(account), method: method, runtime: runtime)
     } catch {
       showAuthenticationError(L10n.errorDescription(error))
     }
@@ -500,9 +519,11 @@ final class UsageStore: ObservableObject {
     copyToPasteboard(userCode)
   }
 
-  func reopenDeviceLoginPage() {
-    guard let url = deviceLoginInfo?.verificationURL else { return }
-    NSWorkspace.shared.open(url)
+  func reopenAuthenticationPage() {
+    guard let url = loginChallenge?.authorizationURL else { return }
+    if !authorizationPageOpener(url) {
+      showAuthenticationError(L10n.text("auth.browser_open_failed"))
+    }
   }
 
   func setLaunchAtLogin(_ enabled: Bool) {
@@ -607,10 +628,13 @@ final class UsageStore: ObservableObject {
     return try runtimeLocator.locateManagedAccount(codexHomeURL: home)
   }
 
-  private func beginAuthentication(mode: AuthenticationMode, runtime: CodexRuntime) {
+  private func beginAuthentication(mode: AuthenticationMode, method: CodexLoginMethod, runtime: CodexRuntime) {
     cancelAuthentication(discardPendingAccount: true)
     stopAutomaticActivationScheduler()
     authenticationMode = mode
+    let attemptID = UUID()
+    authenticationAttemptID = attemptID
+    authenticationMethod = method
     switch mode {
     case .adding(let account):
       authenticationAccountID = account.id
@@ -622,20 +646,20 @@ final class UsageStore: ObservableObject {
       client.invalidateSession(sessionID: account.id)
     }
     isAuthenticating = true
-    deviceLoginInfo = nil
+    loginChallenge = nil
 
     authenticationTask = Task { [weak self, authenticationClient, client, identityReader] in
       guard let self else { return }
       do {
-        try await authenticationClient.login(runtime: runtime) { [weak self] info in
+        try await authenticationClient.login(runtime: runtime, method: method) { [weak self] challenge in
           Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.deviceLoginInfo = info
-            self.copyDeviceLoginCode()
-            NSWorkspace.shared.open(info.verificationURL)
+            guard let self, self.authenticationAttemptID == attemptID, self.isAuthenticating else { return }
+            self.loginChallenge = challenge
+            if case .deviceCode = challenge { self.copyDeviceLoginCode() }
+            self.reopenAuthenticationPage()
           }
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, self.authenticationAttemptID == attemptID else { return }
         let snapshot = try await client.fetchUsage(
           sessionID: mode.account.id,
           diagnosticLabel: mode.account.isSystemDefault ? "default" : "managed",
@@ -643,12 +667,12 @@ final class UsageStore: ObservableObject {
           codexURL: runtime.executableURL,
           environmentOverride: runtime.environment
         )
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, self.authenticationAttemptID == attemptID else { return }
         self.finishAuthentication(mode: mode, snapshot: snapshot, runtime: runtime)
       } catch is CancellationError {
         return
       } catch {
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, self.authenticationAttemptID == attemptID else { return }
         self.failAuthentication(mode: mode, error: error)
       }
     }
@@ -660,7 +684,9 @@ final class UsageStore: ObservableObject {
     runtime: CodexRuntime
   ) {
     isAuthenticating = false
-    deviceLoginInfo = nil
+    loginChallenge = nil
+    authenticationMethod = nil
+    authenticationAttemptID = nil
     authenticationTask = nil
     clearAuthenticationError()
 
@@ -733,7 +759,9 @@ final class UsageStore: ObservableObject {
 
   private func failAuthentication(mode: AuthenticationMode, error: Error) {
     isAuthenticating = false
-    deviceLoginInfo = nil
+    loginChallenge = nil
+    authenticationMethod = nil
+    authenticationAttemptID = nil
     authenticationTask = nil
     showAuthenticationError(L10n.errorDescription(error))
     authenticationMode = nil
@@ -751,7 +779,9 @@ final class UsageStore: ObservableObject {
     authenticationTask?.cancel()
     authenticationTask = nil
     isAuthenticating = false
-    deviceLoginInfo = nil
+    loginChallenge = nil
+    authenticationMethod = nil
+    authenticationAttemptID = nil
 
     if discardPendingAccount,
       case .adding(let account) = authenticationMode

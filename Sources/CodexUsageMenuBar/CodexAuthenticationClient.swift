@@ -1,9 +1,70 @@
 import Foundation
 
+enum CodexLoginMethod: String, CaseIterable, Identifiable, Sendable {
+  case browser
+  case deviceCode
+
+  var id: Self { self }
+  var requestType: String { self == .browser ? "chatgpt" : "chatgptDeviceCode" }
+  var title: String { L10n.text(self == .browser ? "auth.method_browser" : "auth.method_device") }
+  var systemImage: String { self == .browser ? "globe" : "key.viewfinder" }
+}
+
 struct DeviceLoginInfo: Equatable, Sendable {
   let loginId: String
   let verificationURL: URL
   let userCode: String
+}
+
+struct BrowserLoginInfo: Equatable, Sendable {
+  let loginId: String
+  let authorizationURL: URL
+}
+
+enum CodexLoginChallenge: Equatable, Sendable {
+  case browser(BrowserLoginInfo)
+  case deviceCode(DeviceLoginInfo)
+
+  var loginId: String {
+    switch self {
+    case .browser(let info): return info.loginId
+    case .deviceCode(let info): return info.loginId
+    }
+  }
+
+  var authorizationURL: URL {
+    switch self {
+    case .browser(let info): return info.authorizationURL
+    case .deviceCode(let info): return info.verificationURL
+    }
+  }
+
+  static func parse(_ result: [String: Any], method: CodexLoginMethod) throws -> Self {
+    guard result["type"] as? String == method.requestType,
+      let loginId = result["loginId"] as? String, !loginId.isEmpty
+    else { throw CodexUsageError.invalidResponse }
+    switch method {
+    case .browser:
+      return .browser(BrowserLoginInfo(loginId: loginId,
+        authorizationURL: try loginURL(result["authUrl"])))
+    case .deviceCode:
+      guard let code = result["userCode"] as? String, !code.isEmpty else {
+        throw CodexUsageError.invalidResponse
+      }
+      return .deviceCode(DeviceLoginInfo(loginId: loginId,
+        verificationURL: try loginURL(result["verificationUrl"]), userCode: code))
+    }
+  }
+
+  private static func loginURL(_ value: Any?) throws -> URL {
+    // Do not launch file/custom schemes or send the user to an unexpected login host.
+    guard let string = value as? String, let url = URL(string: string),
+      url.scheme?.lowercased() == "https",
+      ["auth.openai.com", "chatgpt.com"].contains(url.host?.lowercased() ?? ""),
+      url.user == nil, url.password == nil, url.port == nil || url.port == 443
+    else { throw CodexUsageError.invalidResponse }
+    return url
+  }
 }
 
 struct CodexAuthenticationClient: Sendable {
@@ -15,55 +76,61 @@ struct CodexAuthenticationClient: Sendable {
 
   func login(
     runtime: CodexRuntime,
-    onChallenge: @escaping @Sendable (DeviceLoginInfo) -> Void
+    method: CodexLoginMethod = .deviceCode,
+    onChallenge: @escaping @Sendable (CodexLoginChallenge) -> Void
   ) async throws {
-    let session = DeviceLoginSession(runtime: runtime, timeout: timeout)
+    let session = CodexLoginSession(runtime: runtime, method: method, timeout: timeout)
     try await session.execute(onChallenge: onChallenge)
   }
 }
 
-private final class DeviceLoginSession: @unchecked Sendable {
+/// All mutable state and process lifecycle operations stay on parsingQueue.
+private final class CodexLoginSession: @unchecked Sendable {
   private let runtime: CodexRuntime
+  private let method: CodexLoginMethod
   private let timeout: Duration
   private let process = Process()
   private let standardInput = Pipe()
   private let standardOutput = Pipe()
   private let standardError = Pipe()
   private let parsingQueue = DispatchQueue(label: "org.codeasy.CodexUsage.login")
-  private let stateLock = NSLock()
 
   private var stdoutBuffer = Data()
   private var stderrBuffer = Data()
   private var continuation: CheckedContinuation<Void, any Error>?
   private var timeoutTask: Task<Void, Never>?
-  private var onChallenge: (@Sendable (DeviceLoginInfo) -> Void)?
+  private var onChallenge: (@Sendable (CodexLoginChallenge) -> Void)?
   private var loginId: String?
+  private var terminalResult: Result<Void, any Error>?
 
-  init(runtime: CodexRuntime, timeout: Duration) {
+  init(runtime: CodexRuntime, method: CodexLoginMethod, timeout: Duration) {
     self.runtime = runtime
+    self.method = method
     self.timeout = timeout
   }
 
   func execute(
-    onChallenge: @escaping @Sendable (DeviceLoginInfo) -> Void
+    onChallenge: @escaping @Sendable (CodexLoginChallenge) -> Void
   ) async throws {
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
-        start(continuation: continuation, onChallenge: onChallenge)
+        parsingQueue.async { self.start(continuation: continuation, onChallenge: onChallenge) }
       }
     } onCancel: {
-      self.finish(with: .failure(CancellationError()))
+      self.parsingQueue.async { self.finish(with: .failure(CancellationError())) }
     }
   }
 
   private func start(
     continuation: CheckedContinuation<Void, any Error>,
-    onChallenge: @escaping @Sendable (DeviceLoginInfo) -> Void
+    onChallenge: @escaping @Sendable (CodexLoginChallenge) -> Void
   ) {
-    stateLock.lock()
+    if let terminalResult {
+      continuation.resume(with: terminalResult)
+      return
+    }
     self.continuation = continuation
     self.onChallenge = onChallenge
-    stateLock.unlock()
 
     process.executableURL = runtime.executableURL
     process.arguments = ["app-server", "--listen", "stdio://"]
@@ -104,7 +171,7 @@ private final class DeviceLoginSession: @unchecked Sendable {
           "clientInfo": [
             "name": "codex_usage_menubar",
             "title": "Codex Usage",
-            "version": "1.5.5",
+            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.7.5",
           ],
           "capabilities": ["experimentalApi": true],
         ],
@@ -112,7 +179,9 @@ private final class DeviceLoginSession: @unchecked Sendable {
       timeoutTask = Task { [weak self, timeout] in
         try? await Task.sleep(for: timeout)
         guard !Task.isCancelled else { return }
-        self?.finish(with: .failure(CodexUsageError.timedOut))
+        self?.parsingQueue.async { [weak self] in
+          self?.finish(with: .failure(CodexUsageError.timedOut))
+        }
       }
     } catch {
       finish(with: .failure(CodexUsageError.launchFailed(error.localizedDescription)))
@@ -136,6 +205,7 @@ private final class DeviceLoginSession: @unchecked Sendable {
   }
 
   private func handleServerMessage(_ data: Data) {
+    guard terminalResult == nil else { return }
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       return
     }
@@ -144,8 +214,9 @@ private final class DeviceLoginSession: @unchecked Sendable {
       method == "account/login/completed",
       let params = json["params"] as? [String: Any]
     {
-      let completedLoginId = params["loginId"] as? String
-      guard completedLoginId == nil || completedLoginId == loginId else { return }
+      guard let completedLoginId = params["loginId"] as? String,
+        completedLoginId == loginId
+      else { return }
       if (params["success"] as? Bool) == true {
         finish(with: .success(()))
       } else {
@@ -169,26 +240,15 @@ private final class DeviceLoginSession: @unchecked Sendable {
         try send([
           "id": 2,
           "method": "account/login/start",
-          "params": ["type": "chatgptDeviceCode"],
+          "params": ["type": method.requestType],
         ])
       case 2:
-        guard
-          let result = json["result"] as? [String: Any],
-          let loginId = result["loginId"] as? String,
-          let verificationURLString = result["verificationUrl"] as? String,
-          let verificationURL = URL(string: verificationURLString),
-          let userCode = result["userCode"] as? String
-        else {
+        guard let result = json["result"] as? [String: Any] else {
           throw CodexUsageError.invalidResponse
         }
-        self.loginId = loginId
-        onChallenge?(
-          DeviceLoginInfo(
-            loginId: loginId,
-            verificationURL: verificationURL,
-            userCode: userCode
-          )
-        )
+        let challenge = try CodexLoginChallenge.parse(result, method: method)
+        loginId = challenge.loginId
+        onChallenge?(challenge)
       default:
         break
       }
@@ -210,21 +270,24 @@ private final class DeviceLoginSession: @unchecked Sendable {
   }
 
   private func finish(with result: Result<Void, any Error>) {
-    stateLock.lock()
-    guard let continuation else {
-      stateLock.unlock()
-      return
-    }
+    guard terminalResult == nil else { return }
+    terminalResult = result
+    let continuation = self.continuation
     self.continuation = nil
     self.onChallenge = nil
     let timeoutTask = self.timeoutTask
     self.timeoutTask = nil
-    stateLock.unlock()
 
     timeoutTask?.cancel()
     standardOutput.fileHandleForReading.readabilityHandler = nil
     standardError.fileHandleForReading.readabilityHandler = nil
-    if process.isRunning { process.terminate() }
-    continuation.resume(with: result)
+    if process.isRunning {
+      if case .failure = result, let loginId {
+        try? send(["id": 3, "method": "account/login/cancel", "params": ["loginId": loginId]])
+      }
+      process.terminate()
+    }
+    try? standardInput.fileHandleForWriting.close()
+    continuation?.resume(with: result)
   }
 }

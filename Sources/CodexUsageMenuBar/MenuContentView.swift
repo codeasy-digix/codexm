@@ -2,6 +2,16 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct LoginMethodButtons: View {
+  let onSelect: (CodexLoginMethod) -> Void
+
+  var body: some View {
+    ForEach(CodexLoginMethod.allCases) { method in
+      Button(method.title, systemImage: method.systemImage) { onSelect(method) }
+    }
+  }
+}
+
 struct MenuContentView: View {
   @ObservedObject var store: UsageStore
   @ObservedObject var preferences: AppPreferences
@@ -13,7 +23,7 @@ struct MenuContentView: View {
     VStack(alignment: .leading, spacing: 12) {
       header
 
-      if store.isAuthenticating || store.deviceLoginInfo != nil {
+      if store.isAuthenticating || store.loginChallenge != nil {
         authenticationPanel
       }
 
@@ -157,12 +167,18 @@ struct MenuContentView: View {
     }
   }
 
-  private var authenticationPanel: some View {
+  var authenticationPanel: some View {
     VStack(alignment: .leading, spacing: 8) {
       Label(store.authenticationTitle, systemImage: "person.badge.key.fill")
         .font(.callout.weight(.semibold))
 
-      if let info = store.deviceLoginInfo {
+      if let method = store.authenticationMethod {
+        Text(method.title)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+
+      if store.loginChallenge != nil {
         Text(store.authenticationInstruction)
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -171,30 +187,47 @@ struct MenuContentView: View {
           .font(.caption2)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-        if store.isAddingAccount {
-          VStack(alignment: .leading, spacing: 4) {
-            TextField(
-              L10n.text("auth.workspace_optional"),
-              text: Binding(
-                get: { store.pendingWorkspaceName },
-                set: { store.setPendingWorkspaceName($0) }
-              )
-            )
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
+      }
 
-            Text(L10n.text("auth.workspace_examples"))
-              .font(.caption2)
-              .foregroundStyle(.tertiary)
-              .fixedSize(horizontal: false, vertical: true)
-          }
+      if store.isAddingAccount {
+        VStack(alignment: .leading, spacing: 4) {
+          TextField(
+            L10n.text("auth.workspace_optional"),
+            text: Binding(
+              get: { store.pendingWorkspaceName },
+              set: { store.setPendingWorkspaceName($0) }
+            )
+          )
+          .textFieldStyle(.roundedBorder)
+          .controlSize(.small)
+
+          Text(L10n.text("auth.workspace_examples"))
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
         }
+      }
+
+      if let info = store.deviceLoginInfo {
         Text(info.userCode)
           .font(.system(.title3, design: .monospaced, weight: .bold))
           .textSelection(.enabled)
         HStack {
           Button(L10n.text("auth.copy_code")) { store.copyDeviceLoginCode() }
-          Button(L10n.text("auth.open_page")) { store.reopenDeviceLoginPage() }
+          Button(L10n.text("auth.open_page")) { store.reopenAuthenticationPage() }
+          Spacer()
+          Button(L10n.text("common.cancel"), role: .cancel) { store.cancelCurrentAuthentication() }
+        }
+        .controlSize(.small)
+      } else if store.loginChallenge != nil {
+        HStack(spacing: 8) {
+          ProgressView().controlSize(.small)
+          Text(L10n.text("auth.browser_waiting"))
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        HStack {
+          Button(L10n.text("auth.open_page")) { store.reopenAuthenticationPage() }
           Spacer()
           Button(L10n.text("common.cancel"), role: .cancel) { store.cancelCurrentAuthentication() }
         }
@@ -277,8 +310,8 @@ struct MenuContentView: View {
   }
 
   private var accountActions: some View {
-    Button {
-      store.startAddingAccount()
+    Menu {
+      LoginMethodButtons { store.startAddingAccount(method: $0) }
     } label: {
       HStack(spacing: 7) {
         if store.isAuthenticating {
@@ -383,16 +416,17 @@ struct MenuContentView: View {
     let visibleHeight = currentScreen?.visibleFrame.height ?? 900
     var reservedHeight: CGFloat = 280
 
-    if store.isAuthenticating || store.deviceLoginInfo != nil {
-      if store.deviceLoginInfo == nil {
-        reservedHeight += 72
+    if store.isAuthenticating || store.loginChallenge != nil {
+      if store.loginChallenge == nil {
+        reservedHeight += 92
       } else {
         // Localized instructions can be substantially taller than Korean.
-        reservedHeight += 142 + textHeight(store.authenticationInstruction, size: 11)
+        reservedHeight += (store.authenticationMethod == .browser ? 190 : 162)
+          + textHeight(store.authenticationInstruction, size: 11)
           + textHeight(store.authenticationCompletionNote, size: 10)
-        if store.isAddingAccount {
-          reservedHeight += 33 + textHeight(L10n.text("auth.workspace_examples"), size: 10)
-        }
+      }
+      if store.isAddingAccount {
+        reservedHeight += 33 + textHeight(L10n.text("auth.workspace_examples"), size: 10)
       }
     }
     if let account = pendingDeletionAccount {
@@ -578,8 +612,8 @@ struct AccountUsageCard: View {
           draftName = viewState.account.normalizedDisplayName ?? ""
           isRenaming = true
         }
-        Button(L10n.text("common.relogin"), systemImage: "person.badge.key") {
-          store.relogin(accountID: viewState.id)
+        Menu(L10n.text("common.relogin"), systemImage: "person.badge.key") {
+          LoginMethodButtons { store.relogin(accountID: viewState.id, method: $0) }
         }
         Divider()
         Button(L10n.text("account.delete"), systemImage: "trash", role: .destructive) {
@@ -745,7 +779,9 @@ struct AccountUsageCard: View {
         Button(L10n.text("auth.connect_default")) { store.connectExistingCodexLogin() }
           .controlSize(.small)
       } else {
-        Button(L10n.text("common.relogin")) { store.relogin(accountID: viewState.id) }
+        Menu(L10n.text("common.relogin")) {
+          LoginMethodButtons { store.relogin(accountID: viewState.id, method: $0) }
+        }
           .controlSize(.small)
       }
     }

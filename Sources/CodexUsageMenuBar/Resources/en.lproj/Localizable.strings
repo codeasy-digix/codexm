@@ -18,6 +18,14 @@
 "auth.add" = "Add account or workspace";
 "auth.signing_in" = "Signing in to account/workspace…";
 "auth.preparing" = "Preparing sign-in…";
+"auth.method_browser" = "Browser sign-in";
+"auth.method_device" = "Device code sign-in";
+"auth.browser_instruction_existing" = "Sign in in the opened browser and select the account and workspace for this connection. Switch accounts in the browser if needed.";
+"auth.browser_instruction_new" = "Sign in in the opened browser and choose an account and workspace. No code entry is needed. Switch accounts in the browser if needed.";
+"auth.browser_completion_existing" = "Account information updates automatically after browser sign-in. You do not need to return to this panel to confirm.";
+"auth.browser_completion_new" = "Browser sign-in automatically adds an isolated CODEX_HOME connection. You do not need to return to this panel to confirm.";
+"auth.browser_waiting" = "Waiting for browser sign-in to complete…";
+"auth.browser_open_failed" = "Could not open the browser. Try Open authorization page, or cancel and choose Device code sign-in.";
 "auth.relogin_title" = "Sign in again: %@";
 "auth.instruction_existing" = "Enter the code in the opened browser, then select the account and workspace for this connection.";
 "auth.instruction_new" = "Enter the code in the opened browser and choose an account and workspace. You can add different workspaces from the same account separately.";
