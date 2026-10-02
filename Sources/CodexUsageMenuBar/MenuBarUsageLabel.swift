@@ -32,11 +32,24 @@ enum MenuBarIndicator: Equatable {
     NSRange(location: 0, length: (terminalText as NSString).length)
   }
 
-  var weeklyRemainingFraction: CGFloat? {
-    guard case .limits(let fiveHour, let weekly) = self,
-      let percent = weekly ?? fiveHour
-    else { return nil }
+  var fiveHourRemainingFraction: CGFloat? {
+    guard case .limits(let percent?, _) = self else { return nil }
     return CGFloat(Self.clamped(percent)) / 100
+  }
+
+  var weeklyRemainingFraction: CGFloat? {
+    guard case .limits(_, let percent?) = self else { return nil }
+    return CGFloat(Self.clamped(percent)) / 100
+  }
+
+  var circularRemainingFraction: CGFloat? {
+    weeklyRemainingFraction ?? fiveHourRemainingFraction
+  }
+
+  func helpText(for style: MenuBarIconStyle) -> String {
+    style == .terminal
+      ? accessibilityLabel + "\n" + L10n.text("usage.split_bars_help")
+      : accessibilityLabel
   }
 
   var accessibilityLabel: String {
@@ -61,26 +74,77 @@ struct MenuBarUsageLabel: View {
   let indicator: MenuBarIndicator
   var style: MenuBarIconStyle = .terminal
   @ObservedObject var preferences: AppPreferences
+  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
-    Image(nsImage: CodexMenuBarIconRenderer.image(for: indicator, style: style))
-      .renderingMode(.template)
+    Image(nsImage: CodexMenuBarIconRenderer.image(for: indicator, style: style, colorScheme: colorScheme))
+      .renderingMode(style == .terminal ? .original : .template)
+      .help(indicator.helpText(for: style))
       .accessibilityLabel(indicator.accessibilityLabel)
+      .accessibilityHint(style == .terminal ? L10n.text("usage.split_bars_help") : "")
   }
 }
 
-/// Renders a compact terminal-style usage value into one native template image.
+/// Opaque, subdued tracks keep colored text readable over any menu-bar wallpaper.
+/// Neither the glyph color nor its underline changes at a bar's fill boundary.
+struct MenuBarIconPalette {
+  let text: NSColor
+  let track: NSColor
+  let fill: NSColor
+  let outline: NSColor
+
+  static func terminal(for colorScheme: ColorScheme) -> Self {
+    if colorScheme == .dark {
+      return Self(text: color(0xB7D3E2), track: color(0x17242E),
+        fill: color(0x405464), outline: color(0x8797A1))
+    }
+    return Self(text: color(0x1F4C65), track: color(0xF0F3F5),
+      fill: color(0xACBBC5), outline: color(0x657580))
+  }
+
+  private static func color(_ rgb: UInt32) -> NSColor {
+    NSColor(srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255,
+      green: CGFloat((rgb >> 8) & 0xFF) / 255,
+      blue: CGFloat(rgb & 0xFF) / 255, alpha: 1)
+  }
+}
+
+struct MenuBarUsageBarLayout {
+  let outline: NSRect
+  let interior: NSRect
+  let fiveHour: NSRect
+  let weekly: NSRect
+
+  init(bounds: NSRect) {
+    outline = bounds.insetBy(dx: 1.5, dy: 2.5)
+    interior = outline.insetBy(dx: 0.75, dy: 0.75)
+    let laneHeight = (interior.height - 1) / 2
+    // The image is not flipped: larger y values are the top of the menu bar.
+    fiveHour = NSRect(x: interior.minX, y: interior.midY + 0.5,
+      width: interior.width, height: laneHeight)
+    weekly = NSRect(x: interior.minX, y: interior.minY,
+      width: interior.width, height: laneHeight)
+  }
+
+  static func fillRect(in lane: NSRect, fraction: CGFloat) -> NSRect {
+    NSRect(x: lane.minX, y: lane.minY,
+      width: lane.width * min(max(fraction, 0), 1), height: lane.height)
+  }
+}
+
+/// Terminal icons retain their original colors; the alternate ring is a template.
 enum CodexMenuBarIconRenderer {
   static let size = NSSize(width: 43, height: 22)
   static let circularSize = NSSize(width: 54, height: 22)
 
   static func image(
     for indicator: MenuBarIndicator,
-    style: MenuBarIconStyle = .terminal
+    style: MenuBarIconStyle = .terminal,
+    colorScheme: ColorScheme = .light
   ) -> NSImage {
     switch style {
     case .terminal:
-      return terminalImage(for: indicator)
+      return terminalImage(for: indicator, colorScheme: colorScheme)
     case .circular:
       return circularImage(for: indicator)
     }
@@ -95,11 +159,36 @@ enum CodexMenuBarIconRenderer {
     }
   }
 
-  private static func terminalImage(for indicator: MenuBarIndicator) -> NSImage {
+  private static func terminalImage(for indicator: MenuBarIndicator, colorScheme: ColorScheme) -> NSImage {
+    let palette = MenuBarIconPalette.terminal(for: colorScheme)
     let image = NSImage(size: imageSize(for: .terminal), flipped: false) { rect in
       NSGraphicsContext.current?.shouldAntialias = true
 
-      let text = attributedText(for: indicator)
+      let layout = MenuBarUsageBarLayout(bounds: rect)
+      let outline = NSBezierPath(roundedRect: layout.outline, xRadius: 2.4, yRadius: 2.4)
+      palette.track.setFill()
+      outline.fill()
+
+      if case .limits = indicator {
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: layout.interior, xRadius: 1.6, yRadius: 1.6).addClip()
+        drawLane(layout.fiveHour, fraction: indicator.fiveHourRemainingFraction, palette: palette)
+        drawLane(layout.weekly, fraction: indicator.weeklyRemainingFraction, palette: palette)
+        NSGraphicsContext.restoreGraphicsState()
+
+        let divider = NSBezierPath()
+        divider.move(to: NSPoint(x: layout.interior.minX, y: layout.interior.midY))
+        divider.line(to: NSPoint(x: layout.interior.maxX, y: layout.interior.midY))
+        divider.lineWidth = 0.5
+        palette.outline.withAlphaComponent(0.5).setStroke()
+        divider.stroke()
+      }
+
+      outline.lineWidth = 1
+      palette.outline.setStroke()
+      outline.stroke()
+
+      let text = attributedText(for: indicator, colorScheme: colorScheme)
       let textSize = text.size()
       let textRect = NSRect(
         x: 1,
@@ -108,53 +197,32 @@ enum CodexMenuBarIconRenderer {
         height: textSize.height
       )
 
-      if let fraction = indicator.weeklyRemainingFraction {
-        let batteryRect = NSRect(
-          x: textRect.minX,
-          y: textRect.minY + 1,
-          width: textRect.width,
-          height: max(1, textRect.height - 2)
-        )
-        let outlineRect = batteryRect.insetBy(dx: 0.5, dy: 0.5)
-        let outline = NSBezierPath(roundedRect: outlineRect, xRadius: 2.4, yRadius: 2.4)
-        let innerRect = outlineRect.insetBy(dx: 1, dy: 1)
-
-        var fill: NSBezierPath?
-        if fraction > 0 {
-          let fillRect = NSRect(
-            x: innerRect.minX,
-            y: innerRect.minY,
-            width: innerRect.width * fraction,
-            height: innerRect.height
-          )
-          let path = NSBezierPath(roundedRect: fillRect, xRadius: 1.4, yRadius: 1.4)
-          NSColor.black.setFill()
-          path.fill()
-          fill = path
-        }
-
-        text.draw(in: textRect)
-
-        if let fill {
-          // The same template glyph is black outside the weekly fill and punched
-          // out inside it, producing the requested positive/negative transition.
-          NSGraphicsContext.saveGraphicsState()
-          fill.addClip()
-          NSGraphicsContext.current?.compositingOperation = .clear
-          text.draw(in: textRect)
-          NSGraphicsContext.restoreGraphicsState()
-        }
-
-        outline.lineWidth = 1
-        NSColor.black.setStroke()
-        outline.stroke()
-      } else {
-        text.draw(in: textRect)
-      }
+      text.draw(in: textRect)
       return true
     }
-    image.isTemplate = true
+    image.isTemplate = false
     return image
+  }
+
+  private static func drawLane(_ lane: NSRect, fraction: CGFloat?, palette: MenuBarIconPalette) {
+    guard let fraction else {
+      // Missing is not 0%, nor a copy of the other window's remaining allowance.
+      NSGraphicsContext.saveGraphicsState()
+      NSBezierPath(rect: lane).addClip()
+      let hatch = NSBezierPath()
+      for x in stride(from: lane.minX - lane.height, through: lane.maxX, by: 4) {
+        hatch.move(to: NSPoint(x: x, y: lane.minY))
+        hatch.line(to: NSPoint(x: x + lane.height, y: lane.maxY))
+      }
+      hatch.lineWidth = 0.5
+      palette.outline.withAlphaComponent(0.4).setStroke()
+      hatch.stroke()
+      NSGraphicsContext.restoreGraphicsState()
+      return
+    }
+    guard fraction > 0 else { return }
+    palette.fill.setFill()
+    NSBezierPath(rect: MenuBarUsageBarLayout.fillRect(in: lane, fraction: fraction)).fill()
   }
 
   private static func circularImage(for indicator: MenuBarIndicator) -> NSImage {
@@ -167,7 +235,7 @@ enum CodexMenuBarIconRenderer {
       NSColor.black.withAlphaComponent(0.24).setStroke()
       track.stroke()
 
-      let progress = indicator.weeklyRemainingFraction ?? (indicator == .loading ? 0.28 : 0)
+      let progress = indicator.circularRemainingFraction ?? (indicator == .loading ? 0.28 : 0)
       if progress > 0 {
         let progressRing = NSBezierPath()
         progressRing.appendArc(
@@ -198,21 +266,22 @@ enum CodexMenuBarIconRenderer {
     return image
   }
 
-  static func attributedText(for indicator: MenuBarIndicator) -> NSAttributedString {
+  static func attributedText(for indicator: MenuBarIndicator, colorScheme: ColorScheme = .light) -> NSAttributedString {
+    let textColor = MenuBarIconPalette.terminal(for: colorScheme).text
     let paragraph = NSMutableParagraphStyle()
     paragraph.alignment = .center
     let text = NSMutableAttributedString(
       string: indicator.terminalText,
       attributes: [
         .font: NSFont.monospacedSystemFont(ofSize: 12.6, weight: .semibold),
-        .foregroundColor: NSColor.black,
+        .foregroundColor: textColor,
         .paragraphStyle: paragraph,
       ]
     )
     text.addAttributes(
       [
         .underlineStyle: NSUnderlineStyle.single.rawValue,
-        .underlineColor: NSColor.black,
+        .underlineColor: textColor,
       ],
       range: indicator.terminalUnderlineRange
     )

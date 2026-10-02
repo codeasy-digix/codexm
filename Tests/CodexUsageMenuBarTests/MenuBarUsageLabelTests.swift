@@ -7,11 +7,12 @@ import Testing
 @Suite("Menu bar usage label")
 @MainActor
 struct MenuBarUsageLabelTests {
-  @Test("Shows the five-hour percentage while retaining weekly fill")
+  @Test("Shows one five-hour percentage while retaining both remaining fractions")
   func dualLimitText() {
     let indicator = MenuBarIndicator.limits(fiveHour: 18, weekly: 64)
     #expect(indicator.text == "18%")
     #expect(indicator.terminalText == ">18%")
+    #expect(indicator.fiveHourRemainingFraction == 0.18)
     #expect(indicator.weeklyRemainingFraction == 0.64)
     #expect(MenuBarIndicator.limits(fiveHour: 100, weekly: 50).text == "100%")
     #expect(MenuBarIndicator.limits(fiveHour: -2, weekly: 50).text == "0%")
@@ -50,7 +51,7 @@ struct MenuBarUsageLabelTests {
     let nativeImage = CodexMenuBarIconRenderer.image(
       for: .limits(fiveHour: 18, weekly: 64)
     )
-    #expect(nativeImage.isTemplate)
+    #expect(!nativeImage.isTemplate)
     #expect(nativeImage.size == CodexMenuBarIconRenderer.size)
 
     let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 18, weekly: 64), preferences: AppPreferences())
@@ -94,7 +95,7 @@ struct MenuBarUsageLabelTests {
       for: .limits(fiveHour: 82, weekly: 0)
     )
 
-    #expect(nativeImage.isTemplate)
+    #expect(!nativeImage.isTemplate)
     #expect(nativeImage.tiffRepresentation != nil)
 
     let content = MenuBarUsageLabel(indicator: .limits(fiveHour: 82, weekly: 0), preferences: AppPreferences())

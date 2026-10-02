@@ -65,6 +65,7 @@
 "usage.five_remaining" = "5h सीमा: %lld%% शेष";
 "usage.weekly_remaining" = "साप्ताहिक सीमा: %lld%% शेष";
 "usage.dual_remaining" = "Codex 5h: %lld%% शेष; साप्ताहिक: %lld%% शेष";
+"usage.split_bars_help" = "ऊपरी पट्टी: 5h शेष। निचली पट्टी: साप्ताहिक शेष। संख्या 5h शेष दिखाती है (5h सीमा न होने पर साप्ताहिक शेष)। तिरछी रेखाओं का अर्थ है कि सीमा उपलब्ध नहीं है।";
 "usage.reset_soon" = "जल्द रीसेट होगा";
 "usage.reset_line" = "%@ %@ · %@";
 "usage.reset_after" = "%@ %@ में रीसेट · %@";
@@ -90,7 +91,7 @@
 "credit.coverage" = "विवरण %lld/%lld";
 "credit.coverage_detail" = "%lld/%lld क्रेडिट का विवरण उपलब्ध है";
 "options.icon" = "मेन्यू बार आइकन";
-"options.icon_terminal" = "5h संख्या + साप्ताहिक भराव";
+"options.icon_terminal" = "5h संख्या + ऊपर/नीचे पट्टियाँ";
 "options.icon_circular" = "साप्ताहिक वृत्त + 5h संख्या";
 "options.default_interval" = "डिफ़ॉल्ट खाते का रीफ़्रेश अंतराल";
 "options.interval_help" = "यह अंतराल केवल डिफ़ॉल्ट खाते के लिए है। अतिरिक्त खाते हर 15 मिनट में रीफ़्रेश होते हैं। मेन्यू खोलने पर सभी कनेक्शन जाँचे जाते हैं; चल रहे या दोहराए गए अनुरोध एक साथ समाहित होते हैं।";

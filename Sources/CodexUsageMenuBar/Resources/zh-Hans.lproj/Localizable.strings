@@ -65,6 +65,7 @@
 "usage.five_remaining" = "5h 限额：剩余 %lld%%";
 "usage.weekly_remaining" = "每周限额：剩余 %lld%%";
 "usage.dual_remaining" = "Codex 5h：剩余 %lld%%；每周：剩余 %lld%%";
+"usage.split_bars_help" = "上方进度条：5h 剩余额度。下方进度条：每周剩余额度。数字显示 5h 余额（没有 5h 限额时显示每周余额）。斜线表示未提供该限额。";
 "usage.reset_soon" = "即将重置";
 "usage.reset_line" = "%@ %@ · %@";
 "usage.reset_after" = "%@ %@后重置 · %@";
@@ -90,7 +91,7 @@
 "credit.coverage" = "详情 %lld/%lld";
 "credit.coverage_detail" = "已提供 %lld/%lld 个额度的详情";
 "options.icon" = "菜单栏图标";
-"options.icon_terminal" = "5h 数字 + 每周填充";
+"options.icon_terminal" = "5h 数字 + 上下进度条";
 "options.icon_circular" = "每周圆环 + 5h 数字";
 "options.default_interval" = "默认账户刷新间隔";
 "options.interval_help" = "此间隔仅适用于默认账户。附加账户每 15 分钟刷新一次。打开菜单会检查所有连接；进行中或重复的请求会合并。";
