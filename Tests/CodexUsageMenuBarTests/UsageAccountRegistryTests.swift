@@ -61,7 +61,7 @@ struct UsageAccountRegistryTests {
     #expect(exact.matches(fallback))
   }
 
-  @Test("Shows a user-defined workspace name or a short hash fallback")
+  @Test("Shows only user-defined workspace names, never hash fallbacks")
   func workspaceDisplayName() {
     var account = UsageAccount(
       id: UUID().uuidString,
@@ -74,15 +74,13 @@ struct UsageAccountRegistryTests {
       createdAt: Date()
     )
 
-    #expect(account.workspaceReference == "ABCDEF12")
-    #expect(account.workspaceDisplayLabel == L10n.text("account.workspace_label", "#ABCDEF12"))
-    #expect(account.title == "#ABCDEF12")
-    #expect(account.workspaceReference?.contains("34567890") == false)
+    #expect(account.workspaceDisplayLabel == nil)
+    #expect(account.title == "owner@example.com")
 
     account.workspaceName = "  개발팀  "
     #expect(account.normalizedWorkspaceName == "개발팀")
     #expect(account.workspaceDisplayLabel == L10n.text("account.workspace_label", "개발팀"))
-    #expect(account.workspaceReference == "ABCDEF12")
+    #expect(account.title == "owner@example.com")
   }
 
   @Test("Loads account records written before workspace metadata existed")
@@ -104,7 +102,7 @@ struct UsageAccountRegistryTests {
 
     #expect(account.lastKnownWorkspaceFingerprint == nil)
     #expect(account.workspaceName == nil)
-    #expect(account.workspaceReference == nil)
+    #expect(account.workspaceDisplayLabel == nil)
   }
 
   @Test("Loads a version-one registry before workspace display names existed")
@@ -144,6 +142,8 @@ struct UsageAccountRegistryTests {
     let registry = UsageAccountRegistry(applicationSupportURL: root)
 
     var defaultAccount = try #require(registry.loadAccounts().first)
+    defaultAccount.lastKnownWorkspaceFingerprint = "workspace-personal"
+    defaultAccount.lastKnownEmail = "owner@example.com"
     defaultAccount.workspaceName = "  개인  "
     try registry.updateAccount(defaultAccount)
 
@@ -152,15 +152,101 @@ struct UsageAccountRegistryTests {
     try registry.commitPendingAccount(managedAccount)
 
     let restored = try registry.loadAccounts()
-    #expect(restored[0].normalizedWorkspaceName == "개인")
-    #expect(restored[0].workspaceDisplayLabel == L10n.text("account.workspace_label", "개인"))
+    #expect(restored[0].workspaceName == nil) // live identity must be resolved first
+    #expect(try registry.workspaceName(forSystemDefaultAccount: defaultAccount) == "개인")
     #expect(restored[1].normalizedWorkspaceName == "개발팀")
     #expect(restored[1].workspaceDisplayLabel == L10n.text("account.workspace_label", "개발팀"))
 
-    defaultAccount = restored[0]
     defaultAccount.workspaceName = "   "
     try registry.updateAccount(defaultAccount)
+    #expect(try registry.workspaceName(forSystemDefaultAccount: defaultAccount) == nil)
+  }
+
+  @Test("Keeps default names separate by workspace and member and survives account edits")
+  func separatesDefaultWorkspaceNames() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = UsageAccountRegistry(applicationSupportURL: root)
+    _ = try registry.loadAccounts()
+    var personal = UsageAccount.systemDefault
+    personal.lastKnownEmail = "Owner@Example.com"
+    personal.lastKnownWorkspaceFingerprint = "workspace-personal"
+    personal.workspaceName = "Personal"
+    try registry.updateAccount(personal)
+
+    var work = personal
+    work.lastKnownWorkspaceFingerprint = "workspace-work"
+    #expect(try registry.workspaceName(forSystemDefaultAccount: work) == nil)
+    work.workspaceName = "Work"
+    try registry.updateAccount(work)
+
+    var member = work
+    member.lastKnownEmail = "member@example.com"
+    #expect(try registry.workspaceName(forSystemDefaultAccount: member) == nil)
+    member.workspaceName = "Member"
+    try registry.updateAccount(member)
+
+    var managed = try registry.beginManagedAccount()
+    managed.workspaceName = "Managed"
+    try registry.commitPendingAccount(managed)
+    managed.displayName = "Additional"
+    try registry.updateAccount(managed)
+    try registry.saveAccountOrder([managed.id, UsageAccount.systemDefaultID])
+    try registry.removeManagedAccount(managed)
+
+    let reloadedRegistry = UsageAccountRegistry(applicationSupportURL: root)
+    personal.lastKnownEmail = " owner@example.com "
+    #expect(try reloadedRegistry.workspaceName(forSystemDefaultAccount: personal) == "Personal")
+    #expect(try reloadedRegistry.workspaceName(forSystemDefaultAccount: work) == "Work")
+    #expect(try reloadedRegistry.workspaceName(forSystemDefaultAccount: member) == "Member")
+    work.workspaceName = nil
+    try reloadedRegistry.updateAccount(work)
+    #expect(try reloadedRegistry.workspaceName(forSystemDefaultAccount: work) == nil)
+    #expect(try reloadedRegistry.workspaceName(forSystemDefaultAccount: personal) == "Personal")
+    #expect(try reloadedRegistry.workspaceName(forSystemDefaultAccount: member) == "Member")
+  }
+
+  @Test("Does not assign an ambiguous legacy default name to the current login")
+  func preservesButDoesNotDisplayLegacyDefaultName() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let registry = UsageAccountRegistry(applicationSupportURL: root)
+    try Data(#"{"version":3,"accounts":[],"systemDefaultWorkspaceName":"Previous workspace"}"#.utf8)
+      .write(to: registry.registryURL)
     #expect(try registry.loadAccounts()[0].workspaceName == nil)
+    var account = UsageAccount.systemDefault
+    account.lastKnownEmail = "owner@example.com"
+    account.lastKnownWorkspaceFingerprint = "workspace-current"
+    #expect(try registry.workspaceName(forSystemDefaultAccount: account) == nil)
+    account.workspaceName = "Current workspace"
+    try registry.updateAccount(account)
+    #expect(try registry.workspaceName(forSystemDefaultAccount: account) == "Current workspace")
+    let payload = try #require(JSONSerialization.jsonObject(
+      with: Data(contentsOf: registry.registryURL)) as? [String: Any])
+    #expect(payload["version"] as? Int == 4)
+    #expect(payload["systemDefaultWorkspaceName"] as? String == "Previous workspace")
+  }
+
+  @Test("Requires both workspace and member identity before saving a default name")
+  func rejectsUnboundDefaultName() throws {
+    let root = temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let registry = UsageAccountRegistry(applicationSupportURL: root)
+    var account = UsageAccount.systemDefault
+    account.workspaceName = "Unbound"
+    #expect(throws: UsageAccountRegistryError.workspaceIdentityUnavailable) {
+      try registry.updateAccount(account)
+    }
+    account.lastKnownEmail = "owner@example.com"
+    #expect(throws: UsageAccountRegistryError.workspaceIdentityUnavailable) {
+      try registry.updateAccount(account)
+    }
+    account.lastKnownEmail = nil
+    account.lastKnownWorkspaceFingerprint = "workspace-current"
+    #expect(throws: UsageAccountRegistryError.workspaceIdentityUnavailable) {
+      try registry.updateAccount(account)
+    }
   }
 
   @Test("Creates, commits, reloads, and removes an isolated managed Codex home")
@@ -245,7 +331,7 @@ struct UsageAccountRegistryTests {
     #expect(accounts.count == 2)
     #expect(accounts[1].isManaged)
     #expect(accounts[1].displayName == nil)
-    #expect(accounts[1].title.hasPrefix("#"))
+    #expect(accounts[1].title == L10n.text("account.managed_name"))
     #expect(!FileManager.default.fileExists(atPath: legacyHome.path))
     #expect(
       FileManager.default.fileExists(
@@ -285,6 +371,8 @@ struct UsageAccountRegistryTests {
     second.workspaceName = "개발팀"
     try registry.updateAccount(second)
     var defaultAccount = UsageAccount.systemDefault
+    defaultAccount.lastKnownEmail = "owner@example.com"
+    defaultAccount.lastKnownWorkspaceFingerprint = "workspace-personal"
     defaultAccount.workspaceName = "개인"
     try registry.updateAccount(defaultAccount)
     #expect(try registry.loadAccounts().map(\.id) == order)

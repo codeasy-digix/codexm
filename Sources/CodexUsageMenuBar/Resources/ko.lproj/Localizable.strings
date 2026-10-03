@@ -48,7 +48,8 @@
 "account.rename_workspace" = "워크스페이스 이름 변경";
 "account.workspace_label" = "워크스페이스 %@";
 "account.workspace_help_named" = "이 Mac에만 저장되는 워크스페이스 표시 이름입니다.";
-"account.workspace_help_unnamed" = "워크스페이스 이름은 자동 조회되지 않습니다. 계정 메뉴에서 지정하세요. 이름이 없는 연결에는 짧은 로컬 해시를 표시합니다.";
+"account.workspace_help_unnamed" = "워크스페이스 이름은 자동 조회되지 않습니다. 연필 버튼으로 지정하세요. 이름이 없는 연결에는 식별자를 표시하지 않습니다.";
+"account.workspace_identity_unavailable" = "계정 상태를 새로고침한 뒤 워크스페이스 이름을 변경하세요.";
 "account.default_name" = "기본 계정";
 "account.managed_name" = "추가 계정";
 "account.legacy_name" = "이전 앱 계정";

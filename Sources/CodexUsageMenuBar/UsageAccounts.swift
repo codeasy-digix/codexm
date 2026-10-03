@@ -28,6 +28,14 @@ struct CodexAccountIdentity: Equatable, Sendable {
     return true
   }
 
+  /// A private lookup key, never a display label. Both parts are required so
+  /// equal-email workspaces and different members of one workspace stay apart.
+  var workspaceNameKey: String? {
+    guard let fingerprint, let email else { return nil }
+    return SHA256.hash(data: Data("\(fingerprint)\u{0}\(email)".utf8))
+      .map { String(format: "%02x", $0) }.joined()
+  }
+
   private static func normalized(_ value: String?) -> String? {
     let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
     return normalized.isEmpty ? nil : normalized
@@ -115,26 +123,13 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
   var isSystemDefault: Bool { kind == .systemDefault }
   var isManaged: Bool { kind == .managed }
 
-  /// A short, non-secret reference derived from the selected ChatGPT
-  /// account/workspace id. It lets equal-email workspaces remain distinguishable.
-  var workspaceReference: String? {
-    let fingerprint = lastKnownWorkspaceFingerprint?
-      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    guard fingerprint.count >= 8 else { return nil }
-    return String(fingerprint.prefix(8)).uppercased()
-  }
-
   var workspaceDisplayLabel: String? {
-    L10n.text("account.workspace_label", normalizedWorkspaceName ?? shortDisplayReference)
+    normalizedWorkspaceName.map { L10n.text("account.workspace_label", $0) }
   }
 
-  /// Unnamed connections keep a stable, non-secret display reference even
-  /// before a workspace fingerprint becomes available.
-  var shortDisplayReference: String {
-    let reference = workspaceReference ?? String(
-      SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined().prefix(8)
-    ).uppercased()
-    return "#\(reference)"
+  var workspaceNameKey: String? {
+    CodexAccountIdentity(fingerprint: lastKnownWorkspaceFingerprint,
+      email: lastKnownEmail, planType: lastKnownPlanType).workspaceNameKey
   }
 
   var normalizedDisplayName: String? {
@@ -149,7 +144,9 @@ struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
 
   var title: String {
     if let normalizedDisplayName { return normalizedDisplayName }
-    return isSystemDefault ? L10n.text("account.default_name") : shortDisplayReference
+    if isSystemDefault { return L10n.text("account.default_name") }
+    let email = lastKnownEmail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return email.isEmpty ? L10n.text("account.managed_name") : email
   }
 }
 
@@ -158,6 +155,7 @@ enum UsageAccountRegistryError: LocalizedError, Equatable {
   case pendingAccountMissing
   case managedAccountMissing
   case unsafeManagedPath
+  case workspaceIdentityUnavailable
 
   var errorDescription: String? {
     switch self {
@@ -169,15 +167,20 @@ enum UsageAccountRegistryError: LocalizedError, Equatable {
       return L10n.text("account.saved_missing")
     case .unsafeManagedPath:
       return L10n.text("account.unsafe_path")
+    case .workspaceIdentityUnavailable:
+      return L10n.text("account.workspace_identity_unavailable")
     }
   }
 }
 
 struct UsageAccountRegistry: @unchecked Sendable {
   private struct Payload: Codable {
-    let version: Int
+    var version: Int
     var accounts: [UsageAccount]
+    // Pre-v4 names were not bound to an identity. Retain them for recovery,
+    // but never attach an ambiguous old name to the current default login.
     var systemDefaultWorkspaceName: String? = nil
+    var systemDefaultWorkspaceNames: [String: String]? = nil
     var accountOrder: [String]? = nil
   }
 
@@ -212,9 +215,9 @@ struct UsageAccountRegistry: @unchecked Sendable {
     try discardAbandonedPendingAccounts()
     try migrateLegacyManagedHomeIfNeeded()
     let payload = try loadPayload()
-    var systemDefault = UsageAccount.systemDefault
-    systemDefault.workspaceName = payload.systemDefaultWorkspaceName
-    let accounts = [systemDefault] + payload.accounts.filter(\.isManaged)
+    // The store resolves the current default's name only after reading its
+    // live identity. Last launch's login must not leak into this launch's UI.
+    let accounts = [UsageAccount.systemDefault] + payload.accounts.filter(\.isManaged)
       .sorted { $0.createdAt < $1.createdAt }
     let order = AccountOrder.normalized(payload.accountOrder ?? [], availableIDs: accounts.map(\.id))
     return order.compactMap { id in accounts.first { $0.id == id } }
@@ -222,12 +225,14 @@ struct UsageAccountRegistry: @unchecked Sendable {
 
   /// Reads only registry metadata: reordering must not clean up an active device login.
   func saveAccountOrder(_ accountIDs: [String]) throws {
-    let payload = try loadPayload()
-    try savePayload(
-      accounts: payload.accounts,
-      systemDefaultWorkspaceName: payload.systemDefaultWorkspaceName,
-      accountOrder: accountIDs
-    )
+    var payload = try loadPayload()
+    payload.accountOrder = accountIDs
+    try savePayload(payload)
+  }
+
+  func workspaceName(forSystemDefaultAccount account: UsageAccount) throws -> String? {
+    guard account.isSystemDefault, let key = account.workspaceNameKey else { return nil }
+    return try loadPayload().systemDefaultWorkspaceNames?[key]
   }
 
   func beginManagedAccount() throws -> UsageAccount {
@@ -305,12 +310,14 @@ struct UsageAccountRegistry: @unchecked Sendable {
       guard account.id == UsageAccount.systemDefaultID else {
         throw UsageAccountRegistryError.invalidAccountIdentifier
       }
-      let payload = try loadPayload()
-      try savePayload(
-        accounts: payload.accounts,
-        systemDefaultWorkspaceName: account.normalizedWorkspaceName,
-        accountOrder: payload.accountOrder
-      )
+      guard let key = account.workspaceNameKey else {
+        throw UsageAccountRegistryError.workspaceIdentityUnavailable
+      }
+      var payload = try loadPayload()
+      var names = payload.systemDefaultWorkspaceNames ?? [:]
+      names[key] = account.normalizedWorkspaceName
+      payload.systemDefaultWorkspaceNames = names
+      try savePayload(payload)
       return
     }
 
@@ -406,33 +413,23 @@ struct UsageAccountRegistry: @unchecked Sendable {
   }
 
   private func saveManagedAccounts(_ accounts: [UsageAccount]) throws {
-    let payload = try loadPayload()
-    try savePayload(
-      accounts: accounts,
-      systemDefaultWorkspaceName: payload.systemDefaultWorkspaceName,
-      accountOrder: payload.accountOrder
-    )
+    var payload = try loadPayload()
+    payload.accounts = accounts
+    try savePayload(payload)
   }
 
-  private func savePayload(
-    accounts: [UsageAccount],
-    systemDefaultWorkspaceName: String?,
-    accountOrder: [String]?
-  ) throws {
+  private func savePayload(_ original: Payload) throws {
     try prepareRootDirectories()
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let data = try encoder.encode(
-      Payload(
-        version: 3,
-        accounts: accounts,
-        systemDefaultWorkspaceName: systemDefaultWorkspaceName,
-        accountOrder: accountOrder.map {
-          AccountOrder.normalized($0, availableIDs: [UsageAccount.systemDefaultID] + accounts.map(\.id))
-        }
-      )
-    )
+    var payload = original
+    payload.version = 4
+    payload.accountOrder = payload.accountOrder.map {
+      AccountOrder.normalized($0,
+        availableIDs: [UsageAccount.systemDefaultID] + payload.accounts.map(\.id))
+    }
+    let data = try encoder.encode(payload)
     try data.write(to: registryURL, options: .atomic)
     try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: registryURL.path)
   }

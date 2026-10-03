@@ -497,6 +497,7 @@ struct AccountUsageCard: View {
   @State private var draftName = ""
   @State private var isRenamingWorkspace = false
   @State private var draftWorkspaceName = ""
+  @FocusState private var workspaceEditorFocused: Bool
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -518,6 +519,10 @@ struct AccountUsageCard: View {
     .overlay {
       RoundedRectangle(cornerRadius: 11)
         .stroke(.quaternary, lineWidth: 1)
+    }
+    .onChange(of: viewState.account.workspaceNameKey) { _ in
+      // Do not apply an open editor's draft to a different default login.
+      if viewState.account.isSystemDefault { isRenamingWorkspace = false }
     }
   }
 
@@ -586,7 +591,7 @@ struct AccountUsageCard: View {
     }
   }
 
-  private var headerTitle: String {
+  var headerTitle: String {
     let email: String?
     if case .loaded(let snapshot) = viewState.state {
       email = snapshot.accountEmail ?? viewState.account.lastKnownEmail
@@ -594,8 +599,10 @@ struct AccountUsageCard: View {
       email = viewState.account.lastKnownEmail
     }
     guard let email, !email.isEmpty else { return viewState.account.title }
-    if viewState.account.isManaged, viewState.account.title != email {
-      return "\(viewState.account.title) · \(email)"
+    if viewState.account.isManaged, let name = viewState.account.normalizedDisplayName,
+      name != email
+    {
+      return "\(name) · \(email)"
     }
     return email
   }
@@ -603,8 +610,7 @@ struct AccountUsageCard: View {
   private var accountMenu: some View {
     Menu {
       Button(L10n.text("account.rename_workspace"), systemImage: "text.cursor") {
-        draftWorkspaceName = viewState.account.normalizedWorkspaceName ?? ""
-        isRenamingWorkspace = true
+        beginWorkspaceRename()
       }
 
       if viewState.account.isManaged {
@@ -637,28 +643,40 @@ struct AccountUsageCard: View {
         TextField(L10n.text("account.workspace_name"), text: $draftWorkspaceName)
           .textFieldStyle(.roundedBorder)
           .controlSize(.small)
-          .frame(width: 82)
+          .frame(width: 90)
+          .focused($workspaceEditorFocused)
+          .onAppear { workspaceEditorFocused = true }
           .onSubmit { saveWorkspaceName() }
         Button { saveWorkspaceName() } label: {
-          Image(systemName: "checkmark")
+          Image(systemName: "checkmark").frame(width: 18, height: 22)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(L10n.text("common.save"))
         .accessibilityLabel(L10n.text("common.save"))
         Button { isRenamingWorkspace = false } label: {
-          Image(systemName: "xmark")
+          Image(systemName: "xmark").frame(width: 18, height: 22)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(L10n.text("common.cancel"))
         .accessibilityLabel(L10n.text("common.cancel"))
-      } else if viewState.account.normalizedWorkspaceName != nil || viewState.account.isSystemDefault {
-        Text(viewState.account.normalizedWorkspaceName ?? viewState.account.shortDisplayReference)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .frame(maxWidth: 78)
-          .help(workspaceHelp)
-
+      } else {
+        if let name = viewState.account.normalizedWorkspaceName {
+          Text(name)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(maxWidth: 78)
+            .help(workspaceHelp)
+        }
+        Button { beginWorkspaceRename() } label: {
+          Image(systemName: "pencil").frame(width: 18, height: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(workspaceHelp)
+        .accessibilityLabel(L10n.text("account.rename_workspace"))
       }
     }
     .font(.caption2)
@@ -810,8 +828,14 @@ struct AccountUsageCard: View {
   }
 
   private func saveWorkspaceName() {
-    store.renameWorkspace(accountID: viewState.id, workspaceName: draftWorkspaceName)
-    isRenamingWorkspace = false
+    if store.renameWorkspace(accountID: viewState.id, workspaceName: draftWorkspaceName) {
+      isRenamingWorkspace = false
+    }
+  }
+
+  private func beginWorkspaceRename() {
+    draftWorkspaceName = viewState.account.normalizedWorkspaceName ?? ""
+    isRenamingWorkspace = true
   }
 }
 

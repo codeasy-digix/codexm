@@ -109,21 +109,23 @@ struct LocalizationTests {
     }
   }
 
-  @Test("Clearing names restores a stable short hash without dropping email")
+  @Test("Clearing names keeps the email and never exposes identifiers")
   func unnamedAccountFallback() throws {
     var account = UsageAccount(id: "00000000-0000-0000-0000-000000000001", kind: .managed,
       displayName: " ", lastKnownEmail: "owner@example.com", lastKnownPlanType: nil, createdAt: Date())
     let initial = account.title
-    #expect(initial.hasPrefix("#"))
-    #expect(initial.count == 9)
+    #expect(initial == "owner@example.com")
+    #expect(account.workspaceDisplayLabel == nil)
     account.displayName = "Development"
     #expect(account.title == "Development")
     account.displayName = ""
     #expect(account.title == initial)
     #expect(account.lastKnownEmail == "owner@example.com")
     account.lastKnownWorkspaceFingerprint = String(repeating: "abcdef12", count: 8)
-    #expect(account.title == "#ABCDEF12")
-    #expect(account.shortDisplayReference == "#ABCDEF12")
+    #expect(account.title == initial)
+    #expect(account.workspaceDisplayLabel == nil)
+    account.lastKnownEmail = nil
+    #expect(account.title == L10n.text("account.managed_name"))
   }
 }
 

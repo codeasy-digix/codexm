@@ -7,6 +7,28 @@ import Testing
 @Suite("Compact connection cards")
 @MainActor
 struct CompactAccountCardTests {
+  @Test("Default and unnamed managed headers retain the email without exposing hashes")
+  func omitsHashesFromHeaders() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = UsageStore(registry: UsageAccountRegistry(applicationSupportURL: root))
+    for kind in [UsageAccountKind.systemDefault, .managed] {
+      var account = UsageAccount(id: kind == .systemDefault ? UsageAccount.systemDefaultID : UUID().uuidString,
+        kind: kind, displayName: nil, lastKnownEmail: "owner@example.com",
+        lastKnownPlanType: "team", lastKnownWorkspaceFingerprint: String(repeating: "abcdef12", count: 8),
+        createdAt: Date())
+      func card() -> AccountUsageCard {
+        AccountUsageCard(viewState: UsageStore.AccountViewState(account: account,
+          state: .loaded(snapshot(credits: 0, details: [])), isRefreshing: false),
+          store: store, preferences: AppPreferences(), onRequestDelete: {})
+      }
+      #expect(card().headerTitle == "owner@example.com")
+      #expect(account.workspaceDisplayLabel == nil)
+      account.displayName = "Development"
+      #expect(card().headerTitle == (kind == .managed ? "Development · owner@example.com" : "owner@example.com"))
+    }
+  }
+
   @Test("Keeps all credit summary fields on one line")
   func summarizesCredits() throws {
     let now = Date(timeIntervalSince1970: 1_790_000_000)

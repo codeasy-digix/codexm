@@ -48,7 +48,8 @@
 "account.rename_workspace" = "वर्कस्पेस का नाम बदलें";
 "account.workspace_label" = "वर्कस्पेस %@";
 "account.workspace_help_named" = "इस Mac पर ही सहेजा गया वर्कस्पेस का नाम।";
-"account.workspace_help_unnamed" = "वर्कस्पेस का नाम अपने आप नहीं मिल सकता। खाता मेन्यू में नाम सेट करें; बिना नाम के कनेक्शन में छोटा स्थानीय हैश दिखता है।";
+"account.workspace_help_unnamed" = "वर्कस्पेस का नाम अपने आप नहीं मिल सकता। पेंसिल बटन से नाम सेट करें; बिना नाम वाले कनेक्शन में पहचानकर्ता नहीं दिखता।";
+"account.workspace_identity_unavailable" = "वर्कस्पेस का नाम बदलने से पहले इस खाते की स्थिति रीफ़्रेश करें।";
 "account.default_name" = "डिफ़ॉल्ट खाता";
 "account.managed_name" = "अतिरिक्त खाता";
 "account.legacy_name" = "पिछले ऐप का खाता";

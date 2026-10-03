@@ -4,15 +4,18 @@ struct CodexLocator: @unchecked Sendable {
   private let fileManager: FileManager
   private let environment: [String: String]
   private let homeDirectory: URL
+  private let systemExecutablePaths: [String]
 
   init(
     fileManager: FileManager = .default,
     environment: [String: String] = ProcessInfo.processInfo.environment,
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    systemExecutablePaths: [String] = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
   ) {
     self.fileManager = fileManager
     self.environment = environment
     self.homeDirectory = homeDirectory
+    self.systemExecutablePaths = systemExecutablePaths
   }
 
   func locate() -> URL? {
@@ -42,9 +45,8 @@ struct CodexLocator: @unchecked Sendable {
       paths.append(contentsOf: path.split(separator: ":").map { "\($0)/codex" })
     }
 
+    paths.append(contentsOf: systemExecutablePaths)
     paths.append(contentsOf: [
-      "/opt/homebrew/bin/codex",
-      "/usr/local/bin/codex",
       homeDirectory.appending(path: ".local/bin/codex").path,
       homeDirectory.appending(path: ".volta/bin/codex").path,
       homeDirectory.appending(path: ".bun/bin/codex").path,

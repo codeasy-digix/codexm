@@ -451,9 +451,23 @@ final class UsageStore: ObservableObject {
     }
   }
 
-  func renameWorkspace(accountID: String, workspaceName: String) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
+  @discardableResult
+  func renameWorkspace(accountID: String, workspaceName: String) -> Bool {
+    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return false }
     var account = accountStates[index].account
+    if account.isSystemDefault {
+      // A login may have changed externally while this editor was open. Never
+      // save the draft for a stale identity or guess a workspace from its email.
+      guard let currentRuntime = try? runtime(for: account),
+        let fingerprint = identityReader.fingerprint(codexHomeURL: currentRuntime.codexHomeURL),
+        fingerprint == account.lastKnownWorkspaceFingerprint,
+        account.workspaceNameKey != nil
+      else {
+        clearDefaultAccountPresentation()
+        showAccountManagementError(L10n.text("account.workspace_identity_unavailable"))
+        return false
+      }
+    }
     let trimmed = workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
     account.workspaceName = trimmed.isEmpty ? nil : trimmed
 
@@ -461,8 +475,10 @@ final class UsageStore: ObservableObject {
       try registry.updateAccount(account)
       accountStates[index].account = account
       clearAccountManagementError()
+      return true
     } catch {
       showAccountManagementError(L10n.errorDescription(error))
+      return false
     }
   }
 
@@ -578,6 +594,12 @@ final class UsageStore: ObservableObject {
       let runtime = try runtime(for: account)
       defer { withExtendedLifetime(runtime) {} }
       let identityRevision = identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
+      if account.isSystemDefault,
+        accountStates.first(where: { $0.id == account.id })?.account.lastKnownWorkspaceFingerprint
+          != identityRevision
+      {
+        clearDefaultAccountPresentation()
+      }
       let snapshot = try await accountOperationGate.withPermit(for: account.id) {
         try await client.fetchUsage(
           sessionID: account.id,
@@ -587,21 +609,30 @@ final class UsageStore: ObservableObject {
           environmentOverride: runtime.environment,
           onUpdate: { [weak self] snapshot in
             Task { @MainActor [weak self] in
-              self?.applyServerUpdate(snapshot, accountID: account.id)
+              self?.applyServerUpdate(snapshot, accountID: account.id,
+                workspaceFingerprint: identityRevision)
             }
           }
         )
       }
       guard !Task.isCancelled else { return }
+      if account.isSystemDefault,
+        identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL) != identityRevision
+      {
+        clearDefaultAccountPresentation()
+        client.invalidateSession(sessionID: account.id)
+        return
+      }
       updateAccountMetadata(
         accountID: account.id,
         snapshot: snapshot,
-        workspaceFingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
+        workspaceFingerprint: identityRevision
       )
       setSnapshot(snapshot, for: account.id)
     } catch is CancellationError {
       return
     } catch CodexRuntimeError.defaultCodexHomeUnavailable {
+      clearDefaultAccountPresentation()
       recordRefreshFailure(
         .notAuthenticated(L10n.text("error.default_missing")),
         authenticationRequired: true,
@@ -950,10 +981,25 @@ final class UsageStore: ObservableObject {
     )
   }
 
-  private func applyServerUpdate(_ snapshot: UsageSnapshot, accountID: String) {
-    guard accountStates.contains(where: { $0.id == accountID }) else { return }
-    updateAccountMetadata(accountID: accountID, snapshot: snapshot, workspaceFingerprint: nil)
+  private func applyServerUpdate(
+    _ snapshot: UsageSnapshot, accountID: String, workspaceFingerprint: String?
+  ) {
+    guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
+    if account.isSystemDefault {
+      guard let currentRuntime = try? runtime(for: account),
+        identityReader.fingerprint(codexHomeURL: currentRuntime.codexHomeURL) == workspaceFingerprint
+      else { return }
+    }
+    updateAccountMetadata(accountID: accountID, snapshot: snapshot,
+      workspaceFingerprint: workspaceFingerprint)
     setSnapshot(snapshot, for: accountID)
+  }
+
+  private func clearDefaultAccountPresentation() {
+    guard let index = accountStates.firstIndex(where: { $0.account.isSystemDefault }) else { return }
+    accountStates[index].account = .systemDefault
+    accountStates[index].state = .loading
+    accountStates[index].lastRefreshError = nil
   }
 
   private func setRefreshing(_ refreshing: Bool, for accountID: String) {
@@ -972,12 +1018,18 @@ final class UsageStore: ObservableObject {
     if let workspaceFingerprint {
       accountStates[index].account.lastKnownWorkspaceFingerprint = workspaceFingerprint
     }
-    if accountStates[index].account.isManaged {
-      do {
+    do {
+      if accountStates[index].account.isSystemDefault {
+        accountStates[index].account.workspaceName = try registry.workspaceName(
+          forSystemDefaultAccount: accountStates[index].account)
+      } else {
         try registry.updateAccount(accountStates[index].account)
-      } catch {
-        showAccountManagementError(L10n.errorDescription(error))
       }
+    } catch {
+      if accountStates[index].account.isSystemDefault {
+        accountStates[index].account.workspaceName = nil
+      }
+      showAccountManagementError(L10n.errorDescription(error))
     }
   }
 

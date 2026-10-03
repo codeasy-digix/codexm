@@ -48,7 +48,8 @@
 "account.rename_workspace" = "Change workspace name";
 "account.workspace_label" = "Workspace %@";
 "account.workspace_help_named" = "A workspace display name stored only on this Mac.";
-"account.workspace_help_unnamed" = "Workspace names cannot be read automatically. Set one in the account menu; unnamed connections show a short local hash.";
+"account.workspace_help_unnamed" = "Workspace names cannot be read automatically. Use the pencil button to set a name; unnamed connections show no identifier.";
+"account.workspace_identity_unavailable" = "Refresh this account's status before changing its workspace name.";
 "account.default_name" = "Default account";
 "account.managed_name" = "Additional account";
 "account.legacy_name" = "Previous app account";

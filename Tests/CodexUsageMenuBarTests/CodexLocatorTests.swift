@@ -42,7 +42,8 @@ struct CodexLocatorTests {
         [.posixPermissions: 0o755], ofItemAtPath: executable.path)
     }
 
-    let locator = CodexLocator(environment: ["PATH": ""], homeDirectory: home)
+    let locator = CodexLocator(environment: ["PATH": ""], homeDirectory: home,
+      systemExecutablePaths: [])
     #expect(locator.locate()?.path == newer.path)
   }
 
@@ -66,7 +67,8 @@ struct CodexLocatorTests {
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
     try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: script)
 
-    let locator = CodexLocator(environment: ["PATH": ""], homeDirectory: home)
+    let locator = CodexLocator(environment: ["PATH": ""], homeDirectory: home,
+      systemExecutablePaths: [])
     #expect(locator.locate()?.path == launcher.path)
   }
 }
