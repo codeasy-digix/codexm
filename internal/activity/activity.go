@@ -38,14 +38,17 @@ func Usage(s accounts.Snapshot, model string) jobs.AccountUsage {
 	return u
 }
 
-func Window(start, end *jobs.UsageWindow) string {
+func windowValues(start, end *jobs.UsageWindow) string {
 	value := func(w *jobs.UsageWindow) string {
 		if w == nil {
 			return "?"
 		}
 		return fmt.Sprintf("%d%%", w.UsedPercent)
 	}
-	r := value(start) + "→" + value(end)
+	return value(start) + "→" + value(end)
+}
+func Window(start, end *jobs.UsageWindow) string {
+	r := windowValues(start, end)
 	if start == nil || end == nil {
 		return r
 	}
@@ -56,6 +59,26 @@ func Window(start, end *jobs.UsageWindow) string {
 		return r + " (갱신)"
 	}
 	return fmt.Sprintf("%s (+%d%%p)", r, end.UsedPercent-start.UsedPercent)
+}
+
+func quotaWindow(start, end *jobs.AccountUsage, secondary bool) string {
+	var a, b *jobs.UsageWindow
+	if start != nil {
+		a = start.Primary
+		if secondary {
+			a = start.Secondary
+		}
+	}
+	if end != nil {
+		b = end.Primary
+		if secondary {
+			b = end.Secondary
+		}
+	}
+	if start != nil && end != nil && start.LimitID != end.LimitID {
+		return windowValues(a, b) + " (한도 종류 변경)"
+	}
+	return Window(a, b)
 }
 
 func duration(r jobs.Run, now time.Time) string {
@@ -90,16 +113,20 @@ func Format(report jobs.WorkLog) string {
 	var b strings.Builder
 	b.WriteString("작업로그 · " + clock(report.At) + "\n" + report.Note + "\n\n")
 	w := tabwriter.NewWriter(&b, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "세션 / 작업\t계정\t시작\t실행시간\t기본 한도 사용률\t보조 한도 사용률\t상태")
+	fmt.Fprintln(w, "세션 / 작업\t계정\t시작\t종료\t실행시간\t기본 한도 사용률\t보조 한도 사용률\t마지막 한도 확인\t상태")
 	for _, r := range report.Runs {
-		var sp, ss, ep, es *jobs.UsageWindow
-		if r.UsageStart != nil {
-			sp, ss = r.UsageStart.Primary, r.UsageStart.Secondary
+		end, checked := "진행 중", "미측정"
+		if r.EndedAt != nil {
+			end = clock(*r.EndedAt)
 		}
 		if r.UsageLatest != nil {
-			ep, es = r.UsageLatest.Primary, r.UsageLatest.Secondary
+			checked = clock(r.UsageLatest.At)
 		}
-		fmt.Fprintf(w, "%s / %s\t%s\t%s\t%s\t%s\t%s\t%s\n", short(r.ThreadID, 8), short(r.JobID, 8), r.Account, clock(r.StartedAt), duration(r, report.At), Window(sp, ep), Window(ss, es), r.State)
+		state := map[string]string{"starting": "시작 중", "connected": "실행/대기", "ended": "종료", "shutdown": "종료", "runtime_lost": "실행 끊김", "launch_failed": "시작 실패"}[r.State]
+		if state == "" {
+			state = r.State
+		}
+		fmt.Fprintf(w, "%s / %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", short(r.ThreadID, 8), short(r.JobID, 8), r.Account, clock(r.StartedAt), end, duration(r, report.At), quotaWindow(r.UsageStart, r.UsageLatest, false), quotaWindow(r.UsageStart, r.UsageLatest, true), checked, state)
 	}
 	if len(report.Runs) == 0 {
 		fmt.Fprintln(w, "아직 실행 기록이 없습니다.")

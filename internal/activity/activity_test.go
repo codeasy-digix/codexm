@@ -25,6 +25,9 @@ func TestQuotaUnknownZeroAndResetsAreNotMisattributed(t *testing.T) {
 	if got := Window(seven, &jobs.UsageWindow{UsedPercent: 8}); strings.Contains(got, "%p") {
 		t.Fatal("unknown reset counted as consumption", got)
 	}
+	if got := quotaWindow(&jobs.AccountUsage{LimitID: "codex", Primary: zero}, &jobs.AccountUsage{LimitID: "model", Primary: seven}, false); !strings.Contains(got, "한도 종류 변경") || strings.Contains(got, "%p") {
+		t.Fatal("different quotas combined", got)
+	}
 	u := Usage(accounts.Snapshot{Authenticated: true, CheckedAt: time.Now(), Single: accounts.Bucket{Primary: &accounts.Window{UsedPercent: 80}}, Error: "failed"}, "")
 	if u.Primary != nil || u.Error == "" {
 		t.Fatal("failed sample retained a stale percent", u)

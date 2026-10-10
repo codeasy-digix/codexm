@@ -241,12 +241,27 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	if cr.WriterBusy(j.Store, j.ThreadID) || cr.HasSession(ctx, j.Session) {
 		t.Fatal("worker not cleaned up")
 	}
-	_ = s.update(j.ID, func(j *jobs.Job) { j.Paused = false; j.State = "queued"; j.Account = "account-secondary" })
+	_ = s.update(j.ID, func(j *jobs.Job) { j.Paused = false; j.State = "queued" })
+	if e = s.changeAccount(j.ID, "account-secondary", "검증용 계정 교체"); e != nil {
+		t.Fatal(e)
+	}
 	if e = s.ensureRuntime(ctx, j.ID, false); e != nil {
 		t.Fatal(e)
 	}
 	loaded, _ := s.Store.Job(j.ID)
 	if loaded.ThreadID != j.ThreadID || loaded.Account != "account-secondary" || loaded.Model != j.Model || loaded.Effort != j.Effort || loaded.Goal == nil || loaded.Goal.Status != "paused" || loaded.Goal.TokenBudget == nil || *loaded.Goal.TokenBudget != 30000 || loaded.Goal.TokensUsed != g.TokensUsed {
 		t.Fatal(loaded)
+	}
+	log, e := s.Store.WorkLogs(j.ID, 10)
+	if e != nil || len(log.Runs) != 2 || len(log.Changes) != 1 || log.Changes[0].From != "account-work" || log.Changes[0].To != "account-secondary" {
+		t.Fatal("account switch history", log, e)
+	}
+	for _, run := range log.Runs {
+		if run.StartedAt.IsZero() || run.ThreadID != j.ThreadID {
+			t.Fatal("run start or thread lost", run)
+		}
+	}
+	if log.Runs[1].EndedAt == nil || log.Runs[1].Account != "account-work" || log.Runs[0].Account != "account-secondary" {
+		t.Fatal("run boundary missing", log.Runs)
 	}
 }

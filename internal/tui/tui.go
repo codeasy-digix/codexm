@@ -602,7 +602,7 @@ func (m *Model) slash(text string) tea.Cmd {
 			return m.request("read", supervisor.JobArgs{ID: j.ID, Cursor: m.ReadCursor})
 		}
 		m.Notice = "이전 대화 페이지가 없습니다."
-	case "pause", "resume-job", "stop", "complete", "events", "attach", "read":
+	case "pause", "resume-job", "manage", "stop", "complete", "events", "attach", "read":
 		if j.ID == "" {
 			m.Notice = "작업을 선택하세요."
 			return nil
