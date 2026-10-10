@@ -16,6 +16,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/activity"
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/display"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"github.com/codeasy-digix/codexm/internal/store"
@@ -337,7 +338,27 @@ func Main(args []string) error {
 			return errors.New("usage: codexm resolve-action ACTION_ID done|cancelled (after inspecting history)")
 		}
 		e = supervisor.Request(ctx, c, "resolve-action", map[string]string{"action_id": args[0], "decision": args[1]}, &result)
-	case "accounts", "usage", "settings", "shutdown":
+	case "usage":
+		f := flag.NewFlagSet(command, flag.ContinueOnError)
+		jsonOutput := f.Bool("json", false, "JSON result")
+		if e = f.Parse(args); e != nil {
+			return e
+		}
+		if *jsonOutput {
+			e = supervisor.Request(ctx, c, command, nil, &result)
+			break
+		}
+		var report display.UsageReport
+		if e = supervisor.Request(ctx, c, "usage", nil, &report); e != nil {
+			return e
+		}
+		var st supervisor.Status
+		if e = supervisor.Request(ctx, c, "status", nil, &st); e != nil {
+			return e
+		}
+		fmt.Print(display.Usage(report, st, c))
+		return nil
+	case "accounts", "settings", "shutdown":
 		e = supervisor.Request(ctx, c, command, nil, &result)
 	default:
 		return fmt.Errorf("unknown command %q; codexm help", command)
@@ -382,15 +403,17 @@ codexm pause|resume-job|stop|complete JOB
 codexm read|events|attach JOB
 codexm manager JOB --text 'instruction' Short manager model call
 codexm manager --all --text 'instruction'
-codexm accounts|usage|settings
+codexm usage [--json]                  Readable account/session usage, or raw data
+codexm accounts|settings
 codexm reply JOB REQUEST_ID_JSON RESULT_JSON
 codexm resolve-action ACTION done|cancelled
 codexm doctor [--json] [--live]          Runtime/configuration diagnostics
 codexm runtime refresh                 Explicit compatible engine adoption
 codexm shutdown                        Stop managed workers and supervisor
 
-TUI: n new · r conversations · m manager · i input · p pause · s resume
-     a official Codex TUI · /help · /quit detaches, keeps running work.`)
+TUI: input is focused by default · / opens the command menu · Tab completes
+     /status /usage: selected session · /codexm_status /codexm_usage: all jobs
+     /codexm_logs [all] · /codexm_attach · /help · /quit keeps running work.`)
 }
 func doctor(ctx context.Context, c config.Config, args []string) error {
 	result := map[string]any{"version": config.Version, "config": c.Path, "state_dir": c.StateDir(), "manager_account": c.Manager.Account, "manager_selected": c.Manager.Account != "", "checks": map[string]string{}}
