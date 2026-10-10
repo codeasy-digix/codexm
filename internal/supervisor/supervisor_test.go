@@ -47,6 +47,31 @@ func fixture(t *testing.T) *Server {
 	t.Cleanup(func() { cancel(); st.Close() })
 	return &Server{Config: c, Store: st, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, dispatching: map[string]bool{}, viewers: map[string]time.Time{}, managerAccount: "account-backup", Reader: fakeReader{}, started: time.Now()}
 }
+
+func TestManageFinishedConversationDoesNotRestartOrCallModel(t *testing.T) {
+	s := fixture(t)
+	for _, kind := range []string{"chat", "goal"} {
+		j := jobs.Job{ID: jobs.ID(), Kind: kind, State: "observed", Store: s.Config.Runtime.SharedCodexHome, ThreadID: jobs.ID()}
+		if kind == "goal" {
+			j.Goal = &jobs.Goal{Status: "complete", TokensUsed: 123}
+		}
+		if e := s.Store.PutJob(j); e != nil {
+			t.Fatal(e)
+		}
+		if _, e := s.Handle(context.Background(), Call{Command: "manage", Args: mustJSON(JobArgs{ID: j.ID})}); e != nil {
+			t.Fatal(e)
+		}
+		got, _ := s.Store.Job(j.ID)
+		if !got.Managed || got.Session != "" || got.RunID != "" || kind == "goal" && (got.State != "complete" || got.Goal.TokensUsed != 123) || kind == "chat" && got.State != "idle" {
+			t.Fatal(got)
+		}
+	}
+	as, _ := s.Store.Actions("")
+	n, _, _ := s.Store.DecisionCounts("")
+	if len(as) != 0 || n != 0 {
+		t.Fatal("managing history started work", as, n)
+	}
+}
 func TestFallbackRecheckUsesSavedDeadlineAndDoesNotCallManager(t *testing.T) {
 	s := fixture(t)
 	yes, no := true, false

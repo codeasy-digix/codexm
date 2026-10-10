@@ -93,9 +93,41 @@ type Event struct {
 type Run struct {
 	ID, JobID, Account, Socket, Session string
 	EngineBinary, EngineVersion         string
+	ThreadID                            string
 	StartedAt                           time.Time
 	EndedAt                             *time.Time
 	State                               string
+	UsageStart, UsageLatest             *AccountUsage
+}
+
+// AccountUsage observes the account's quota, shared with every other session.
+// It is not an attribution of account consumption to this run.
+type AccountUsage struct {
+	At        time.Time    `json:"at"`
+	LimitID   string       `json:"limit_id,omitempty"`
+	Primary   *UsageWindow `json:"primary,omitempty"`
+	Secondary *UsageWindow `json:"secondary,omitempty"`
+	Error     string       `json:"error,omitempty"`
+}
+type UsageWindow struct {
+	UsedPercent int    `json:"used_percent"`
+	Minutes     *int   `json:"minutes,omitempty"`
+	ResetsAt    *int64 `json:"resets_at,omitempty"`
+}
+type WorkChange struct {
+	ID       string    `json:"id"`
+	JobID    string    `json:"job_id"`
+	ThreadID string    `json:"thread_id"`
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	Reason   string    `json:"reason"`
+	At       time.Time `json:"at"`
+}
+type WorkLog struct {
+	At      time.Time    `json:"at"`
+	Note    string       `json:"note"`
+	Runs    []Run        `json:"runs"`
+	Changes []WorkChange `json:"changes"`
 }
 type Input struct {
 	Text      string `json:"text"`

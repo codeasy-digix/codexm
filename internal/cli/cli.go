@@ -14,8 +14,11 @@ import (
 	"syscall"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/activity"
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/store"
 	"github.com/codeasy-digix/codexm/internal/supervisor"
 	"github.com/codeasy-digix/codexm/internal/tui"
 	"golang.org/x/term"
@@ -137,6 +140,38 @@ func Main(args []string) error {
 	}
 	if c.Manager.Account == "" {
 		return errors.New("choose the manager account first: codexm (interactive) or codexm setup --manager NAME")
+	}
+	if command == "logs" {
+		f := flag.NewFlagSet(command, flag.ContinueOnError)
+		jsonOutput := f.Bool("json", false, "JSON result")
+		limit := f.Int("limit", 100, "maximum run and change records")
+		id := ""
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			id, args = args[0], args[1:]
+		}
+		if e = f.Parse(args); e != nil {
+			return e
+		}
+		var report jobs.WorkLog
+		if supervisor.Ping(ctx, c) == nil {
+			e = supervisor.Request(ctx, c, "logs", supervisor.JobArgs{ID: id, Limit: *limit}, &report)
+		} else {
+			// Reading history after completion must not restart a supervisor or model.
+			st, err := store.Open(c.StateDir())
+			if err != nil {
+				return err
+			}
+			report, e = st.WorkLogs(id, *limit)
+			st.Close()
+		}
+		if e != nil {
+			return e
+		}
+		if *jsonOutput {
+			return output(report)
+		}
+		fmt.Print(activity.Format(report))
+		return nil
 	}
 	if command == "shutdown" && supervisor.Ping(ctx, c) != nil {
 		return errors.New("supervisor is not running")
@@ -265,11 +300,16 @@ func Main(args []string) error {
 			api = "send"
 		}
 		e = supervisor.Request(ctx, c, api, supervisor.JobArgs{ID: id, Text: *text, Steer: command == "steer"}, &result)
-	case "pause", "resume-job", "stop", "complete", "events", "read":
+	case "pause", "resume-job", "manage", "stop", "complete", "events", "read":
 		if len(args) < 1 {
 			return fmt.Errorf("usage: codexm %s JOB_ID", command)
 		}
 		e = supervisor.Request(ctx, c, command, supervisor.JobArgs{ID: args[0]}, &result)
+	case "record-handoff":
+		if len(args) != 2 {
+			return errors.New("usage: codexm record-handoff JOB_ID PREVIOUS_ACCOUNT|unknown (after exiting the previous terminal)")
+		}
+		e = supervisor.Request(ctx, c, command, supervisor.JobArgs{ID: args[0], From: args[1]}, &result)
 	case "attach":
 		if len(args) != 1 {
 			return errors.New("usage: codexm attach JOB_ID")
@@ -329,6 +369,8 @@ func help() {
 codexm [--config FILE]                  Interactive task list / first-run setup
 codexm setup --manager NAME             Save manager account explicitly
 codexm status --json                    Jobs, health and named tmux sessions
+codexm logs [JOB_ID] [--json]            Session/account durations, quota observations and changes
+codexm manage JOB_ID                    Own an imported conversation without generating a turn
 codexm new --cwd DIR --kind chat --prompt 'instruction'
 codexm new --kind goal --goal 'objective' [--account NAME]
 codexm threads --search TEXT            Search existing conversations

@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/activity"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	"github.com/codeasy-digix/codexm/internal/manager"
 	"github.com/codeasy-digix/codexm/internal/policy"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/store"
 )
 
 type postpone struct {
@@ -355,6 +357,9 @@ func (s *Server) ensureRuntime(ctx context.Context, id string, user bool) error 
 	if e != nil {
 		return e
 	}
+	if e = s.changeAccount(id, account, "시작 시 사용 가능한 우선 계정 선택"); e != nil {
+		return e
+	}
 	j, e = s.Store.Job(id)
 	if e != nil {
 		return e
@@ -376,14 +381,22 @@ func (s *Server) ensureRuntime(ctx context.Context, id string, user bool) error 
 	if e = s.update(id, func(cur *jobs.Job) { j.Paused = cur.Paused; j.LastInput = cur.LastInput; *cur = j }); e != nil {
 		return e
 	}
-	run := jobs.Run{ID: j.RunID, JobID: id, Account: account, Socket: j.Socket, Session: j.Session, EngineBinary: j.EngineBinary, EngineVersion: j.EngineVersion, StartedAt: time.Now(), State: "starting"}
+	run := jobs.Run{ID: j.RunID, JobID: id, ThreadID: j.ThreadID, Account: account, Socket: j.Socket, Session: j.Session, EngineBinary: j.EngineBinary, EngineVersion: j.EngineVersion, StartedAt: time.Now(), State: "starting"}
 	if e = s.Store.PutRun(run); e != nil {
 		return e
+	}
+	if snapshots, _, err := s.snapshots(); err == nil {
+		if snap, ok := snapshots[account]; ok {
+			if e = s.Store.SampleRun(j.RunID, activity.Usage(snap, j.Model)); e != nil {
+				return e
+			}
+		}
 	}
 	r := s.Resolver
 	r.Binary = j.EngineBinary
 	r.Version = j.EngineVersion
 	if e = r.LaunchWorker(ctx, s.Self, cr.WorkerSpec{Account: account, Socket: j.Socket, Session: j.Session, Cwd: j.Cwd}); e != nil {
+		_ = s.Store.EndRun(j.RunID, "launch_failed", time.Now())
 		return e
 	}
 	return s.connect(ctx, j, user)
@@ -474,6 +487,9 @@ func (s *Server) connect(ctx context.Context, j jobs.Job, user bool) error {
 		return e
 	}
 	j, _ = s.Store.Job(j.ID)
+	if e = s.Store.IdentifyRun(j.RunID, j.ThreadID); e != nil {
+		return e
+	}
 	g, e := c.Goal(ctx, j.ThreadID)
 	if e != nil {
 		return e
@@ -619,6 +635,7 @@ func (s *Server) park(ctx context.Context, id string, pauseGoal bool) error {
 			}
 		}
 	}
+	s.sampleUsage(ctx, j, c, true)
 	// Never kill a process that we did not create. Thread writer is checked again on launch.
 	if j.Session != "" && cr.HasSession(ctx, j.Session) {
 		if e = cr.KillSession(ctx, j.Session); e != nil {
@@ -632,8 +649,9 @@ func (s *Server) park(ctx context.Context, id string, pauseGoal bool) error {
 	delete(s.clients, id)
 	s.mu.Unlock()
 	if j.RunID != "" {
-		end := time.Now()
-		_ = s.Store.PutRun(jobs.Run{ID: j.RunID, JobID: j.ID, Account: j.Account, Socket: j.Socket, Session: j.Session, EngineBinary: j.EngineBinary, EngineVersion: j.EngineVersion, EndedAt: &end, State: "ended"})
+		if e = s.Store.EndRun(j.RunID, "ended", time.Now()); e != nil && !store.NotFound(e) {
+			return e
+		}
 	}
 	if j.Socket != "" {
 		_ = os.Remove(j.Socket)
@@ -689,8 +707,14 @@ func (s *Server) switchAccount(ctx context.Context, id, preferred string, exhaus
 		_ = s.update(id, func(j *jobs.Job) { j.State = "quota_wait"; j.LastError = reason; j.LastAccountCheck = time.Now() })
 		return &postpone{reason, 30 * time.Second}
 	}
+	changeReason := "상위 계정 한도 회복"
+	if exhausted {
+		changeReason = "기존 계정 한도 소진"
+	}
+	if e = s.changeAccount(id, choice, changeReason); e != nil {
+		return e
+	}
 	if e = s.update(id, func(j *jobs.Job) {
-		j.Account = choice
 		j.State = "queued"
 		j.LastAccountCheck = time.Now()
 		j.ContinuationDue = true

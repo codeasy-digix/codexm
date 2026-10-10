@@ -163,6 +163,11 @@ func (s *Server) Run() error {
 		if err != nil {
 			return err
 		}
+		if j.RunID != "" {
+			if err = s.Store.EndRun(j.RunID, "shutdown", time.Now()); err != nil && !store.NotFound(err) {
+				return err
+			}
+		}
 		if j.Socket != "" {
 			_ = os.Remove(j.Socket)
 		}

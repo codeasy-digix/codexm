@@ -16,6 +16,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/activity"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
@@ -66,6 +67,8 @@ type Model struct {
 	DetailText     string
 	ReadCursor     string
 	WantRead       bool
+	LogsOpen       bool
+	LogsJob        string
 }
 
 func New(c config.Config, self string) Model {
@@ -193,6 +196,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.poll(), tick())
 	case tickMsg:
 		if m.Ready {
+			if m.LogsOpen {
+				return m, tea.Batch(m.poll(), m.request("logs", supervisor.JobArgs{ID: m.LogsJob}), tick())
+			}
 			return m, tea.Batch(m.poll(), tick())
 		}
 		return m, nil
@@ -226,6 +232,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.SelectedID = js[m.Selected].ID
 		}
 	case replyMsg:
+		if v.Command != "logs" {
+			m.LogsOpen = false
+		}
 		m.Loading = false
 		if v.Error != nil {
 			m.Notice = v.Error.Error()
@@ -281,6 +290,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.DetailText = b.String()
 			m.Screen = "agents"
 			m.Focus = "detail"
+		case "logs":
+			if !m.LogsOpen {
+				return m, nil
+			}
+			var report jobs.WorkLog
+			if err := json.Unmarshal(v.Data, &report); err != nil {
+				m.Notice = err.Error()
+				return m, nil
+			}
+			m.DetailText = activity.Format(report)
+			m.Screen = "agents"
 		case "events", "usage", "settings":
 			var pretty any
 			_ = json.Unmarshal(v.Data, &pretty)
@@ -343,6 +363,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key == "esc" {
+			m.LogsOpen = false
 			m.Focus = "list"
 			m.Screen = "agents"
 			m.Input.Blur()
@@ -421,6 +442,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "/":
 			m.focusInput("/")
+		case "l":
+			m.LogsJob = ""
+			m.LogsOpen = true
+			m.Focus = "detail"
+			return m, m.request("logs", nil)
 		case "n":
 			m.beginNew()
 		case "r":
@@ -563,6 +589,14 @@ func (m *Model) slash(text string) tea.Cmd {
 		return m.request("set-manager", supervisor.JobArgs{Account: arg})
 	case "settings", "usage":
 		return m.request(command, nil)
+	case "logs":
+		m.LogsJob = ""
+		m.LogsOpen = true
+		m.Focus = "detail"
+		if arg != "all" {
+			m.LogsJob = j.ID
+		}
+		return m.request("logs", supervisor.JobArgs{ID: m.LogsJob})
 	case "older":
 		if j.ID != "" && m.ReadCursor != "" {
 			return m.request("read", supervisor.JobArgs{ID: j.ID, Cursor: m.ReadCursor})
@@ -605,7 +639,7 @@ func (m *Model) slash(text string) tea.Cmd {
 	case "shutdown":
 		return m.request("shutdown", nil)
 	case "help":
-		m.DetailText = "n 새 작업 · r 기존 대화 · m 관리자 지시 · i 입력 · Tab 영역 이동\np 중지 · s 재개 · a 공식 Codex 화면 · Enter 대화 열람 · Esc 목록\n/agents /new /resume 검색어 /manager 지시 /job /account [관리자계정]\n/pause /resume-job /stop /complete /events /usage /read /goal 목표\n/steer 지시: 실행 중인 턴에 개입\n/filter 검색어 /state 상태 /answer 응답 또는 JSON /settings\n/quit 화면 접속 종료 (작업 유지) /shutdown 작업과 감시 종료\nEnter 전송 · Alt+Enter 또는 Shift+Enter 줄바꿈 · 여러 줄 붙여넣기 지원"
+		m.DetailText = "n 새 작업 · r 기존 대화 · m 관리자 지시 · i 입력 · Tab 영역 이동\np 중지 · s 재개 · a 공식 Codex 화면 · l 전체 작업로그 · Enter 대화 열람 · Esc 목록\n/agents /new /resume 검색어 /manager 지시 /job /account [관리자계정]\n/pause /resume-job /stop /complete /events /usage /read /goal 목표\n/logs 선택 작업로그 · /logs all 전체 작업로그 (화면에서 자동 갱신)\n/steer 지시: 실행 중인 턴에 개입\n/filter 검색어 /state 상태 /answer 응답 또는 JSON /settings\n/quit 화면 접속 종료 (작업 유지) /shutdown 작업과 감시 종료\nEnter 전송 · Alt+Enter 또는 Shift+Enter 줄바꿈 · 여러 줄 붙여넣기 지원"
 		m.Focus = "detail"
 	default:
 		m.Notice = "지원하지 않는 명령입니다. /help"

@@ -2,6 +2,7 @@ package tui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"encoding/json"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	"strings"
@@ -35,5 +36,30 @@ func TestInputTargetAndKoreanMultilinePaste(t *testing.T) {
 		if !strings.Contains(m.View().Content, "입력 대상:") {
 			t.Fatal("input target missing after resize")
 		}
+	}
+}
+
+func TestLogsRefreshDoesNotStealInputOrReopenAfterEscape(t *testing.T) {
+	c := config.Defaults()
+	c.Manager.Account = "account-backup"
+	m := New(c, "codexm")
+	m.SelectedID = "job"
+	m.Status.Jobs = []jobs.Job{{ID: "job"}}
+	if cmd := m.slash("/logs"); cmd == nil || !m.LogsOpen || m.LogsJob != "job" {
+		t.Fatal("logs not opened")
+	}
+	m.Focus = "input"
+	raw, _ := json.Marshal(jobs.WorkLog{Note: "account-wide quota"})
+	next, _ := m.Update(replyMsg{Command: "logs", Data: raw})
+	m = next.(Model)
+	if m.Focus != "input" {
+		t.Fatal("refresh stole input focus")
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = next.(Model)
+	next, _ = m.Update(replyMsg{Command: "logs", Data: raw})
+	m = next.(Model)
+	if m.LogsOpen || m.Focus != "list" {
+		t.Fatal("late logs response reopened the view")
 	}
 }

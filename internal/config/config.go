@@ -12,7 +12,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 var Nickname = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
@@ -69,6 +69,9 @@ type Config struct {
 	Storage struct {
 		StateDir string `toml:"state_dir"`
 	} `toml:"storage"`
+	Logging struct {
+		UsageSampleSeconds int `toml:"usage_sample_seconds"`
+	} `toml:"logging"`
 	Path string `toml:"-" json:"-"`
 }
 
@@ -125,6 +128,7 @@ func Defaults() Config {
 	c.Runtime.Controller = "codex-accounts"
 	c.Runtime.EnginesDir = filepath.Join(xdg("XDG_DATA_HOME", ".local/share"), "codexm", "engines")
 	c.Storage.StateDir = filepath.Join(xdg("XDG_STATE_HOME", ".local/state"), "codexm")
+	c.Logging.UsageSampleSeconds = 60
 	return c
 }
 func Load(p string) (Config, error) {
@@ -155,7 +159,7 @@ func (c Config) Validate() error {
 	if c.Manager.MaxInputChars < 256 || c.Manager.MaxCallsPerIncident < 1 || c.Manager.MaxCallsPerHour < 1 || c.Manager.DecisionTimeoutSeconds < 1 {
 		return errors.New("manager limits must be positive")
 	}
-	if c.Supervisor.ReconcileIntervalSeconds < 1 || c.Execution.MaxParallelJobs < 1 || c.Execution.MaxChildDepth < 1 || c.WorkerAccounts.PreferredRecheckSeconds < 1 {
+	if c.Supervisor.ReconcileIntervalSeconds < 1 || c.Execution.MaxParallelJobs < 1 || c.Execution.MaxChildDepth < 1 || c.WorkerAccounts.PreferredRecheckSeconds < 1 || c.Logging.UsageSampleSeconds < 1 {
 		return errors.New("execution limits and intervals must be positive")
 	}
 	seen := map[string]bool{}

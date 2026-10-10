@@ -42,6 +42,8 @@ type JobArgs struct {
 	Search    string          `json:"search"`
 	Cursor    string          `json:"cursor"`
 	ClientID  string          `json:"client_id"`
+	Limit     int             `json:"limit,omitempty"`
+	From      string          `json:"from,omitempty"`
 	RequestID json.RawMessage `json:"request_id"`
 	Result    json.RawMessage `json:"result"`
 }
@@ -49,7 +51,7 @@ type JobArgs struct {
 func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	if s.isStopping() {
 		switch call.Command {
-		case "new", "resume", "resume-job", "send", "goal", "manager", "reply", "set-manager", "resolve-action":
+		case "new", "resume", "resume-job", "manage", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "resolve-action":
 			return nil, errors.New("supervisor is shutting down; restart it before submitting work")
 		}
 	}
@@ -78,6 +80,20 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		return true, nil
 	case "events":
 		return s.Store.Events(a.ID, 100)
+	case "logs":
+		return s.Store.WorkLogs(a.ID, a.Limit)
+	case "record-handoff":
+		if a.From != "unknown" && !config.Nickname.MatchString(a.From) {
+			return nil, errors.New("invalid previous account")
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		j, e := s.Store.Job(a.ID)
+		if e != nil {
+			return nil, e
+		}
+		change := jobs.WorkChange{ID: jobs.ID(), JobID: j.ID, ThreadID: j.ThreadID, From: a.From, To: j.Account, At: time.Now(), Reason: "기존 터미널에서 codexm으로 인계 (이전 사용량 미측정)"}
+		return change, s.Store.ChangeAccount(j, change)
 	case "accounts":
 		return s.refreshAccounts(ctx)
 	case "usage":
@@ -210,6 +226,30 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 			return nil, e
 		}
 		return j, nil
+	case "manage":
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		j, e := s.Store.Job(a.ID)
+		if e != nil {
+			return nil, e
+		}
+		if j.Managed {
+			return j, nil
+		}
+		if cr.WriterBusy(j.Store, j.ThreadID) {
+			return nil, errForeignWriter
+		}
+		j.Managed = true
+		j.State = "idle"
+		if j.Goal != nil {
+			j.Paused = true
+			j.State = "paused"
+			if j.Goal.Status == "complete" {
+				j.Paused = false
+				j.State = "complete"
+			}
+		}
+		return j, s.persist(j)
 	case "complete":
 		s.mu.Lock()
 		defer s.mu.Unlock()

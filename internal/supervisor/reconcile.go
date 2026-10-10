@@ -10,6 +10,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	"github.com/codeasy-digix/codexm/internal/policy"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/store"
 )
 
 func (s *Server) reconcileLoop() {
@@ -113,6 +114,7 @@ func (s *Server) reconcileJob(j jobs.Job) {
 		c = s.client(j.ID)
 	}
 	if c != nil && j.ThreadID != "" {
+		s.sampleUsage(ctx, j, c, false)
 		t, _, e := c.Recent(ctx, j.ThreadID, 1, "")
 		if e != nil {
 			return
@@ -197,6 +199,12 @@ func (s *Server) reconcileJob(j jobs.Job) {
 		s.mu.Unlock()
 		j = cur
 	} else if j.Session != "" && !cr.HasSession(ctx, j.Session) {
+		if j.RunID != "" {
+			if e := s.Store.EndRun(j.RunID, "runtime_lost", time.Now()); e != nil && !store.NotFound(e) {
+				s.fail(e)
+				return
+			}
+		}
 		// A lost runtime is safe to reload, but the last dispatched user input is
 		// never replayed here. That action remains outcome_unknown until inspected.
 		_ = s.update(j.ID, func(j *jobs.Job) {
