@@ -54,6 +54,13 @@ func Reduce(j jobs.Job, ev jobs.Event, m cr.Message) (jobs.Job, []jobs.Action) {
 	}
 	switch m.Method {
 	case "turn/started":
+		// A fresh turn from the official UI is an explicit continuation, including
+		// a follow-up to a finished goal. Its old completion must not park it.
+		if j.Goal != nil && j.Goal.Status == "complete" {
+			j.Kind = "chat"
+		}
+		j.Paused = false
+		j.ContinuationDue = false
 		j.TurnID = p.Turn.ID
 		j.State = "running"
 		j.LastError = ""
@@ -113,6 +120,9 @@ func Reduce(j jobs.Job, ev jobs.Event, m cr.Message) (jobs.Job, []jobs.Action) {
 		if p.Goal != nil {
 			if p.Goal.Status == "active" {
 				j.Kind = "goal"
+				if j.State != "switching" {
+					j.Paused = false
+				}
 			}
 			switch p.Goal.Status {
 			case "complete":

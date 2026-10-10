@@ -113,7 +113,7 @@ func Session(j jobs.Job, st supervisor.Status) string {
 	fmt.Fprintf(&b, "승인: %s\n샌드박스: %s\n", policy(j.Approval), policy(j.Sandbox))
 	b.WriteString(Tokens(j.TokenUsage) + Goal(j.Goal))
 	b.WriteString("\n" + AccountFor(st, j.Account, j.Model))
-	b.WriteString("\n공식 Codex의 전체 설정·사용량 화면: /codexm_attach\n전체 관리 상태: /codexm_status\n")
+	b.WriteString("\n공식 Codex의 전체 설정·사용량 화면: /open\n전체 관리 상태: /status\n")
 	return b.String()
 }
 
@@ -194,7 +194,7 @@ func AccountFor(st supervisor.Status, name, model string) string {
 			return Account(a, model)
 		}
 	}
-	return fallback(name) + " · 한도 미확인 · /codexm_accounts로 새로 조회\n"
+	return fallback(name) + " · 한도 미확인 · /accounts로 새로 조회\n"
 }
 
 func Accounts(st supervisor.Status, c config.Config) string {
@@ -227,7 +227,7 @@ func Accounts(st supervisor.Status, c config.Config) string {
 			b.WriteString(name + " · 미확인\n")
 		}
 	}
-	b.WriteString("새 한도 조회: /codexm_accounts · 갱신 시각은 로컬 시간\n")
+	b.WriteString("새 한도 조회: /accounts · 갱신 시각은 로컬 시간\n")
 	return b.String()
 }
 
@@ -259,7 +259,7 @@ func Usage(r UsageReport, st supervisor.Status, c config.Config) string {
 			b.WriteString(Goal(j.Goal))
 		}
 	}
-	b.WriteString("\n미측정 값은 0으로 간주하지 않습니다. 계정 한도 %는 세션별 소비량이 아닙니다.\n계정별 실행시간·전환 이력: /codexm_logs all\n")
+	b.WriteString("\n미측정 값은 0으로 간주하지 않습니다. 계정 한도 %는 세션별 소비량이 아닙니다.\n계정별 실행시간·전환 이력: /logs all\n")
 	return b.String()
 }
 

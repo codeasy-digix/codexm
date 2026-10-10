@@ -90,7 +90,7 @@ func (s *Server) execute(a jobs.Action) {
 		s.finishAction(a, "failed", e)
 		return
 	}
-	if j.Paused && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "manager_command" {
+	if j.Paused && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "load_view" && a.Kind != "manager_command" {
 		if jobs.Terminal(j.State) {
 			s.finishAction(a, "cancelled", nil)
 			return
@@ -100,7 +100,7 @@ func (s *Server) execute(a jobs.Action) {
 		return
 	}
 	// A user input may wait across account runs. Lifecycle actions belong to one run.
-	if a.RunID != "" && a.RunID != j.RunID && a.Kind != "send_input" && a.Kind != "start" && a.Kind != "manager_command" {
+	if a.RunID != "" && a.RunID != j.RunID && a.Kind != "send_input" && a.Kind != "start" && a.Kind != "load_view" && a.Kind != "manager_command" {
 		s.finishAction(a, "cancelled", nil)
 		return
 	}
@@ -113,6 +113,8 @@ func (s *Server) execute(a jobs.Action) {
 	ctx, cancel := context.WithTimeout(s.ctx, 90*time.Second)
 	defer cancel()
 	switch a.Kind {
+	case "load_view":
+		e = s.loadView(ctx, j)
 	case "start":
 		var p struct {
 			Origin string `json:"origin"`
@@ -136,6 +138,9 @@ func (s *Server) execute(a jobs.Action) {
 	case "pause_execution":
 		e = s.park(ctx, j.ID, true)
 	case "cleanup":
+		if s.hasJobViewer(j.ID) {
+			break
+		}
 		if j.State == "complete" && j.TurnID != "" {
 			e = later("goal is complete; waiting for the final turn to finish")
 			break
@@ -456,6 +461,9 @@ func (s *Server) connect(ctx context.Context, j jobs.Job, user bool) error {
 			p["config"] = map[string]any{"model_reasoning_effort": j.Effort}
 		}
 		e = c.Call(ctx, "thread/start", p, &r)
+		if e == nil && j.Title != "" {
+			e = c.Call(ctx, "thread/name/set", map[string]any{"threadId": r.Thread.ID, "name": j.Title}, nil)
+		}
 	} else {
 		r, e = c.Resume(ctx, j.ThreadID)
 		if e == nil {
@@ -666,6 +674,7 @@ func (s *Server) switchAccount(ctx context.Context, id, preferred string, exhaus
 	if j.Paused {
 		return nil
 	}
+	continueWork := exhausted || j.TurnID != "" || j.ContinuationDue || j.Goal != nil && j.Goal.Status == "active"
 	if exhausted {
 		m, _, _ := s.snapshots()
 		a := m[j.Account]
@@ -717,7 +726,7 @@ func (s *Server) switchAccount(ctx context.Context, id, preferred string, exhaus
 	if e = s.update(id, func(j *jobs.Job) {
 		j.State = "queued"
 		j.LastAccountCheck = time.Now()
-		j.ContinuationDue = true
+		j.ContinuationDue = continueWork
 		j.ResumeLimitedGoal = true
 	}); e != nil {
 		return e
@@ -726,6 +735,9 @@ func (s *Server) switchAccount(ctx context.Context, id, preferred string, exhaus
 		return e
 	}
 	j, _ = s.Store.Job(id)
+	if !continueWork {
+		return nil
+	}
 	if j.Goal != nil && j.Goal.Status == "usageLimited" {
 		c := s.client(id)
 		if e = c.SetGoalStatus(ctx, j.ThreadID, "active", "automatic"); e != nil {

@@ -33,7 +33,7 @@ type Server struct {
 	cancel         context.CancelFunc
 	mu             sync.Mutex
 	clients        map[string]*cr.Client
-	viewers        map[string]time.Time
+	viewers        map[string]viewer
 	unhealthy      string
 	stopping       bool
 	started        time.Time
@@ -44,6 +44,10 @@ type Server struct {
 	previews       map[string]preview
 }
 type preview struct{ RunID, Text string }
+type viewer struct {
+	At    time.Time
+	JobID string
+}
 type AccountReader interface {
 	Read(context.Context, string) accounts.Snapshot
 }
@@ -66,6 +70,7 @@ type Status struct {
 	Version         string              `json:"version"`
 	CodexVersion    string              `json:"codex_version"`
 	ManagerDecision *manager.Record     `json:"manager_decision,omitempty"`
+	Terminals       map[string]int      `json:"terminals,omitempty"`
 }
 
 func New(ctx context.Context, c config.Config, self string) (*Server, error) {
@@ -81,7 +86,7 @@ func New(ctx context.Context, c config.Config, self string) (*Server, error) {
 		return nil, e
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	s := &Server{Config: c, Resolver: r, Reader: accounts.New(r), Store: st, Self: self, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, viewers: map[string]time.Time{}, dispatching: map[string]bool{}, managerAccount: c.Manager.Account, started: time.Now()}
+	s := &Server{Config: c, Resolver: r, Reader: accounts.New(r), Store: st, Self: self, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, viewers: map[string]viewer{}, dispatching: map[string]bool{}, managerAccount: c.Manager.Account, started: time.Now()}
 	if e = st.RecoverActions(); e != nil {
 		st.Close()
 		cancel()
@@ -225,6 +230,7 @@ func (s *Server) status() (Status, error) {
 	s.mu.Lock()
 	health := s.unhealthy
 	account := s.managerAccount
+	terminals := s.liveViewersLocked()
 	for i := range js {
 		if p, ok := s.previews[js[i].ID]; ok && p.RunID == js[i].RunID {
 			js[i].LastOutput = p.Text
@@ -242,7 +248,7 @@ func (s *Server) status() (Status, error) {
 			decision = &r
 		}
 	}
-	return Status{Jobs: js, Accounts: as, ManagerAccount: account, ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: "tmux attach -t " + s.Config.Supervisor.TmuxSession, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision}, nil
+	return Status{Jobs: js, Accounts: as, ManagerAccount: account, ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: "tmux attach -t " + s.Config.Supervisor.TmuxSession, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision, Terminals: terminals}, nil
 }
 func (s *Server) manager() string { s.mu.Lock(); defer s.mu.Unlock(); return s.managerAccount }
 func (s *Server) persist(j jobs.Job, actions ...jobs.Action) error {

@@ -14,6 +14,7 @@ type Thread struct {
 	Name      string          `json:"name"`
 	Preview   string          `json:"preview"`
 	Cwd       string          `json:"cwd"`
+	Path      string          `json:"path"`
 	UpdatedAt int64           `json:"updatedAt"`
 	Source    json.RawMessage `json:"source"`
 	Status    struct {

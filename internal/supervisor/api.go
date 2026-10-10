@@ -51,7 +51,7 @@ type JobArgs struct {
 func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	if s.isStopping() {
 		switch call.Command {
-		case "new", "resume", "resume-job", "manage", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "resolve-action":
+		case "new", "resume", "resume-job", "manage", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "resolve-action":
 			return nil, errors.New("supervisor is shutting down; restart it before submitting work")
 		}
 	}
@@ -68,11 +68,21 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		return s.status()
 	case "client":
 		s.mu.Lock()
-		if a.ClientID != "" {
-			s.viewers[a.ClientID] = time.Now()
+		defer s.mu.Unlock()
+		if a.ID != "" {
+			j, e := s.Store.Job(a.ID)
+			if e != nil {
+				return nil, e
+			}
+			s.viewers[a.ClientID] = viewer{At: time.Now(), JobID: a.ID}
+			return s.viewState(j), nil
 		}
-		s.mu.Unlock()
+		if a.ClientID != "" {
+			s.viewers[a.ClientID] = viewer{At: time.Now()}
+		}
 		return true, nil
+	case "view":
+		return s.openView(ctx, a)
 	case "detach":
 		s.mu.Lock()
 		delete(s.viewers, a.ClientID)

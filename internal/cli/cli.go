@@ -21,6 +21,7 @@ import (
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"github.com/codeasy-digix/codexm/internal/store"
 	"github.com/codeasy-digix/codexm/internal/supervisor"
+	"github.com/codeasy-digix/codexm/internal/terminal"
 	"github.com/codeasy-digix/codexm/internal/tui"
 	"golang.org/x/term"
 )
@@ -69,7 +70,16 @@ func Main(args []string) error {
 		return e
 	}
 	self, _ = filepath.EvalSymlinks(self)
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	signals := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if command == "__view" || command == "attach" {
+		// Ctrl+C belongs to the official UI. The wrapper only handles terminal
+		// closure/termination and leaves turn interruption to Codex.
+		interrupts := make(chan os.Signal, 1)
+		signal.Notify(interrupts, os.Interrupt)
+		defer signal.Stop(interrupts)
+		signals = []os.Signal{syscall.SIGTERM, syscall.SIGHUP}
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), signals...)
 	defer cancel()
 	if command == "__supervisor" {
 		s, e := supervisor.New(ctx, c, self)
@@ -77,6 +87,12 @@ func Main(args []string) error {
 			return e
 		}
 		return s.Run()
+	}
+	if command == "__view" {
+		if len(args) != 2 {
+			return errors.New("missing job and terminal client ID")
+		}
+		return terminal.Run(ctx, c, args[0], args[1])
 	}
 	if command == "doctor" {
 		return doctor(ctx, c, args)
@@ -311,23 +327,19 @@ func Main(args []string) error {
 			return errors.New("usage: codexm record-handoff JOB_ID PREVIOUS_ACCOUNT|unknown (after exiting the previous terminal)")
 		}
 		e = supervisor.Request(ctx, c, command, supervisor.JobArgs{ID: args[0], From: args[1]}, &result)
-	case "attach":
+	case "open", "attach":
 		if len(args) != 1 {
-			return errors.New("usage: codexm attach JOB_ID")
+			return fmt.Errorf("usage: codexm %s JOB_ID", command)
 		}
-		var a struct {
-			Binary   string `json:"binary"`
-			Socket   string `json:"socket"`
-			ThreadID string `json:"thread_id"`
+		if command == "attach" {
+			return terminal.Run(ctx, c, args[0], jobs.ID())
 		}
-		if e = supervisor.Request(ctx, c, "attach", supervisor.JobArgs{ID: args[0]}, &a); e != nil {
+		opened, e := terminal.Open(ctx, c, self, args[0])
+		if e != nil {
 			return e
 		}
-		cmd := exec.Command(a.Binary, "-c", "check_for_update_on_startup=false", "--remote", "unix://"+a.Socket, "resume", a.ThreadID)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
+		fmt.Println(opened.String())
+		return nil
 	case "reply":
 		if len(args) != 3 {
 			return errors.New("usage: codexm reply JOB_ID REQUEST_ID_JSON RESULT_JSON")
@@ -400,7 +412,9 @@ codexm resume THREAD --manage           Take ownership and continue
 codexm send JOB --text 'followup'        Queue another instruction
 codexm steer JOB --text 'correction'    Steer the active turn explicitly
 codexm pause|resume-job|stop|complete JOB
-codexm read|events|attach JOB
+codexm open JOB                        Open official Codex in a new terminal
+codexm attach JOB                      Official Codex in the current terminal
+codexm read|events JOB
 codexm manager JOB --text 'instruction' Short manager model call
 codexm manager --all --text 'instruction'
 codexm usage [--json]                  Readable account/session usage, or raw data
@@ -411,9 +425,10 @@ codexm doctor [--json] [--live]          Runtime/configuration diagnostics
 codexm runtime refresh                 Explicit compatible engine adoption
 codexm shutdown                        Stop managed workers and supervisor
 
-TUI: input is focused by default · / opens the command menu · Tab completes
-     /status /usage: selected session · /codexm_status /codexm_usage: all jobs
-     /codexm_logs [all] · /codexm_attach · /help · /quit keeps running work.`)
+TUI: input is focused by default · text searches jobs · / opens management commands
+     /status /usage: all jobs · /info: selected session · /logs [all]
+     /open or list Enter: official Codex in a new terminal · /chats: saved chats
+     /help · /quit keeps running work. Native chat commands live in that terminal.`)
 }
 func doctor(ctx context.Context, c config.Config, args []string) error {
 	result := map[string]any{"version": config.Version, "config": c.Path, "state_dir": c.StateDir(), "manager_account": c.Manager.Account, "manager_selected": c.Manager.Account != "", "checks": map[string]string{}}

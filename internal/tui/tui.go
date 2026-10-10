@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +22,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"github.com/codeasy-digix/codexm/internal/supervisor"
+	"github.com/codeasy-digix/codexm/internal/terminal"
 )
 
 type readyMsg struct {
@@ -39,10 +40,9 @@ type replyMsg struct {
 	Epoch   uint64
 }
 type tickMsg time.Time
-type exitNativeMsg struct{ Error error }
-type copyMsg struct {
-	Text  string
-	Error error
+type openMsg struct {
+	Launch terminal.Launch
+	Error  error
 }
 
 type Model struct {
@@ -72,6 +72,7 @@ type Model struct {
 	Ready            bool
 	DetailText       string
 	ReadCursor       string
+	WantOpen         bool
 	WantRead         bool
 	LogsOpen         bool
 	LogsJob          string
@@ -79,19 +80,18 @@ type Model struct {
 	Usage            display.UsageReport
 	PaletteIndex     int
 	PaletteDismissed bool
-	NativeCommand    string
 	ViewEpoch        uint64
 	AutoFollow       bool
 }
 
 func New(c config.Config, self string) Model {
 	in := textarea.New()
-	in.Placeholder = "추가 지시 입력 · / 명령 목록"
+	in.Placeholder = "작업 검색 · / 관리 명령 목록"
 	in.CharLimit = 65536
 	in.SetHeight(3)
 	in.ShowLineNumbers = false
 	in.Focus()
-	m := Model{Config: c, Self: self, ClientID: jobs.ID(), Input: in, Detail: viewport.New(), Width: 100, Height: 30, Focus: "input", Screen: "agents", Target: "job", AutoFollow: true, Notice: "감시 프로그램 연결 중…"}
+	m := Model{Config: c, Self: self, ClientID: jobs.ID(), Input: in, Detail: viewport.New(), Width: 100, Height: 30, Focus: "input", Screen: "agents", Target: "search", AutoFollow: true, Notice: "감시 프로그램 연결 중…"}
 	if c.Manager.Account == "" {
 		m.Screen = "setup"
 		m.Focus = "list"
@@ -266,7 +266,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case replyMsg:
 		switch v.Command {
-		case "logs", "usage", "read", "events", "settings", "threads", "accounts", "attach":
+		case "logs", "usage", "read", "events", "settings", "threads", "accounts":
 			if v.Epoch != m.ViewEpoch {
 				return m, nil
 			}
@@ -274,6 +274,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Loading = false
 		if v.Error != nil {
 			m.Notice = v.Error.Error()
+			if v.Command == "new" {
+				m.WizardIndex = 0
+				m.focusInput(m.New.Cwd)
+			}
 			return m, nil
 		}
 		m.Notice = v.Command + " 처리됨"
@@ -287,6 +291,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Input.Focus()
 				m.DetailText = ""
 				m.Panel = ""
+				if m.WantOpen && j.Kind != "group" {
+					m.WantOpen = false
+					return m, tea.Batch(m.poll(), m.openID(j.ID))
+				}
 				if m.WantRead {
 					m.WantRead = false
 					return m, tea.Batch(m.poll(), m.request("read", supervisor.JobArgs{ID: j.ID}))
@@ -336,7 +344,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.LogsJob != "" {
 				scope = "선택한 작업 " + m.LogsJob
 			}
-			m.DetailText = "작업로그 · " + scope + "\n전체: /codexm_logs all · 선택 작업: /codexm_logs\n\n" + activity.Format(report)
+			m.DetailText = "작업로그 · " + scope + "\n전체: /logs all · 선택 작업: /logs\n\n" + activity.Format(report)
 			m.Panel = "logs"
 			m.Screen = "agents"
 		case "usage":
@@ -368,15 +376,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.DetailText = display.Settings(c)
 			m.Panel = "settings"
 			m.Screen = "agents"
-		case "attach":
-			var a struct {
-				Binary   string `json:"binary"`
-				Socket   string `json:"socket"`
-				ThreadID string `json:"thread_id"`
-			}
-			_ = json.Unmarshal(v.Data, &a)
-			cmd := exec.Command(a.Binary, "-c", "check_for_update_on_startup=false", "--remote", "unix://"+a.Socket, "resume", a.ThreadID)
-			return m, tea.ExecProcess(cmd, func(e error) tea.Msg { return exitNativeMsg{e} })
 		case "shutdown":
 			m.Notice = "작업과 감시 프로그램의 종료를 요청했습니다."
 			return m, tea.Quit
@@ -387,20 +386,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Status.ManagerAccount = a
 		}
 		return m, m.poll()
-	case exitNativeMsg:
+	case openMsg:
 		if v.Error != nil {
 			m.Notice = v.Error.Error()
 		} else {
-			m.Notice = "Codex 화면 접속을 종료했습니다. 감시는 계속됩니다."
+			m.Notice = v.Launch.String()
 		}
 		return m, m.poll()
-	case copyMsg:
-		if v.Error != nil {
-			m.Notice = v.Error.Error()
-			return m, nil
-		}
-		m.Notice = "최근 완료 응답을 클립보드에 복사했습니다."
-		return m, tea.SetClipboard(v.Text)
 	case tea.WindowSizeMsg:
 		m.Width = max(20, v.Width)
 		m.Height = max(10, v.Height)
@@ -411,9 +403,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := v.String()
 		if key == "ctrl+c" {
 			return m, tea.Quit
-		}
-		if key == "ctrl+o" && m.Screen != "setup" {
-			return m, m.copyOutput()
 		}
 		if m.Screen == "setup" {
 			switch key {
@@ -450,6 +439,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Input.Focus()
 			m.PaletteDismissed = true
 			return m, nil
+		}
+		if m.Screen == "import-account" {
+			if key == "enter" && len(m.Threads) > 0 {
+				account := strings.TrimSpace(m.Input.Value())
+				m.Input.Reset()
+				m.WantOpen = true
+				return m, m.request("resume", supervisor.JobArgs{ThreadID: m.Threads[m.ThreadSelected].ID, Account: account})
+			}
+			m.Input, cmd = m.Input.Update(msg)
+			return m, cmd
 		}
 		if m.Screen == "new" {
 			if key == "enter" {
@@ -494,12 +493,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if key == "enter" || key == "ctrl+enter" {
 				text := m.Input.Value()
-				if m.Panel == "native" && text == "" {
-					j, ok := m.selected()
-					if ok {
-						return m, m.request("attach", supervisor.JobArgs{ID: j.ID})
-					}
-				}
 				m.Input.Reset()
 				return m, m.submit(text)
 			}
@@ -533,7 +526,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ThreadSelected = min(len(m.Threads)-1, m.ThreadSelected+1)
 			case "enter":
 				if len(m.Threads) > 0 {
-					return m, m.request("resume", supervisor.JobArgs{ThreadID: m.Threads[m.ThreadSelected].ID})
+					thread := m.Threads[m.ThreadSelected].ID
+					for _, j := range m.Status.Jobs {
+						if j.ThreadID == thread {
+							m.SelectedID = j.ID
+							m.Screen = "agents"
+							m.returnInput()
+							return m, m.openID(j.ID)
+						}
+					}
+					m.Screen = "import-account"
+					m.focusInput(m.Config.WorkerAccounts.Priority[0])
+					m.Notice = "가져올 대화의 작업 계정 · Enter로 새 터미널 열기"
+					return m, nil
 				}
 			case "v":
 				if len(m.Threads) > 0 {
@@ -541,7 +546,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.request("resume", supervisor.JobArgs{ThreadID: m.Threads[m.ThreadSelected].ID})
 				}
 			case "/":
-				m.focusInput("/resume ")
+				m.focusInput("/chats ")
 			case "n":
 				return m, m.request("threads", supervisor.JobArgs{Cursor: m.Cursor})
 			}
@@ -574,9 +579,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.returnInput()
 		case "shift+tab":
 			m.Focus = "detail"
-		case "enter":
-			m.Focus = "input"
-			m.Input.Focus()
+		case "enter", "a":
+			if j, ok := m.selected(); ok {
+				return m, m.openID(j.ID)
+			}
 		case "v":
 			if j, ok := m.selected(); ok && j.ThreadID != "" {
 				m.Focus = "detail"
@@ -603,14 +609,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Target = "manager"
 			m.focusInput("")
 			m.Notice = "관리자에게 지시합니다. 모델 호출이 발생합니다."
-		case "p", "s", "c", "a":
+		case "p", "s", "c":
 			j, ok := m.selected()
 			if ok {
-				command := map[string]string{"p": "pause", "s": "resume-job", "c": "complete", "a": "attach"}[key]
+				command := map[string]string{"p": "pause", "s": "resume-job", "c": "complete"}[key]
 				return m, m.request(command, supervisor.JobArgs{ID: j.ID})
 			}
 		case "f":
-			m.focusInput("/codexm_filter ")
+			m.focusInput("/filter ")
 		}
 	default:
 		if m.Focus == "input" || m.Screen == "new" {
@@ -627,57 +633,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 func (m *Model) beginNew() {
 	m.Screen = "new"
-	m.Target = "job"
-	m.Wizard = []string{"cwd", "kind", "account", "title", "goal", "prompt"}
+	m.Target = "search"
+	m.Wizard = []string{"cwd", "account", "title"}
 	m.WizardIndex = 0
-	m.New = supervisor.NewArgs{}
+	m.New = supervisor.NewArgs{Kind: "chat"}
 	cwd, _ := os.Getwd()
 	m.focusInput(cwd)
-	m.Notice = "새 작업 · 작업 폴더 (Enter 다음, Esc 취소)"
+	m.Notice = "새 채팅 · 작업 폴더 (Enter 다음, Esc 취소)"
 }
 func (m *Model) wizardNext() tea.Cmd {
 	value := strings.TrimSpace(m.Input.Value())
-	field := m.Wizard[m.WizardIndex]
-	switch field {
+	switch m.Wizard[m.WizardIndex] {
 	case "cwd":
-		m.New.Cwd = value
-	case "kind":
-		if value == "" {
-			value = "chat"
-		}
-		if !jobs.ValidKind(value) {
-			m.Notice = "종류: chat, task, goal, group"
+		if info, e := os.Stat(config.Expand(value)); e != nil || !info.IsDir() {
+			m.Notice = "사용할 작업 폴더를 입력하세요."
 			return nil
 		}
-		m.New.Kind = value
+		m.New.Cwd = value
 	case "account":
+		if !slices.Contains(m.Config.WorkerAccounts.Priority, value) {
+			m.Notice = "작업 계정: " + strings.Join(m.Config.WorkerAccounts.Priority, ", ")
+			return nil
+		}
 		m.New.Account = value
 	case "title":
 		m.New.Title = value
-	case "goal":
-		m.New.Goal = value
-	case "prompt":
-		m.New.Prompt = m.Input.Value()
 	}
 	m.WizardIndex++
-	if m.WizardIndex == 4 && m.New.Kind != "goal" {
-		m.WizardIndex++
-	}
-	if m.WizardIndex == 5 && m.New.Kind == "group" {
-		m.WizardIndex++
-	}
 	if m.WizardIndex >= len(m.Wizard) {
 		m.Loading = true
-		m.Notice = "작업 등록 중…"
+		m.WantOpen = true
+		m.Input.Reset()
+		m.Notice = "새 채팅 등록 중… 첫 지시는 공식 Codex 화면에서 입력하세요."
 		return m.request("new", m.New)
 	}
 	next := m.Wizard[m.WizardIndex]
-	defaults := map[string]string{"kind": "chat", "account": m.Config.WorkerAccounts.Priority[0], "title": filepath.Base(m.New.Cwd)}
-	labels := map[string]string{"kind": "종류: chat / task / goal / group", "account": "최초 작업 계정", "title": "작업 제목", "goal": "목표", "prompt": "첫 지시 (여러 줄: Alt+Enter)"}
+	defaults := map[string]string{"account": m.Config.WorkerAccounts.Priority[0], "title": filepath.Base(m.New.Cwd)}
+	labels := map[string]string{"account": "최초 작업 계정", "title": "채팅 제목"}
 	m.Input.SetValue(defaults[next])
-	m.Notice = "새 작업 · " + labels[next]
+	m.Notice = "새 채팅 · " + labels[next]
 	return nil
 }
+
+func (m Model) openID(id string) tea.Cmd {
+	c, self := m.Config, m.Self
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		opened, e := terminal.Open(ctx, c, self, id)
+		return openMsg{opened, e}
+	}
+}
+
 func (m *Model) submit(text string) tea.Cmd {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -686,8 +693,8 @@ func (m *Model) submit(text string) tea.Cmd {
 	if strings.HasPrefix(text, "/") {
 		return m.slash(text)
 	}
-	j, ok := m.selected()
 	if m.Target == "manager" {
+		j, _ := m.selected()
 		m.Panel = ""
 		m.DetailText = ""
 		m.LogsOpen = false
@@ -695,23 +702,15 @@ func (m *Model) submit(text string) tea.Cmd {
 		m.Notice = "관리 지시 등록됨 · 모델 판단 대기"
 		return m.request("manager", supervisor.JobArgs{ID: j.ID, Text: text})
 	}
-	if !ok {
-		m.Notice = "입력을 보낼 작업을 선택하세요."
-		m.Input.SetValue(text)
-		return nil
-	}
-	if !j.Managed {
-		m.Notice = "열람 중인 대화입니다. /codexm_manage로 등록한 뒤 추가 지시를 보내세요."
-		m.Input.SetValue(text)
-		return nil
-	}
+	m.Filter = text
+	m.Selected = 0
+	m.SelectedID = ""
 	m.Panel = ""
 	m.DetailText = ""
 	m.LogsOpen = false
 	m.ViewEpoch++
-	m.AutoFollow = true
-	m.Notice = "선택한 작업에 지시를 큐로 보냈습니다."
-	return m.request("send", supervisor.JobArgs{ID: j.ID, Text: text})
+	m.Notice = "작업 검색: " + text + " · /filter 로 검색 해제 · 대화는 /open"
+	return m.poll()
 }
 func (m *Model) slash(text string) tea.Cmd {
 	parts := strings.SplitN(strings.TrimSpace(text), " ", 2)
@@ -719,9 +718,6 @@ func (m *Model) slash(text string) tea.Cmd {
 	arg := ""
 	if len(parts) > 1 {
 		arg = strings.TrimSpace(parts[1])
-	}
-	if replacement, ok := managerAliases[command]; ok {
-		command = replacement
 	}
 	j, _ := m.selected()
 	m.ViewEpoch++
@@ -731,68 +727,55 @@ func (m *Model) slash(text string) tea.Cmd {
 	m.Screen = "agents"
 	m.PaletteDismissed = true
 	m.Detail.GotoTop()
-	for _, c := range slashCommands {
-		if c.Name == command && c.Native {
-			m.nativeGuide("/"+command, arg)
-			return nil
-		}
-	}
 	switch command {
 	case "quit", "exit":
 		return tea.Quit
-	case "codexm_agents":
-		m.Screen = "agents"
+	case "agents":
+		m.Target = "search"
 		m.Focus = "list"
 		m.Input.Blur()
 	case "new":
 		m.beginNew()
-	case "resume":
+	case "chats":
 		m.Loading = true
 		return m.request("threads", supervisor.JobArgs{Search: arg})
 	case "status":
-		if j.ID == "" {
-			m.Notice = "작업을 선택하세요."
-			return nil
-		}
-		m.Panel = "status"
-		return m.poll()
-	case "usage":
-		if j.ID == "" {
-			m.Notice = "작업을 선택하세요."
-			return nil
-		}
-		m.Panel = "account-usage"
-		return m.poll()
-	case "codexm_status":
 		m.Panel = "manager-status"
 		return m.poll()
-	case "copy":
-		return m.copyOutput()
-	case "codexm_manager":
+	case "info":
+		m.Panel = "status"
+		return m.poll()
+	case "open", "attach":
+		if j.ID == "" {
+			m.Notice = "작업을 선택하세요."
+			return nil
+		}
+		m.Notice = "새 터미널에 공식 Codex 화면 연결 중…"
+		return m.openID(j.ID)
+	case "manager":
 		m.Target = "manager"
-		m.Notice = "입력 대상: 관리자 · 모델 호출"
+		m.Notice = "입력 대상: 관리자 · 모델 호출 · /filter 로 검색 입력 복귀"
 		if arg != "" {
 			return m.request("manager", supervisor.JobArgs{ID: j.ID, Text: arg})
 		}
-	case "codexm_job":
-		m.Target = "job"
-		m.Notice = "입력 대상: 선택한 작업"
-	case "codexm_accounts":
+	case "accounts":
 		m.Notice = "계정 한도 조회 중… (모델 호출 없음)"
 		return m.request("accounts", nil)
-	case "codexm_account":
+	case "manager-account":
 		if arg == "" {
-			return m.request("accounts", nil)
+			m.Notice = "저장된 관리자 계정: " + m.Config.Manager.Account
+			m.Panel = "manager-status"
+			return nil
 		}
 		return m.request("set-manager", supervisor.JobArgs{Account: arg})
-	case "codexm_settings":
+	case "settings":
 		return m.request("settings", nil)
-	case "codexm_usage":
+	case "usage":
 		m.Panel = "usage"
 		return tea.Batch(m.poll(), m.request("usage", nil))
-	case "codexm_logs":
+	case "logs":
 		if arg != "" && arg != "all" {
-			m.Notice = "/codexm_logs 또는 /codexm_logs all"
+			m.Notice = "/logs 또는 /logs all"
 			return nil
 		}
 		m.LogsJob = ""
@@ -800,150 +783,50 @@ func (m *Model) slash(text string) tea.Cmd {
 		if arg != "all" {
 			if j.ID == "" {
 				m.LogsOpen = false
-				m.Notice = "작업을 선택하거나 /codexm_logs all을 사용하세요."
+				m.Notice = "작업을 선택하거나 /logs all을 사용하세요."
 				return nil
 			}
 			m.LogsJob = j.ID
 		}
 		m.Panel = "logs"
 		return m.request("logs", supervisor.JobArgs{ID: m.LogsJob})
-	case "codexm_older":
+	case "older":
 		if j.ID != "" && m.ReadCursor != "" {
 			return m.request("read", supervisor.JobArgs{ID: j.ID, Cursor: m.ReadCursor})
 		}
 		m.Notice = "이전 대화 페이지가 없습니다."
-	case "codexm_pause", "codexm_resume", "codexm_manage", "codexm_stop", "codexm_complete", "codexm_events", "codexm_attach", "codexm_read":
+	case "pause", "resume", "resume-job", "manage", "stop", "complete", "events", "read":
 		if j.ID == "" {
 			m.Notice = "작업을 선택하세요."
 			return nil
 		}
-		api := strings.TrimPrefix(command, "codexm_")
+		api := command
 		if api == "resume" {
 			api = "resume-job"
 		}
 		return m.request(api, supervisor.JobArgs{ID: j.ID})
-	case "codexm_steer":
-		return m.request("send", supervisor.JobArgs{ID: j.ID, Text: arg, Steer: true})
-	case "goal":
-		if j.ID == "" {
-			m.Notice = "작업을 선택하세요."
-			return nil
-		}
-		if arg == "" {
-			m.DetailText = display.Goal(j.Goal)
-			return nil
-		}
-		if first := strings.Fields(arg)[0]; first == "pause" || first == "resume" || first == "clear" || first == "status" {
-			m.nativeGuide("/goal", arg)
-			return nil
-		}
-		return m.request("goal", supervisor.JobArgs{ID: j.ID, Text: arg})
-	case "codexm_filter":
+	case "filter":
+		m.Target = "search"
 		m.Filter = arg
 		m.Selected = 0
 		m.SelectedID = ""
-		m.Focus = "list"
-		m.Input.Blur()
-	case "codexm_state":
+		m.returnInput()
+		return m.poll()
+	case "state":
 		m.StateFilter = arg
 		m.Selected = 0
 		m.SelectedID = ""
-		m.Focus = "list"
-		m.Input.Blur()
-	case "codexm_answer":
-		if len(j.PendingRequests) == 0 {
-			m.Notice = "대기 중인 입력 요청이 없습니다."
-			return nil
-		}
-		req := j.PendingRequests[0]
-		result, e := answer(req, arg)
-		if e != nil {
-			m.Notice = e.Error()
-			return nil
-		}
-		return m.request("reply", supervisor.JobArgs{ID: j.ID, RequestID: req.ID, Result: result})
-	case "codexm_shutdown":
+		return m.poll()
+	case "shutdown":
 		return m.request("shutdown", nil)
 	case "help":
 		m.DetailText = commandHelp()
 	default:
-		m.Notice = "지원하지 않는 명령입니다. /help"
+		m.Notice = "codexm 관리 명령: /help · Codex 대화·명령: /open"
 	}
 	return nil
 }
 
-func (m *Model) nativeGuide(command, arg string) {
-	m.NativeCommand = command
-	if arg != "" {
-		m.NativeCommand += " " + arg
-	}
-	m.Panel = "native"
-	m.DetailText = "공식 Codex 명령: " + m.NativeCommand + "\n\n이 기능은 선택한 세션의 공식 Codex 화면에서 제공합니다.\nEnter로 공식 화면을 연 뒤 위 명령을 입력하세요. /quit로 관리 화면에 돌아옵니다.\n슬래시 명령을 모델에게 일반 지시로 보내지 않습니다.\n"
-	if j, ok := m.selected(); !ok || j.Socket == "" {
-		m.DetailText += "\n현재 실행 환경이 없습니다. 관리 목록에서는 /status와 /usage로 조회할 수 있습니다.\n작업을 실제로 이어갈 때 /codexm_resume 또는 추가 지시를 사용하세요.\n"
-	}
-}
-
-func (m Model) copyOutput() tea.Cmd {
-	j, ok := m.selected()
-	if !ok || j.ThreadID == "" {
-		return func() tea.Msg { return copyMsg{Error: fmt.Errorf("대화가 있는 작업을 선택하세요.")} }
-	}
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		var p struct {
-			Thread cr.Thread `json:"thread"`
-		}
-		if e := supervisor.Request(ctx, m.Config, "read", supervisor.JobArgs{ID: j.ID}, &p); e != nil {
-			return copyMsg{Error: e}
-		}
-		if text := completedOutput(p.Thread); text != "" {
-			return copyMsg{Text: text}
-		}
-		return copyMsg{Error: fmt.Errorf("최근 대화에 완료된 응답이 없습니다.")}
-	}
-}
-func completedOutput(thread cr.Thread) string {
-	for i := len(thread.Turns) - 1; i >= 0; i-- {
-		t := thread.Turns[i]
-		if t.Status != "completed" {
-			continue
-		}
-		for k := len(t.Items) - 1; k >= 0; k-- {
-			if item := t.Items[k]; item.Type == "agentMessage" && item.Text != "" {
-				return item.Text
-			}
-		}
-	}
-	return ""
-}
-
-func answer(req jobs.Request, text string) (json.RawMessage, error) {
-	if json.Valid([]byte(text)) {
-		return json.RawMessage(text), nil
-	}
-	switch req.Method {
-	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-		if text != "accept" && text != "decline" && text != "cancel" && text != "acceptForSession" {
-			return nil, fmt.Errorf("/codexm_answer accept 또는 decline")
-		}
-		return json.Marshal(map[string]string{"decision": text})
-	case "item/tool/requestUserInput":
-		var p struct {
-			Questions []struct {
-				ID string `json:"id"`
-			} `json:"questions"`
-		}
-		_ = json.Unmarshal(req.Params, &p)
-		if len(p.Questions) != 1 {
-			return nil, fmt.Errorf("여러 질문은 JSON으로 답하세요: {\"answers\":{\"질문ID\":{\"answers\":[\"답변\"]}}}")
-		}
-		return json.Marshal(map[string]any{"answers": map[string]any{p.Questions[0].ID: map[string]any{"answers": []string{text}}}})
-	default:
-		return nil, fmt.Errorf("이 요청은 /codexm_answer JSON 또는 원래 Codex 화면에서 처리하세요")
-	}
-}
 func transcript(t cr.Thread) string {
 	var b strings.Builder
 	b.WriteString("대화 " + t.ID + "\n" + t.Cwd + "\n\n")
@@ -1002,10 +885,10 @@ func (m Model) View() tea.View {
 		}
 		b.WriteString(ansi.Truncate(accent.Render("codexm")+fmt.Sprintf("  관리자 %s  · %s  · 실행 %d/%d", m.Config.Manager.Account, m.Status.Health, running, m.Config.Execution.MaxParallelJobs), w, "…") + "\n")
 		b.WriteString(dim.Render(ansi.Truncate(plain(m.Notice), w, "…")) + "\n")
-		if m.Screen == "new" {
+		if m.Screen == "new" || m.Screen == "import-account" {
 			b.WriteString("\n" + m.Notice + "\n\n" + m.Input.View() + "\n\nEnter 다음 · Alt+Enter 줄바꿈 · Esc 취소\n")
 		} else if m.Screen == "resume" {
-			b.WriteString("기존 대화 · Enter 가져오기(열람) · v 읽기 · /resume 검색어 · n 다음 페이지\n")
+			b.WriteString("기존 대화 · Enter 새 터미널 열기 · v 미리보기 · /chats 검색어 · n 다음 페이지\n")
 			start := max(0, m.ThreadSelected-max(3, m.Height-10)+1)
 			for i := start; i < len(m.Threads) && i < start+max(3, m.Height-9); i++ {
 				t := m.Threads[i]
@@ -1025,7 +908,7 @@ func (m Model) View() tea.View {
 			js := m.filtered()
 			listHeight := m.listHeight()
 			start := max(0, m.Selected-listHeight+1)
-			b.WriteString(dim.Render(ansi.Truncate("작업 목록 · Tab 선택 · /codexm_filter 검색 · /codexm_state 상태", w, "…")) + "\n")
+			b.WriteString(dim.Render(ansi.Truncate("작업 목록 · Tab 선택 · Enter 새 터미널 · /filter 검색 · /state 상태", w, "…")) + "\n")
 			for i := start; i < len(js) && i < start+listHeight; i++ {
 				j := js[i]
 				prefix := "  "
@@ -1040,7 +923,10 @@ func (m Model) View() tea.View {
 				if !j.Managed {
 					mode = " [열람]"
 				}
-				line := fmt.Sprintf("%s%s%s  %s · %s%s", prefix, indent, j.Title, j.State, j.Account, mode)
+				if n := m.Status.Terminals[j.ID]; n > 0 {
+					mode += fmt.Sprintf(" [터미널 %d]", n)
+				}
+				line := fmt.Sprintf("%s%s%s  %s · %s%s", prefix, indent, j.Title, display.State(j.State), j.Account, mode)
 				if j.ID == m.SelectedID {
 					line = accent.Render(ansi.Truncate(plain(line), w, "…"))
 				}
@@ -1057,16 +943,13 @@ func (m Model) View() tea.View {
 			vp.SetHeight(height)
 			vp.SetContent(ansi.Wrap(plain(text), width, ""))
 			b.WriteString("\n" + vp.View() + "\n")
-			target := "선택한 작업"
-			if j, ok := m.selected(); ok {
-				target = j.Title
-			}
+			target := "작업 검색 (모델 호출 없음)"
 			if m.Target == "manager" {
 				target = "관리자 " + m.Config.Manager.Account + " (모델 호출)"
 			}
 			b.WriteString(m.paletteView())
 			b.WriteString(accent.Render(ansi.Truncate("입력 대상: "+plain(target), w, "…")) + "\n" + m.Input.View() + "\n")
-			b.WriteString(dim.Render(ansi.Truncate("/ 명령 목록 · Tab 영역 이동 · Enter 전송 · Alt+Enter 줄바꿈 · PgUp/PgDn 스크롤 · /quit", w, "…")))
+			b.WriteString(dim.Render(ansi.Truncate("/ 명령 목록 · Tab 영역 이동 · Enter 검색/실행 · Alt+Enter 줄바꿈 · PgUp/PgDn 스크롤 · /quit", w, "…")))
 		}
 	}
 	view := tea.NewView(b.String())
@@ -1081,14 +964,10 @@ func (m Model) content() string {
 		}
 	case "manager-status":
 		return display.Manager(m.Status, m.Config)
-	case "account-usage":
-		if j, ok := m.selected(); ok {
-			return "선택한 세션 계정의 사용량\n\n" + display.AccountFor(m.Status, j.Account, j.Model) + "\n계정 전체 한도입니다. 세션별 토큰: /status\n전체 계정·세션: /codexm_usage · 새로 조회: /codexm_accounts\n공식 Codex의 사용 이력·한도 관리: /codexm_attach 후 /usage\n"
-		}
 	case "usage":
 		return display.Usage(m.Usage, m.Status, m.Config)
 	case "accounts":
-		return display.Accounts(m.Status, m.Config) + "\n관리자 변경: /codexm_account NAME\n"
+		return display.Accounts(m.Status, m.Config) + "\n관리자 변경: /manager-account NAME\n"
 	}
 	if m.DetailText != "" {
 		return m.DetailText
@@ -1109,20 +988,14 @@ func (m Model) content() string {
 	if !ok {
 		return ""
 	}
-	text := fmt.Sprintf("%s · %s\n%s\n", j.Title, j.ID, j.Cwd)
-	if j.Goal != nil {
-		text += fmt.Sprintf("목표 %s · %s · %d tokens\n", j.Goal.Objective, j.Goal.Status, j.Goal.TokensUsed)
-	}
-	text += "\n최근 지시\n" + j.LastInput + "\n\n최근 응답\n" + j.LastOutput
+	text := display.Session(j, m.Status)
 	if j.LastError != "" {
-		text += "\n\n상태: " + j.LastError
+		text += "\n상태: " + j.LastError
 	}
-	for _, r := range j.PendingRequests {
-		text += "\n\n입력 대기 " + r.Method + "\n" + string(r.Params) + "\n/codexm_answer 응답 또는 JSON"
+	if len(j.PendingRequests) > 0 {
+		text += fmt.Sprintf("\n응답/승인 요청 %d개 · /open 으로 공식 화면에서 응답", len(j.PendingRequests))
 	}
-	if j.Session != "" {
-		text += "\n\ntmux attach -t " + j.Session
-	}
+
 	return text
 }
 func (m *Model) prepareDetail() {

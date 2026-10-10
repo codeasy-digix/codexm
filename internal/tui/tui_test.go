@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
-	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"strings"
 	"testing"
 )
@@ -27,9 +26,9 @@ func TestInputTargetAndKoreanMultilinePaste(t *testing.T) {
 	if m.Target != "manager" || !strings.Contains(m.View().Content, "관리자 account-backup (모델 호출)") {
 		t.Fatal("manager target hidden")
 	}
-	m.slash("/job")
-	if m.Target != "job" {
-		t.Fatal("job target was not restored")
+	m.slash("/filter")
+	if m.Target != "search" {
+		t.Fatal("search target was not restored")
 	}
 	for _, size := range []tea.WindowSizeMsg{{Width: 40, Height: 20}, {Width: 120, Height: 40}} {
 		next, _ = m.Update(size)
@@ -83,41 +82,41 @@ func TestDefaultInputPaletteCompletionAndEscapePreserveDraft(t *testing.T) {
 	}
 	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m, cmd := press(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if cmd != nil || m.Input.Value() != "/usage" {
+	if cmd != nil || m.Input.Value() != "/status" {
 		t.Fatal("tab did not complete without executing")
 	}
-	m.focusInput("/codexm_l")
+	m.focusInput("/l")
 	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.Input.Value() != "/codexm_logs " {
+	if m.Input.Value() != "/logs " {
 		t.Fatal(m.Input.Value())
 	}
-	m.focusInput("/codexm_")
+	m.focusInput("/")
 	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	if m.Input.Value() != "/codexm_" || m.Focus != "input" || len(m.commandMatches()) != 0 {
+	if m.Input.Value() != "/" || m.Focus != "input" || len(m.commandMatches()) != 0 {
 		t.Fatal("escape erased draft or failed to dismiss")
 	}
 	m.focusInput("한글 초안\n추가 지시")
 	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyTab})
-	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.Focus != "input" || m.Input.Value() != "한글 초안\n추가 지시" {
 		t.Fatal("list navigation erased draft")
 	}
 }
 
-func TestNativeStopAndScopedLogsAndLateUsage(t *testing.T) {
+func TestManagementStopAndScopedLogsAndLateUsage(t *testing.T) {
 	c := config.Defaults()
 	c.Manager.Account = "account-backup"
 	m := New(c, "codexm")
 	m.Status.Jobs = []jobs.Job{{ID: "selected", ThreadID: "thread", Managed: true}}
 	m.SelectedID = "selected"
-	if cmd := m.slash("/stop"); cmd != nil || m.Panel != "native" || m.NativeCommand != "/stop" {
-		t.Fatal("native /stop was routed to manager mutation")
+	if cmd := m.slash("/stop"); cmd == nil || m.Panel != "" {
+		t.Fatal("manager /stop did not request a job stop")
 	}
-	if cmd := m.slash("/codexm_logs"); cmd == nil || m.LogsJob != "selected" {
+	if cmd := m.slash("/logs"); cmd == nil || m.LogsJob != "selected" {
 		t.Fatal("selected log scope missing")
 	}
 	epoch := m.ViewEpoch
-	if cmd := m.slash("/codexm_logs all"); cmd == nil || m.LogsJob != "" {
+	if cmd := m.slash("/logs all"); cmd == nil || m.LogsJob != "" {
 		t.Fatal("all log scope missing")
 	}
 	raw, _ := json.Marshal(jobs.WorkLog{Note: "stale selected logs"})
@@ -126,17 +125,16 @@ func TestNativeStopAndScopedLogsAndLateUsage(t *testing.T) {
 	if strings.Contains(m.DetailText, "stale selected") {
 		t.Fatal("old scope response replaced all logs")
 	}
-	m.slash("/codexm_usage")
+	m.slash("/usage")
 	epoch = m.ViewEpoch
 	m.slash("/status")
 	next, _ = m.Update(replyMsg{Command: "usage", Data: json.RawMessage(`{"manager":[],"workers":[]}`), Epoch: epoch})
 	m = next.(Model)
-	if m.Panel != "status" || m.Focus != "input" {
+	if m.Panel != "manager-status" || m.Focus != "input" {
 		t.Fatal("late usage stole panel or focus")
 	}
-	before := m.Status.Jobs[0].Goal
-	if cmd := m.slash("/goal"); cmd != nil || m.Status.Jobs[0].Goal != before {
-		t.Fatal("goal query mutated goal")
+	if cmd := m.slash("/model"); cmd != nil || !strings.Contains(m.Notice, "/open") {
+		t.Fatal("native command was cloned or sent to a model")
 	}
 }
 
@@ -159,7 +157,7 @@ func TestPaletteFitsNarrowTerminalAndReportsKeepInput(t *testing.T) {
 		}
 	}
 	m.Input.Reset()
-	m.slash("/codexm_settings")
+	m.slash("/settings")
 	raw, _ := json.Marshal(c)
 	next, _ := m.Update(replyMsg{Command: "settings", Data: raw, Epoch: m.ViewEpoch})
 	m = next.(Model)
@@ -168,12 +166,15 @@ func TestPaletteFitsNarrowTerminalAndReportsKeepInput(t *testing.T) {
 	}
 }
 
-func TestInputScrollingSurvivesPollAndCopySkipsRunningOutput(t *testing.T) {
+func TestInputScrollingSurvivesPoll(t *testing.T) {
 	c := config.Defaults()
 	c.Manager.Account = "account-backup"
 	m := New(c, "codexm")
 	m.SelectedID = "job"
-	m.Status.Jobs = []jobs.Job{{ID: "job", LastOutput: strings.Repeat("scroll line\n", 100)}}
+	m.Status.Jobs = []jobs.Job{{ID: "job"}}
+	m.DetailText = strings.Repeat("scroll line\n", 100)
+	m.prepareDetail()
+	m.Detail.GotoBottom()
 	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
 	first := m.Detail.YOffset()
 	m, _ = press(m, tea.KeyPressMsg{Code: tea.KeyPgUp})
@@ -183,11 +184,32 @@ func TestInputScrollingSurvivesPollAndCopySkipsRunningOutput(t *testing.T) {
 	if second >= first || m.Detail.YOffset() != second || m.Focus != "input" {
 		t.Fatal("refresh reset scroll while composing")
 	}
-	thread := cr.Thread{Turns: []cr.Turn{
-		{Status: "completed", Items: []cr.Item{{Type: "agentMessage", Text: "completed answer"}}},
-		{Status: "inProgress", Items: []cr.Item{{Type: "agentMessage", Text: "unfinished output"}}},
-	}}
-	if got := completedOutput(thread); got != "completed answer" {
-		t.Fatal(got)
+
+}
+
+func TestPlainInputSearchesInsteadOfSubmittingWork(t *testing.T) {
+	c := config.Defaults()
+	c.Manager.Account = "account-backup"
+	m := New(c, "codexm")
+	m.SelectedID = "job"
+	m.Status.Jobs = []jobs.Job{{ID: "job", LastInput: "private instruction", Goal: &jobs.Goal{Objective: "private goal"}}}
+	m.submit("찾을 작업")
+	if m.Filter != "찾을 작업" || m.Target != "search" || !strings.Contains(m.Notice, "작업 검색") {
+		t.Fatal("plain input still sends a worker instruction")
+	}
+	m.Filter = ""
+	m.SelectedID = "job"
+	if strings.Contains(m.content(), "private") {
+		t.Fatal("manager overview still renders chat content")
+	}
+	m.Focus = "list"
+	m, cmd := press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil || m.Focus != "list" {
+		t.Fatal("list Enter did not launch a separate terminal")
+	}
+	for _, c := range slashCommands {
+		if strings.HasPrefix(c.Name, "codexm_") || c.Name == "model" || c.Name == "goal" || c.Name == "permissions" {
+			t.Fatal("native command emulation remains", c.Name)
+		}
 	}
 }

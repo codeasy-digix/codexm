@@ -73,11 +73,7 @@ func (s *Server) reconcile() {
 			}
 		}
 		s.mu.Lock()
-		for id, at := range s.viewers {
-			if time.Since(at) > 15*time.Second {
-				delete(s.viewers, id)
-			}
-		}
+		s.liveViewersLocked()
 		viewers := len(s.viewers)
 		s.mu.Unlock()
 		if !work && viewers == 0 {
@@ -220,6 +216,9 @@ func (s *Server) reconcileJob(j jobs.Job) {
 		}
 	}
 	if j.Paused || jobs.Terminal(j.State) {
+		if c != nil && j.TurnID == "" && !s.hasJobViewer(j.ID) {
+			s.enqueueOnce(j, "cleanup", nil)
+		}
 		return
 	}
 	if j.Session == "" && (j.State == "queued" || j.State == "starting" || j.State == "switching" || j.State == "unknown") {
@@ -295,7 +294,7 @@ func (s *Server) reconcileActions() {
 			}
 			continue
 		}
-		if a.Kind == "start" && j.ThreadID != "" && s.client(j.ID) != nil {
+		if (a.Kind == "start" || a.Kind == "load_view") && j.ThreadID != "" && s.client(j.ID) != nil {
 			s.finishAction(a, "done", nil)
 			continue
 		}

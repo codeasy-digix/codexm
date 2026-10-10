@@ -14,7 +14,7 @@ import (
 func fakeEngine(t *testing.T, dir, version string, compatible bool) string {
 	t.Helper()
 	os.MkdirAll(dir, 0700)
-	methods := []string{"initialize", "thread/start", "thread/resume", "thread/read", "thread/list", "thread/turns/list", "thread/loaded/list", "turn/start", "turn/steer", "turn/interrupt", "thread/goal/get", "thread/goal/set", "account/read", "account/rateLimits/read"}
+	methods := []string{"initialize", "thread/start", "thread/name/set", "thread/resume", "thread/read", "thread/list", "thread/turns/list", "thread/loaded/list", "turn/start", "turn/steer", "turn/interrupt", "thread/goal/get", "thread/goal/set", "account/read", "account/rateLimits/read"}
 	if !compatible {
 		methods = methods[:3]
 	}

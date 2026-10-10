@@ -219,7 +219,7 @@ func CheckProtocol(ctx context.Context, binary string) error {
 			methods[m] = true
 		}
 	}
-	for _, m := range []string{"initialize", "thread/start", "thread/resume", "thread/read", "thread/list", "thread/turns/list", "thread/loaded/list", "turn/start", "turn/steer", "turn/interrupt", "thread/goal/get", "thread/goal/set", "account/read", "account/rateLimits/read"} {
+	for _, m := range []string{"initialize", "thread/start", "thread/name/set", "thread/resume", "thread/read", "thread/list", "thread/turns/list", "thread/loaded/list", "turn/start", "turn/steer", "turn/interrupt", "thread/goal/get", "thread/goal/set", "account/read", "account/rateLimits/read"} {
 		if !methods[m] {
 			return fmt.Errorf("engine lacks required protocol method %s; previous pin is retained", m)
 		}

@@ -50,3 +50,19 @@ func TestGoalCompletionAndHumanPause(t *testing.T) {
 		t.Fatal("human pause overridden")
 	}
 }
+
+func TestOfficialUIFollowupToCompletedGoalBecomesOrdinaryChat(t *testing.T) {
+	j := jobs.Job{Kind: "goal", RunID: "run", ThreadID: "t", State: "complete", Goal: &jobs.Goal{Status: "complete", TokensUsed: 1234}}
+	j, _ = event(j, "turn/started", `{"threadId":"t","turn":{"id":"new"}}`)
+	if j.Kind != "chat" || j.State != "running" || j.Paused || j.Goal.TokensUsed != 1234 {
+		t.Fatal("new official UI input was treated as goal continuation")
+	}
+	j, as := event(j, "thread/goal/updated", `{"threadId":"t","goal":{"status":"complete","tokensUsed":1234}}`)
+	if len(as) != 0 || j.State != "running" {
+		t.Fatal("old goal completion stopped the new input")
+	}
+	j, as = event(j, "turn/completed", `{"threadId":"t","turn":{"id":"new","status":"completed"}}`)
+	if j.State != "idle" || len(as) != 0 {
+		t.Fatal("normal followup was automatically continued")
+	}
+}

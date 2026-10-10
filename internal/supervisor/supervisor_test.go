@@ -45,7 +45,7 @@ func fixture(t *testing.T) *Server {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() { cancel(); st.Close() })
-	return &Server{Config: c, Store: st, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, dispatching: map[string]bool{}, viewers: map[string]time.Time{}, managerAccount: "account-backup", Reader: fakeReader{}, started: time.Now()}
+	return &Server{Config: c, Store: st, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, dispatching: map[string]bool{}, viewers: map[string]viewer{}, managerAccount: "account-backup", Reader: fakeReader{}, started: time.Now()}
 }
 
 func TestManageFinishedConversationDoesNotRestartOrCallModel(t *testing.T) {
@@ -222,12 +222,28 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	if e = s.ensureRuntime(ctx, j.ID, false); e != nil {
 		t.Fatal(e)
 	}
+	initialActions, _ := s.Store.Actions("pending")
+	for _, a := range initialActions {
+		if a.Kind == "start" {
+			s.finishAction(a, "done", nil)
+		}
+	}
 	j, _ = s.Store.Job(j.ID)
 	if j.ThreadID == "" || j.State != "idle" || !cr.HasSession(ctx, j.Session) || !cr.WriterBusy(j.Store, j.ThreadID) {
 		t.Fatal(j)
 	}
 	// Goal persistence without any model generation.
 	c := s.client(j.ID)
+	thread, e := c.Read(ctx, j.ThreadID, false)
+	if e != nil || thread.Name != "native isolated test" || thread.Path == "" {
+		t.Fatal("new empty chat was not named and persisted", e)
+	}
+	if _, e = os.Stat(thread.Path); e != nil {
+		t.Fatal("new empty chat has no resume file", e)
+	}
+	if e = c.Call(ctx, "thread/resume", map[string]any{"threadId": j.ThreadID, "path": thread.Path, "excludeTurns": true}, nil); e != nil {
+		t.Fatal("official TUI bootstrap cannot resume an empty chat", e)
+	}
 	if e = c.Call(ctx, "thread/goal/set", map[string]any{"threadId": j.ThreadID, "objective": "native test", "status": "paused", "origin": "user", "tokenBudget": 30000}, nil); e != nil {
 		t.Fatal(e)
 	}
@@ -263,5 +279,47 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	}
 	if log.Runs[1].EndedAt == nil || log.Runs[1].Account != "account-work" || log.Runs[0].Account != "account-secondary" {
 		t.Fatal("run boundary missing", log.Runs)
+	}
+	// Opening a finished goal must preserve native counters and keep its engine
+	// available for the UI without scheduling any additional model work.
+	c = s.client(j.ID)
+	if e = c.SetGoalStatus(ctx, j.ThreadID, "complete", "user"); e != nil {
+		t.Fatal(e)
+	}
+	g, e = c.Goal(ctx, j.ThreadID)
+	if e != nil || g.Status != "complete" {
+		t.Fatal("goal completion", e)
+	}
+	if e = s.park(ctx, j.ID, false); e != nil {
+		t.Fatal(e)
+	}
+	_ = s.update(j.ID, func(j *jobs.Job) { j.State = "complete"; j.Paused = false; j.Goal = g })
+	if _, e = s.Handle(ctx, Call{Command: "view", Args: mustJSON(JobArgs{ID: j.ID, ClientID: "native-view-test"})}); e != nil {
+		t.Fatal(e)
+	}
+	as, _ := s.Store.Actions("pending")
+	for _, a := range as {
+		if a.Kind == "load_view" {
+			s.execute(a)
+		}
+	}
+	loaded, _ = s.Store.Job(j.ID)
+	s.mu.Lock()
+	v := s.viewState(loaded)
+	s.mu.Unlock()
+	if !v.Ready || loaded.State != "complete" || loaded.Goal.TokensUsed != g.TokensUsed || loaded.Goal.TokenBudget == nil || *loaded.Goal.TokenBudget != 30000 {
+		t.Fatalf("view changed goal state or lost counters: ready=%v state=%s error=%s goal-status=%s used=%d expected=%d budget=%v", v.Ready, loaded.State, loaded.LastError, loaded.Goal.Status, loaded.Goal.TokensUsed, g.TokensUsed, loaded.Goal.TokenBudget)
+	}
+	as, _ = s.Store.Actions("pending")
+	for _, a := range as {
+		if a.Kind == "goal_continue" || a.Kind == "send_input" || a.Kind == "set_goal" {
+			t.Fatal("view queued model generation", a.Kind)
+		}
+		if a.Kind == "cleanup" {
+			s.execute(a)
+		}
+	}
+	if !cr.HasSession(ctx, loaded.Session) {
+		t.Fatal("completed goal lost its attached terminal runtime")
 	}
 }
