@@ -39,6 +39,7 @@ func TestNativeThreadAndGoalRoundTripWithoutModelCall(t *testing.T) {
 	dir := t.TempDir()
 	c := config.Defaults()
 	c.Path = filepath.Join(dir, "manager.toml")
+	c.Storage.StateDir = filepath.Join(dir, "state")
 	c.Runtime.SharedCodexHome = filepath.Join(dir, "codex")
 	c.Runtime.AccountsDir = filepath.Join(dir, "accounts")
 	os.MkdirAll(c.Runtime.SharedCodexHome, 0700)
@@ -62,6 +63,9 @@ func TestNativeThreadAndGoalRoundTripWithoutModelCall(t *testing.T) {
 	id := created.Thread.ID
 	if id == "" {
 		t.Fatal("thread ID missing")
+	}
+	if _, _, e = p.Recent(ctx, id, 1, ""); e != nil {
+		t.Fatal(e)
 	}
 	e = p.Call(ctx, "thread/goal/set", map[string]any{"threadId": id, "objective": "isolated smoke test", "status": "paused", "origin": "user"}, nil)
 	if e != nil {

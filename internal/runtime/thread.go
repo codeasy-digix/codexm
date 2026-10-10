@@ -3,7 +3,10 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/codeasy-digix/codexm/internal/jobs"
+	"slices"
+	"strings"
 )
 
 type Thread struct {
@@ -42,7 +45,7 @@ type ResumeResponse struct {
 	Thread          Thread          `json:"thread"`
 	Model           string          `json:"model"`
 	ReasoningEffort string          `json:"reasoningEffort"`
-	ApprovalPolicy  string          `json:"approvalPolicy"`
+	ApprovalPolicy  json.RawMessage `json:"approvalPolicy"`
 	Sandbox         json.RawMessage `json:"sandbox"`
 }
 
@@ -55,8 +58,33 @@ func (c *Client) Read(ctx context.Context, id string, turns bool) (Thread, error
 }
 func (c *Client) Resume(ctx context.Context, id string) (ResumeResponse, error) {
 	var r ResumeResponse
-	e := c.Call(ctx, "thread/resume", map[string]any{"threadId": id, "excludeTurns": false}, &r)
+	e := c.Call(ctx, "thread/resume", map[string]any{"threadId": id, "excludeTurns": true}, &r)
 	return r, e
+}
+func (c *Client) Recent(ctx context.Context, id string, limit int, cursor string) (Thread, string, error) {
+	t, e := c.Read(ctx, id, false)
+	if e != nil {
+		return t, "", e
+	}
+	var page struct {
+		Data       []Turn `json:"data"`
+		NextCursor string `json:"nextCursor"`
+	}
+	p := map[string]any{"threadId": id, "limit": limit, "itemsView": "full", "sortDirection": "desc"}
+	if cursor != "" {
+		p["cursor"] = cursor
+	}
+	if e = c.Call(ctx, "thread/turns/list", p, &page); e != nil {
+		var rpc *RPCError
+		if errors.As(e, &rpc) && rpc.Code == -32600 && strings.Contains(rpc.Message, "not materialized yet") {
+			t.Turns = []Turn{}
+			return t, "", nil
+		}
+		return t, "", e
+	}
+	slices.Reverse(page.Data)
+	t.Turns = page.Data
+	return t, page.NextCursor, nil
 }
 func (c *Client) Goal(ctx context.Context, id string) (*jobs.Goal, error) {
 	var r struct {
@@ -85,7 +113,8 @@ func TextInput(s string) []map[string]any {
 }
 func (c *Client) SendInput(ctx context.Context, id string, input jobs.Input, turnID string) (Turn, error) {
 	var r struct {
-		Turn Turn `json:"turn"`
+		Turn   Turn   `json:"turn"`
+		TurnID string `json:"turnId"`
 	}
 	method := "turn/start"
 	p := map[string]any{"threadId": id, "input": TextInput(input.Text)}
@@ -97,6 +126,9 @@ func (c *Client) SendInput(ctx context.Context, id string, input jobs.Input, tur
 		p["expectedTurnId"] = turnID
 	}
 	e := c.Call(ctx, method, p, &r)
+	if input.Steer {
+		r.Turn.ID = r.TurnID
+	}
 	return r.Turn, e
 }
 func (c *Client) Interrupt(ctx context.Context, id, turn string) error {

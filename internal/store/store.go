@@ -44,6 +44,18 @@ func Open(dir string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
+	var existing int
+	if e = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='schema_version'").Scan(&existing); e != nil {
+		db.Close()
+		return nil, e
+	}
+	if existing > 0 {
+		var version int
+		if e = db.QueryRow("SELECT version FROM schema_version").Scan(&version); e != nil || version != 1 {
+			db.Close()
+			return nil, fmt.Errorf("unsupported state schema %d; database left unchanged", version)
+		}
+	}
 	if _, e = db.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;" + schema); e != nil {
 		db.Close()
 		return nil, e
@@ -261,6 +273,14 @@ func (s *Store) DecisionCounts(incident string) (int, int, error) {
 	}
 	e = s.DB.QueryRow("SELECT count(*) FROM manager_decisions WHERE incident=?", incident).Scan(&n)
 	return hour, n, e
+}
+func (s *Store) UpdateDecision(id string, v any) error {
+	b, e := json.Marshal(v)
+	if e != nil {
+		return e
+	}
+	_, e = s.DB.Exec("UPDATE manager_decisions SET data=? WHERE id=?", string(b), id)
+	return e
 }
 func (s *Store) HasPending() bool {
 	var n int

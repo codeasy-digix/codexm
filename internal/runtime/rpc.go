@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,11 +38,14 @@ func (e *RPCError) Error() string {
 	return fmt.Sprintf("Codex RPC %d: %s", e.Code, SafeText(e.Message))
 }
 func SafeText(s string) string {
+	s = secretPattern.ReplaceAllString(s, "[redacted]")
 	if len(s) > 1200 {
 		s = s[:1200] + "…"
 	}
 	return s
 }
+
+var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+[^\s"']+|(?:sk-|sk-proj-)[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:access_token|refresh_token|id_token|api_key|authorization)["']?\s*[:=]\s*["']?[^\s,"'}]+)`)
 
 type Client struct {
 	Events         chan Message

@@ -38,6 +38,7 @@ type Snapshot struct {
 	CheckedAt     time.Time         `json:"checked_at"`
 	Error         string            `json:"error,omitempty"`
 	Authenticated bool              `json:"authenticated"`
+	WasExhausted  bool              `json:"was_exhausted"`
 }
 type Reader struct {
 	Resolver cr.Resolver

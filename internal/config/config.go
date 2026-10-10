@@ -63,6 +63,8 @@ type Config struct {
 		SharedCodexHome string `toml:"shared_codex_home"`
 		AccountsDir     string `toml:"accounts_dir,omitempty"`
 		Controller      string `toml:"controller,omitempty"`
+		CodexBinary     string `toml:"codex_binary,omitempty"`
+		EnginesDir      string `toml:"engines_dir"`
 	} `toml:"runtime"`
 	Storage struct {
 		StateDir string `toml:"state_dir"`
@@ -121,6 +123,7 @@ func Defaults() Config {
 	c.Runtime.SharedCodexHome = "~/.codex"
 	c.Runtime.AccountsDir = "~/.codex-accounts"
 	c.Runtime.Controller = "codex-accounts"
+	c.Runtime.EnginesDir = filepath.Join(xdg("XDG_DATA_HOME", ".local/share"), "codexm", "engines")
 	c.Storage.StateDir = filepath.Join(xdg("XDG_STATE_HOME", ".local/state"), "codexm")
 	return c
 }
@@ -176,6 +179,12 @@ func (c Config) Validate() error {
 	}
 	if c.Runtime.Transport != "unix" || c.Execution.WorkspaceWritePolicy != "exclusive" || !c.Execution.PreserveThreadSettingsOnAccountSwitch {
 		return errors.New("unsupported runtime or workspace policy")
+	}
+	if !filepath.IsAbs(Expand(c.Runtime.EnginesDir)) || (c.Runtime.CodexBinary != "" && !filepath.IsAbs(Expand(c.Runtime.CodexBinary))) {
+		return errors.New("engine paths must be absolute")
+	}
+	if c.Manager.Invocation != "on_demand" || c.Manager.AutomaticAccountFallback || c.Completion.ChatOnTurnEnd != "idle" || c.Completion.TaskWithoutCriteriaOnTurnEnd != "result_ready" || c.Completion.GoalCompletionSource != "codex_goal" || c.UI.QuitAction != "detach" {
+		return errors.New("unsupported manager, completion or quit policy")
 	}
 	if !Nickname.MatchString(c.Supervisor.TmuxSession) || !Nickname.MatchString(c.Supervisor.WorkerSessionPrefix) {
 		return errors.New("invalid tmux session name")

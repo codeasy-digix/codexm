@@ -57,6 +57,14 @@ func Reduce(j jobs.Job, ev jobs.Event, m cr.Message) (jobs.Job, []jobs.Action) {
 		j.TurnID = p.Turn.ID
 		j.State = "running"
 		j.LastError = ""
+		j.LastOutput = ""
+	case "thread/tokenUsage/updated":
+		var u struct {
+			TokenUsage json.RawMessage `json:"tokenUsage"`
+		}
+		if json.Unmarshal(m.Params, &u) == nil {
+			j.TokenUsage = u.TokenUsage
+		}
 	case "thread/status/changed":
 		if j.Paused || jobs.Terminal(j.State) {
 			break
@@ -103,12 +111,18 @@ func Reduce(j jobs.Job, ev jobs.Event, m cr.Message) (jobs.Job, []jobs.Action) {
 	case "thread/goal/updated":
 		j.Goal = p.Goal
 		if p.Goal != nil {
+			if p.Goal.Status == "active" {
+				j.Kind = "goal"
+			}
 			switch p.Goal.Status {
 			case "complete":
+				if j.Kind != "goal" {
+					break
+				}
 				j.State = "complete"
 				enqueue("cleanup", nil)
 			case "paused":
-				if !j.Paused {
+				if !j.Paused && j.State != "switching" {
 					j.State = "paused"
 					j.Paused = true
 				}
@@ -128,6 +142,9 @@ func Reduce(j jobs.Job, ev jobs.Event, m cr.Message) (jobs.Job, []jobs.Action) {
 			j.Kind = "task"
 		}
 	case "error":
+		if p.TurnID != "" && j.TurnID != "" && p.TurnID != j.TurnID {
+			break
+		}
 		j.LastError = cr.SafeText(p.Error.Message)
 		if p.WillRetry {
 			break
@@ -153,24 +170,46 @@ func Reduce(j jobs.Job, ev jobs.Event, m cr.Message) (jobs.Job, []jobs.Action) {
 			break
 		}
 		j.TurnID = ""
+		j.LastTurnID = p.Turn.ID
 		j.PendingRequests = nil
 		if j.Paused || jobs.Terminal(j.State) || j.State == "quota_wait" || j.State == "retry_wait" || j.State == "auth_required" || j.State == "budget_limited" {
 			break
 		}
 		if p.Turn.Error != nil {
 			j.LastError = cr.SafeText(p.Turn.Error.Message)
-			j.State = "error"
+			switch ErrorKind(p.Turn.Error.CodexErrorInfo) {
+			case "usageLimitExceeded":
+				j.State = "quota_wait"
+				enqueue("switch_account", nil)
+			case "rateLimitExceeded":
+				j.State = "retry_wait"
+				enqueue("retry", nil)
+			case "sessionBudgetExceeded":
+				j.State = "budget_limited"
+			case "unauthorized":
+				j.State = "auth_required"
+			default:
+				j.State = "error"
+				enqueue("manager_incident", map[string]string{"reason": j.LastError})
+			}
 			break
 		}
 		if p.Turn.Status == "interrupted" {
+			if j.State == "switching" {
+				break
+			}
 			j.State = "paused"
 			j.Paused = true
 			break
 		}
+		j.RetryCount = 0
 		if j.Kind == "chat" {
 			j.State = "idle"
 		} else if j.Kind == "goal" {
 			j.State = "goal_wait"
+			if j.Goal != nil && j.Goal.Status == "active" {
+				enqueue("goal_continue", nil)
+			}
 		} else {
 			j.State = "result_ready"
 			if len(j.CompletionCommand) > 0 {

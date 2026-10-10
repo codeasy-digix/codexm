@@ -22,12 +22,38 @@ type Resolver struct {
 }
 
 func Resolve(ctx context.Context, c config.Config) (Resolver, error) {
+	r, e := Locate(c)
+	if e != nil {
+		return r, e
+	}
+	if pinned, e := ReadEngine(c); e == nil {
+		r.Binary, r.Version = pinned.Binary, pinned.Version
+		return r, nil
+	} else if !os.IsNotExist(e) {
+		return r, e
+	}
+	return r.Refresh(ctx)
+}
+func Locate(c config.Config) (Resolver, error) {
 	r := Resolver{Config: c}
 	bin, e := exec.LookPath(c.Runtime.Controller)
 	if e != nil {
 		return r, fmt.Errorf("codex-accounts is required: %w", e)
 	}
 	r.Controller = bin
+	return r, nil
+}
+func (r Resolver) Refresh(ctx context.Context) (Resolver, error) {
+	c := r.Config
+	bin := r.Controller
+	if c.Runtime.CodexBinary != "" {
+		pinned, e := PinEngine(ctx, c, config.Expand(c.Runtime.CodexBinary))
+		if e != nil {
+			return r, e
+		}
+		r.Binary, r.Version = pinned.Binary, pinned.Version
+		return r, nil
+	}
 	cmd := exec.CommandContext(ctx, bin, "doctor", "--json")
 	cmd.Env = Env(c, "", "")
 	b, e := cmd.Output()
@@ -44,8 +70,14 @@ func Resolve(ctx context.Context, c config.Config) (Resolver, error) {
 	if d.Runtime == "" {
 		return r, fmt.Errorf("account controller returned no runtime")
 	}
-	r.Binary = d.Runtime
-	r.Version = d.CodexVersion
+	if c.Runtime.CodexBinary != "" {
+		d.Runtime = config.Expand(c.Runtime.CodexBinary)
+	}
+	pinned, e := PinEngine(ctx, c, d.Runtime)
+	if e != nil {
+		return r, e
+	}
+	r.Binary, r.Version = pinned.Binary, pinned.Version
 	return r, nil
 }
 func Env(c config.Config, account, pinned string) []string {
@@ -83,7 +115,7 @@ func (r Resolver) Probe(ctx context.Context, account string) (*Client, error) {
 	return StartStdio(ctx, r.Command(ctx, account, args...))
 }
 func (r Resolver) NativeTUI(socket, thread string) *exec.Cmd {
-	args := []string{"--remote", "unix://" + socket, "resume", thread}
+	args := []string{"-c", "check_for_update_on_startup=false", "--remote", "unix://" + socket, "resume", thread}
 	cmd := exec.Command(r.Binary, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -103,7 +135,8 @@ func Worker(spec WorkerSpec) error {
 	if !config.Nickname.MatchString(spec.Account) || !filepath.IsAbs(spec.Socket) {
 		return fmt.Errorf("invalid worker specification")
 	}
-	args := []string{spec.Controller, "__native", "app-server", "--listen", "unix://" + spec.Socket, "-c", `model_provider="openai"`}
+	shared, _ := json.Marshal(spec.SharedHome)
+	args := []string{spec.Controller, "__native", "--no-daemon", "-c", "sqlite_home=" + string(shared), "app-server", "--listen", "unix://" + spec.Socket, "-c", `model_provider="openai"`}
 	if e = os.Chdir(spec.Cwd); e != nil {
 		return e
 	}
@@ -124,7 +157,7 @@ func (r Resolver) LaunchWorker(ctx context.Context, self string, spec WorkerSpec
 	if e = config.AtomicWrite(p, b, 0600); e != nil {
 		return e
 	}
-	if e = os.MkdirAll(filepath.Dir(spec.Socket), 0700); e != nil {
+	if e = PrivateSocketDir(filepath.Dir(spec.Socket)); e != nil {
 		return e
 	}
 	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", spec.Session, "-c", spec.Cwd, ShellQuote(self)+" __worker "+ShellQuote(p))

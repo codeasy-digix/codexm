@@ -1,11 +1,40 @@
 package store
 
 import (
+	"bytes"
+	"database/sql"
 	"encoding/json"
 	"github.com/codeasy-digix/codexm/internal/jobs"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestFutureSchemaIsRejectedWithoutRewritingDatabase(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "state.sqlite")
+	db, e := sql.Open("sqlite", p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.Exec("CREATE TABLE schema_version(version INTEGER NOT NULL); INSERT INTO schema_version VALUES(99)"); e != nil {
+		t.Fatal(e)
+	}
+	db.Close()
+	before, e := os.ReadFile(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if s, e := Open(dir); e == nil {
+		s.Close()
+		t.Fatal("future schema opened")
+	}
+	after, e := os.ReadFile(p)
+	if e != nil || !bytes.Equal(before, after) {
+		t.Fatal("future database was modified", e)
+	}
+}
 
 func TestEventAndDispatchPersistTogetherAcrossRestart(t *testing.T) {
 	d := t.TempDir()
