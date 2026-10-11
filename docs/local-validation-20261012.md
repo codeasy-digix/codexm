@@ -26,3 +26,17 @@ macOS Terminal 앱의 화면 자동 확인은 도구 접근 제한으로 수행�
 
 이전 기능 보존 목록은 [이동 점검](migration.md), 게시하지 않은 패키지 준비는
 [배포 구조](distribution.md)를 따른다.
+
+## 최종 소스에서 추가 확인
+
+- 공식 worker/writer-lock/동일 대화 계정 교체·완료/중지 goal 열람은 0.162.0에서도 통과했다.
+- 별도의 공용 daemon 0.162.1 시험은 부모와 app-server의 시험 PID를 함께 종료해
+  15.27초 뒤 복구됐고 stop 상태를 유지했다. 감시와 시험 daemon은 정리했다.
+- 별도의 실제 PTY 입력 큐 시험에서는 시작 전 LF를 제거하고 실행 후 새 입력을 보존했다.
+  모의 연결 준비 포함 1.45초이며 긴 대화의 총 연결 시간 측정은 아니다.
+- 공식 npm 설치 0.160.0의 native package를 직접 찾아 protocol/hash를 검증하고
+  임시 엔진으로 보관했다. Node launcher와 계정 controller는 실행하지 않았다.
+- Go race/vet, 독립 installer의 다운로드 실패·기존 release 충돌·서로 다른 로컬
+  개발 빌드 보존 검사가 통과했다. .home의 Codex 회귀 검사 50개(옵트인 1개 제외)도 통과했다.
+- 제품 소스 변경은 commit/push하되 Release·tag·npm·tap 게시와 실행 중인 기존
+  supervisor의 교체는 하지 않는다. 현재 설치의 0.1.2는 그대로 유지한다.
