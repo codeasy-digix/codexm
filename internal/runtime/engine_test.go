@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func fakeEngine(t *testing.T, dir, version string, compatible bool) string {
@@ -82,5 +84,46 @@ func TestWriterOwnershipCheckDoesNotDisturbLiveWriter(t *testing.T) {
 	}
 	if WriterBusy(dir, "absent") {
 		t.Fatal("missing lock treated as active")
+	}
+}
+
+func TestWriterReleaseWaitPreservesHeldLockAndAcceptsItsRelease(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "thread-writer-locks")
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		t.Fatal(e)
+	}
+	lock := filepath.Join(dir, "thread.lock")
+	f, e := os.OpenFile(lock, os.O_CREATE|os.O_RDWR, 0600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer f.Close()
+	if e = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	if e = WaitWriterRelease(ctx, home, "thread"); !errors.Is(e, context.DeadlineExceeded) {
+		t.Fatal("held writer was accepted before its release", e)
+	}
+	if !WriterBusy(home, "thread") {
+		t.Fatal("wait disturbed the existing writer")
+	}
+	if _, e = os.Stat(lock); e != nil {
+		t.Fatal("wait removed the existing lock", e)
+	}
+	done := make(chan error, 1)
+	go func() { done <- WaitWriterRelease(context.Background(), home, "thread") }()
+	if e = unix.Flock(int(f.Fd()), unix.LOCK_UN); e != nil {
+		t.Fatal(e)
+	}
+	select {
+	case e = <-done:
+		if e != nil {
+			t.Fatal(e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("released writer remained blocked")
 	}
 }

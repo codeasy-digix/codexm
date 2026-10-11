@@ -673,6 +673,19 @@ func (s *Server) park(ctx context.Context, id string, pauseGoal bool) error {
 	s.mu.Lock()
 	delete(s.clients, id)
 	s.mu.Unlock()
+	if j.Session != "" {
+		// tmux removal is asynchronous: reconnecting immediately can mistake the
+		// dying worker's lock for a foreign writer and stop an account rotation.
+		wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+		e = cr.WaitWriterRelease(wait, j.Store, j.ThreadID)
+		cancel()
+		if e != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return later("waiting for the previous writer lock to be released")
+		}
+	}
 	if j.RunID != "" {
 		if e = s.Store.EndRun(j.RunID, "ended", time.Now()); e != nil && !store.NotFound(e) {
 			return e

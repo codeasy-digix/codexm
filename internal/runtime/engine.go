@@ -248,3 +248,16 @@ func WriterBusy(home, thread string) bool {
 	_ = unix.Flock(fd, unix.LOCK_UN)
 	return false
 }
+
+// Killing a tmux session can return before its Codex process has exited. Wait
+// for the existing lock to become free without deleting it or killing a writer.
+func WaitWriterRelease(ctx context.Context, home, thread string) error {
+	for WriterBusy(home, thread) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return nil
+}
