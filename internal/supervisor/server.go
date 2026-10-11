@@ -60,17 +60,18 @@ type Response struct {
 	Error  string          `json:"error,omitempty"`
 }
 type Status struct {
-	Jobs            []jobs.Job          `json:"jobs"`
-	Accounts        []accounts.Snapshot `json:"accounts"`
-	ManagerAccount  string              `json:"manager_account"`
-	ManagerCalls    int                 `json:"manager_calls_last_hour"`
-	Health          string              `json:"health"`
-	Session         string              `json:"session"`
-	Attach          string              `json:"attach"`
-	Version         string              `json:"version"`
-	CodexVersion    string              `json:"codex_version"`
-	ManagerDecision *manager.Record     `json:"manager_decision,omitempty"`
-	Terminals       map[string]int      `json:"terminals,omitempty"`
+	Jobs                 []jobs.Job          `json:"jobs"`
+	Accounts             []accounts.Snapshot `json:"accounts"`
+	ManagerAccount       string              `json:"manager_account"`
+	DefaultWorkerAccount string              `json:"default_worker_account"`
+	ManagerCalls         int                 `json:"manager_calls_last_hour"`
+	Health               string              `json:"health"`
+	Session              string              `json:"session"`
+	Attach               string              `json:"attach"`
+	Version              string              `json:"version"`
+	CodexVersion         string              `json:"codex_version"`
+	ManagerDecision      *manager.Record     `json:"manager_decision,omitempty"`
+	Terminals            map[string]int      `json:"terminals,omitempty"`
 }
 
 func New(ctx context.Context, c config.Config, self string) (*Server, error) {
@@ -248,7 +249,7 @@ func (s *Server) status() (Status, error) {
 			decision = &r
 		}
 	}
-	return Status{Jobs: js, Accounts: as, ManagerAccount: account, ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: "tmux attach -t " + s.Config.Supervisor.TmuxSession, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision, Terminals: terminals}, nil
+	return Status{Jobs: js, Accounts: as, ManagerAccount: account, DefaultWorkerAccount: s.defaultWorker(), ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: "tmux attach -t " + s.Config.Supervisor.TmuxSession, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision, Terminals: terminals}, nil
 }
 func (s *Server) manager() string { s.mu.Lock(); defer s.mu.Unlock(); return s.managerAccount }
 func (s *Server) persist(j jobs.Job, actions ...jobs.Action) error {

@@ -12,9 +12,19 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const Version = "0.1.2"
+const Version = "0.2.0"
 
 var Nickname = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+func (c Config) DefaultWorker() string {
+	if c.WorkerAccounts.DefaultAccount != "" {
+		return c.WorkerAccounts.DefaultAccount
+	}
+	if len(c.WorkerAccounts.Priority) > 0 {
+		return c.WorkerAccounts.Priority[0]
+	}
+	return ""
+}
 
 type Config struct {
 	SchemaVersion int `toml:"schema_version" json:"schema_version"`
@@ -31,6 +41,7 @@ type Config struct {
 	} `toml:"manager"`
 	WorkerAccounts struct {
 		Priority                            []string `toml:"priority"`
+		DefaultAccount                      string   `toml:"default_account,omitempty"`
 		FallbackAccount                     string   `toml:"fallback_account"`
 		FallbackRequiresAllPrimaryExhausted bool     `toml:"fallback_requires_all_primary_exhausted"`
 		PreferredRecheckSeconds             int      `toml:"preferred_recheck_seconds"`
@@ -125,7 +136,7 @@ func Defaults() Config {
 	c.Runtime.Transport = "unix"
 	c.Runtime.SharedCodexHome = "~/.codex"
 	c.Runtime.AccountsDir = "~/.codex-accounts"
-	c.Runtime.Controller = "codex-accounts"
+	c.Runtime.Controller = "" // Legacy configuration is accepted but never executed.
 	c.Runtime.EnginesDir = filepath.Join(xdg("XDG_DATA_HOME", ".local/share"), "codexm", "engines")
 	c.Storage.StateDir = filepath.Join(xdg("XDG_STATE_HOME", ".local/state"), "codexm")
 	c.Logging.UsageSampleSeconds = 60
@@ -147,6 +158,7 @@ func Load(p string) (Config, error) {
 	if e = toml.Unmarshal(b, &c); e != nil {
 		return c, fmt.Errorf("config: %w", e)
 	}
+	c.Runtime.Controller = "" // Accept old files without advertising an obsolete dependency.
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
@@ -171,6 +183,9 @@ func (c Config) Validate() error {
 	}
 	if len(seen) == 0 {
 		return errors.New("at least one worker account is required")
+	}
+	if a := c.WorkerAccounts.DefaultAccount; a != "" && !Nickname.MatchString(a) {
+		return errors.New("invalid default worker account")
 	}
 	if f := c.WorkerAccounts.FallbackAccount; f != "" && (!slices.Contains(c.WorkerAccounts.Priority, f) || c.WorkerAccounts.Priority[len(c.WorkerAccounts.Priority)-1] != f) {
 		return errors.New("fallback account must be last in priority")

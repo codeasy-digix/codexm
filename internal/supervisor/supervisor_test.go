@@ -203,6 +203,9 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	s := fixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	if binary := os.Getenv("CODEXM_NATIVE_RUNTIME"); binary != "" {
+		s.Config.Runtime.CodexBinary = binary
+	}
 	r, e := cr.Resolve(ctx, s.Config)
 	if e != nil {
 		t.Fatal(e)
@@ -321,5 +324,30 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	}
 	if !cr.HasSession(ctx, loaded.Session) {
 		t.Fatal("completed goal lost its attached terminal runtime")
+	}
+	c = s.client(j.ID)
+	if e = c.SetGoalStatus(ctx, j.ThreadID, "paused", "user"); e != nil {
+		t.Fatal(e)
+	}
+	g, e = c.Goal(ctx, j.ThreadID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.park(ctx, j.ID, false); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.update(j.ID, func(j *jobs.Job) { j.State = "paused"; j.Paused = true; j.Goal = g }); e != nil {
+		t.Fatal(e)
+	}
+	loaded, _ = s.Store.Job(j.ID)
+	if e = s.loadView(ctx, loaded); e != nil {
+		t.Fatal("paused conversation could not open its viewer", e)
+	}
+	loaded, _ = s.Store.Job(j.ID)
+	s.mu.Lock()
+	v = s.viewState(loaded)
+	s.mu.Unlock()
+	if !v.Ready || !loaded.Paused || loaded.State != "paused" || loaded.Goal.Status != "paused" || loaded.Goal.TokensUsed != g.TokensUsed {
+		t.Fatal("viewer resumed paused work or lost goal counters")
 	}
 }

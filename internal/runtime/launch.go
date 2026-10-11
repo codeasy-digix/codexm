@@ -22,58 +22,48 @@ type Resolver struct {
 }
 
 func Resolve(ctx context.Context, c config.Config) (Resolver, error) {
-	r, e := Locate(c)
-	if e != nil {
-		return r, e
-	}
+	r := Resolver{Config: c}
 	if pinned, e := ReadEngine(c); e == nil {
 		r.Binary, r.Version = pinned.Binary, pinned.Version
 		return r, nil
 	} else if !os.IsNotExist(e) {
 		return r, e
 	}
+	var e error
+	r, e = Locate(c)
+	if e != nil {
+		return r, e
+	}
 	return r.Refresh(ctx)
 }
 func Locate(c config.Config) (Resolver, error) {
 	r := Resolver{Config: c}
-	bin, e := exec.LookPath(c.Runtime.Controller)
-	if e != nil {
-		return r, fmt.Errorf("codex-accounts is required: %w", e)
+	if c.Runtime.CodexBinary != "" {
+		var e error
+		r.Binary, e = officialEngineSource(config.Expand(c.Runtime.CodexBinary))
+		return r, e
 	}
-	r.Controller = bin
-	return r, nil
+	// The official package is only a source for an immutable private engine.
+	// No daemon RPC, account wrapper, shell function or shared server is involved.
+	managed := filepath.Join(config.Expand(c.Runtime.SharedCodexHome), "packages", "app-server-daemon", "current", "bin", "codex")
+	if info, e := os.Stat(managed); e == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0 {
+		r.Binary = managed
+		return r, nil
+	}
+	bin, e := exec.LookPath("codex")
+	if e != nil {
+		return r, fmt.Errorf("install the official Codex CLI first: %w", e)
+	}
+	r.Binary, e = officialEngineSource(bin)
+	return r, e
 }
 func (r Resolver) Refresh(ctx context.Context) (Resolver, error) {
 	c := r.Config
-	bin := r.Controller
-	if c.Runtime.CodexBinary != "" {
-		pinned, e := PinEngine(ctx, c, config.Expand(c.Runtime.CodexBinary))
-		if e != nil {
-			return r, e
-		}
-		r.Binary, r.Version = pinned.Binary, pinned.Version
-		return r, nil
-	}
-	cmd := exec.CommandContext(ctx, bin, "doctor", "--json")
-	cmd.Env = Env(c, "", "")
-	b, e := cmd.Output()
+	source, e := Locate(c)
 	if e != nil {
-		return r, fmt.Errorf("Codex runtime lookup failed: %w", e)
-	}
-	var d struct {
-		Runtime      string `json:"runtime"`
-		CodexVersion string `json:"codexVersion"`
-	}
-	if e = json.Unmarshal(b, &d); e != nil {
 		return r, e
 	}
-	if d.Runtime == "" {
-		return r, fmt.Errorf("account controller returned no runtime")
-	}
-	if c.Runtime.CodexBinary != "" {
-		d.Runtime = config.Expand(c.Runtime.CodexBinary)
-	}
-	pinned, e := PinEngine(ctx, c, d.Runtime)
+	pinned, e := PinEngine(ctx, c, source.Binary)
 	if e != nil {
 		return r, e
 	}
@@ -97,15 +87,15 @@ func Env(c config.Config, account, pinned string) []string {
 	} else {
 		env = append(env, "CODEX_HOME="+shared)
 	}
-	if pinned != "" {
-		env = append(env, "CODEX_ACCOUNTS_RUNTIME="+pinned)
-	}
 	return env
 }
 func (r Resolver) Command(ctx context.Context, account string, args ...string) *exec.Cmd {
 	shared, _ := json.Marshal(config.Expand(r.Config.Runtime.SharedCodexHome))
-	options := []string{"__native", "--no-daemon", "-c", "sqlite_home=" + string(shared)}
-	cmd := exec.CommandContext(ctx, r.Controller, append(options, args...)...)
+	options := []string{"--no-daemon", "-c", "sqlite_home=" + string(shared), "-c", `cli_auth_credentials_store="file"`, "-c", `forced_login_method="chatgpt"`}
+	cmd := exec.CommandContext(ctx, r.Binary, append(options, args...)...)
+	if account != "" {
+		cmd.Err = EnsureAccountHome(r.Config, account)
+	}
 	cmd.Env = Env(r.Config, account, r.Binary)
 	cmd.Stderr = io.Discard
 	return cmd
@@ -136,12 +126,18 @@ func Worker(spec WorkerSpec) error {
 		return fmt.Errorf("invalid worker specification")
 	}
 	shared, _ := json.Marshal(spec.SharedHome)
-	args := []string{spec.Controller, "__native", "--no-daemon", "-c", "sqlite_home=" + string(shared), "app-server", "--listen", "unix://" + spec.Socket, "-c", `model_provider="openai"`}
+	if !filepath.IsAbs(spec.Binary) {
+		return fmt.Errorf("an absolute official engine path is required")
+	}
+	if e = EnsureAccountHome(c, spec.Account); e != nil {
+		return e
+	}
+	args := []string{spec.Binary, "--no-daemon", "-c", "sqlite_home=" + string(shared), "-c", `cli_auth_credentials_store="file"`, "-c", `forced_login_method="chatgpt"`, "app-server", "--listen", "unix://" + spec.Socket, "-c", `model_provider="openai"`}
 	if e = os.Chdir(spec.Cwd); e != nil {
 		return e
 	}
 	// The official process owns signals, terminal I/O and the server socket.
-	return syscall.Exec(spec.Controller, args, Env(c, spec.Account, spec.Binary))
+	return syscall.Exec(spec.Binary, args, Env(c, spec.Account, spec.Binary))
 }
 func (r Resolver) LaunchWorker(ctx context.Context, self string, spec WorkerSpec) error {
 	spec.ConfigPath = r.Config.Path

@@ -159,7 +159,7 @@ func (s *Server) execute(a jobs.Action) {
 			Account string `json:"account"`
 		}
 		_ = json.Unmarshal(a.Payload, &p)
-		if j.Account == s.Config.WorkerAccounts.FallbackAccount {
+		if j.Account == s.workerConfig().WorkerAccounts.FallbackAccount {
 			e = s.switchAccount(ctx, j.ID, p.Account, false)
 		}
 	case "retry":
@@ -241,13 +241,17 @@ func overlapping(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+string(filepath.Separator)) || strings.HasPrefix(b, a+string(filepath.Separator))
 }
 func (s *Server) reserve(id string) error {
+	return s.reserveRuntime(id, false)
+}
+
+func (s *Server) reserveRuntime(id string, viewing bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	j, e := s.Store.Job(id)
 	if e != nil {
 		return e
 	}
-	if j.Paused {
+	if j.Paused && !viewing {
 		return later("job paused")
 	}
 	all, e := s.Store.Jobs()
@@ -286,6 +290,15 @@ func (s *Server) snapshots() (map[string]accounts.Snapshot, map[string]bool, err
 	return m, blocked, e
 }
 func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error) {
+	// Opening a viewer reuses a recently verified quota instead of launching
+	// another authentication server and waiting for the same network response.
+	if snapshots, blocked, e := s.snapshots(); e == nil && j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {
+		if a, ok := snapshots[j.Account]; ok && !blocked[j.Account] && a.Authenticated && a.Error == "" && time.Since(a.CheckedAt) >= 0 && time.Since(a.CheckedAt) < time.Minute {
+			if state := a.State(j.Model); state == "available" || state == "candidate" {
+				return j.Account, nil
+			}
+		}
+	}
 	a := s.Reader.Read(ctx, j.Account)
 	if e := s.recordAccount(a); e != nil {
 		return "", e
@@ -297,7 +310,7 @@ func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error)
 	if a.Error != "" {
 		return "", later("account availability could not be checked: " + a.Error)
 	}
-	if a.State(j.Model) != "exhausted" && j.Account != s.Config.WorkerAccounts.FallbackAccount {
+	if a.State(j.Model) != "exhausted" && j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {
 		return j.Account, nil
 	}
 	if _, e := s.refreshAccounts(ctx); e != nil {
@@ -307,7 +320,7 @@ func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error)
 	if e != nil {
 		return "", e
 	}
-	choice, reason := accounts.Choose(s.Config, m, j.Model, blocked)
+	choice, reason := accounts.Choose(s.workerConfig(), m, j.Model, blocked)
 	if choice == "" {
 		_ = s.update(j.ID, func(j *jobs.Job) { j.State = "quota_wait"; j.LastError = reason })
 		return "", &postpone{reason, 30 * time.Second}
@@ -328,6 +341,10 @@ func (s *Server) recordAccount(a accounts.Snapshot) error {
 	return s.Store.Snapshot(a.Account, a)
 }
 func (s *Server) ensureRuntime(ctx context.Context, id string, user bool) error {
+	return s.ensureRuntimeMode(ctx, id, user, false)
+}
+
+func (s *Server) ensureRuntimeMode(ctx context.Context, id string, user, viewing bool) error {
 	j, e := s.Store.Job(id)
 	if e != nil {
 		return e
@@ -348,7 +365,7 @@ func (s *Server) ensureRuntime(ctx context.Context, id string, user bool) error 
 			return nil
 		}
 	}
-	if e = s.reserve(id); e != nil {
+	if e = s.reserveRuntime(id, viewing); e != nil {
 		return e
 	}
 	// A live tmux server always wins over a local timeout. Reattach instead of launching twice.
@@ -695,7 +712,7 @@ func (s *Server) switchAccount(ctx context.Context, id, preferred string, exhaus
 	if e != nil {
 		return e
 	}
-	choice, reason := accounts.Choose(s.Config, m, j.Model, blocked)
+	choice, reason := accounts.Choose(s.workerConfig(), m, j.Model, blocked)
 	if preferred != "" && choice != preferred {
 		return nil
 	}

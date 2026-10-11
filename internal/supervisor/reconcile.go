@@ -230,7 +230,7 @@ func (s *Server) reconcileJob(j jobs.Job) {
 	if j.State == "quota_wait" {
 		s.enqueueOnce(j, "switch_account", nil)
 	}
-	if j.Account == s.Config.WorkerAccounts.FallbackAccount && time.Since(j.LastAccountCheck) >= time.Duration(s.Config.WorkerAccounts.PreferredRecheckSeconds)*time.Second {
+	if j.Account == s.workerConfig().WorkerAccounts.FallbackAccount && time.Since(j.LastAccountCheck) >= time.Duration(s.workerConfig().WorkerAccounts.PreferredRecheckSeconds)*time.Second {
 		if _, e := s.refreshAccounts(ctx); e != nil {
 			return
 		}
@@ -238,9 +238,9 @@ func (s *Server) reconcileJob(j jobs.Job) {
 		if e != nil {
 			return
 		}
-		choice, _ := accounts.Choose(s.Config, m, j.Model, blocked)
+		choice, _ := accounts.Choose(s.workerConfig(), m, j.Model, blocked)
 		_ = s.update(j.ID, func(j *jobs.Job) { j.LastAccountCheck = time.Now() })
-		if choice != "" && choice != s.Config.WorkerAccounts.FallbackAccount {
+		if choice != "" && choice != s.workerConfig().WorkerAccounts.FallbackAccount {
 			s.enqueueOnce(j, "prefer_account", map[string]string{"account": choice})
 		}
 	}

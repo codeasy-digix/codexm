@@ -1,0 +1,32 @@
+name: Test prepared codexm
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install tmux on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: Ensure tmux on macOS
+        if: runner.os == 'macOS'
+        run: command -v tmux || brew install tmux
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+# Preparation only: no tag trigger, release job, registry token, or publish step.

@@ -23,7 +23,7 @@ func fakeEngine(t *testing.T, dir, version string, compatible bool) string {
 		items = append(items, map[string]any{"properties": map[string]any{"method": map[string]any{"enum": []string{m}}}})
 	}
 	b, _ := json.Marshal(map[string]any{"oneOf": items})
-	script := "#!/bin/sh\nif [ \"$1\" = '--version' ]; then printf '%s\\n' 'codex-cli " + version + "'; exit 0; fi\nprintf '%s' '" + string(b) + "' > \"$5/ClientRequest.json\"\n"
+	script := "#!/bin/sh\nfor arg do if [ \"$arg\" = '--version' ]; then printf '%s\\n' 'codex-cli " + version + "'; exit 0; fi; done\nprintf '%s' '" + string(b) + "' > \"$5/ClientRequest.json\"\n"
 	p := filepath.Join(dir, "codex")
 	if e := os.WriteFile(p, []byte(script), 0700); e != nil {
 		t.Fatal(e)

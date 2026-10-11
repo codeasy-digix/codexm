@@ -31,9 +31,9 @@ func TestInstallerChecksArchiveBeforeReplacingCurrent(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	script := filepath.Join(repo, "tools", "codexm", "install.sh")
+	script := filepath.Join(repo, "install.sh")
 	write(script, source, 0700)
-	write(filepath.Join(repo, "config", "home", "codexm-release.txt"), []byte("codexm-v0.1.0\n"), 0600)
+	write(filepath.Join(repo, "VERSION"), []byte("0.1.0\n"), 0600)
 	platform := runtime.GOOS + "-" + runtime.GOARCH
 	asset := "codexm-" + platform + ".tar.gz"
 	archive := filepath.Join(repo, asset)
@@ -49,7 +49,8 @@ func TestInstallerChecksArchiveBeforeReplacingCurrent(t *testing.T) {
 	gz.Close()
 	valid := append([]byte(nil), b.Bytes()...)
 	write(archive, valid, 0600)
-	write(filepath.Join(repo, "manifests", "codexm-assets.sha256"), []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(valid), asset)), 0600)
+	checksum := filepath.Join(repo, "SHA256SUMS")
+	write(checksum, []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(valid), asset)), 0600)
 	bin := filepath.Join(repo, "test-bin")
 	write(filepath.Join(bin, "gh"), []byte(`#!/bin/sh
 set -eu
@@ -59,17 +60,19 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 cp "$CODEXM_TEST_ARCHIVE" "$download_dest/$CODEXM_TEST_ASSET"
+cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 `), 0700)
-	platformRoot := filepath.Join(repo, "artifacts", platform)
-	old := filepath.Join(platformRoot, "codexm", "previous")
+	installRoot := filepath.Join(repo, "data", "codexm")
+	old := filepath.Join(installRoot, "versions", "previous")
 	write(filepath.Join(old, "codexm"), []byte("#!/bin/sh\necho 'codexm 0.0.0'\n"), 0700)
-	current := filepath.Join(platformRoot, "codexm-current")
-	if e = os.Symlink("codexm/previous", current); e != nil {
+	current := filepath.Join(installRoot, "bin", "codexm")
+	os.MkdirAll(filepath.Dir(current), 0700)
+	if e = os.Symlink(filepath.Join(old, "codexm"), current); e != nil {
 		t.Fatal(e)
 	}
 	run := func() error {
 		cmd := exec.Command("sh", script)
-		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "XDG_CACHE_HOME="+filepath.Join(repo, "cache"), "CODEXM_TEST_ARCHIVE="+archive, "CODEXM_TEST_ASSET="+asset)
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEXM_INSTALL_ROOT="+installRoot, "CODEXM_LINK_DIR="+filepath.Join(repo, "entrypoint"), "CODEXM_TEST_ARCHIVE="+archive, "CODEXM_TEST_ASSET="+asset, "CODEXM_TEST_CHECKSUM="+checksum)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("%w: %s", err, out)
@@ -80,14 +83,14 @@ cp "$CODEXM_TEST_ARCHIVE" "$download_dest/$CODEXM_TEST_ASSET"
 	if e = run(); e == nil {
 		t.Fatal("invalid checksum accepted")
 	}
-	if target, _ := os.Readlink(current); target != "codexm/previous" {
+	if target, _ := os.Readlink(current); target != filepath.Join(old, "codexm") {
 		t.Fatal("failed download replaced current", target)
 	}
 	write(archive, valid, 0600)
 	if e = run(); e != nil {
 		t.Fatal(e)
 	}
-	if target, _ := os.Readlink(current); target != "codexm/codexm-v0.1.0" {
+	if target, _ := os.Readlink(current); target != filepath.Join(installRoot, "versions", "v0.1.0", platform, "codexm") {
 		t.Fatal("validated release not installed", target)
 	}
 	if e = run(); e != nil {
@@ -95,16 +98,46 @@ cp "$CODEXM_TEST_ARCHIVE" "$download_dest/$CODEXM_TEST_ASSET"
 	}
 	// Keep both the selected old install and a conflicting release untouched.
 	os.Remove(current)
-	os.Symlink("codexm/previous", current)
-	conflict := filepath.Join(platformRoot, "codexm", "codexm-v0.1.0", "codexm")
+	os.Symlink(filepath.Join(old, "codexm"), current)
+	conflict := filepath.Join(installRoot, "versions", "v0.1.0", platform, "codexm")
 	write(conflict, []byte("different saved release"), 0700)
 	if e = run(); e == nil {
 		t.Fatal("conflicting release overwritten")
 	}
-	if target, _ := os.Readlink(current); target != "codexm/previous" {
+	if target, _ := os.Readlink(current); target != filepath.Join(old, "codexm") {
 		t.Fatal("conflict changed current", target)
 	}
 	if got, _ := os.ReadFile(conflict); string(got) != "different saved release" {
 		t.Fatal("conflicting release changed")
+	}
+	// Local changes must not overwrite a release or a previous development build.
+	write(filepath.Join(repo, "build.sh"), []byte("#!/bin/sh\ncp \"$CODEXM_TEST_LOCAL_BINARY\" \"$3\"\n"), 0700)
+	local := filepath.Join(repo, "local-binary")
+	write(local, binary, 0700)
+	runSource := func() error {
+		cmd := exec.Command("sh", script, "--build")
+		cmd.Env = append(os.Environ(), "CODEXM_INSTALL_ROOT="+installRoot, "CODEXM_LINK_DIR="+filepath.Join(repo, "entrypoint"), "CODEXM_TEST_LOCAL_BINARY="+local)
+		if out, e := cmd.CombinedOutput(); e != nil {
+			return fmt.Errorf("%w: %s", e, out)
+		}
+		return nil
+	}
+	if e = runSource(); e != nil {
+		t.Fatal(e)
+	}
+	firstSource, _ := os.Readlink(current)
+	write(local, append(binary, []byte("# changed local build\n")...), 0700)
+	if e = runSource(); e != nil {
+		t.Fatal("local development update failed", e)
+	}
+	secondSource, _ := os.Readlink(current)
+	if firstSource == secondSource {
+		t.Fatal("changed source replaced immutable files")
+	}
+	if b, _ := os.ReadFile(firstSource); string(b) != string(binary) {
+		t.Fatal("previous source overwritten")
+	}
+	if b, _ := os.ReadFile(conflict); string(b) != "different saved release" {
+		t.Fatal("local build overwrote release")
 	}
 }

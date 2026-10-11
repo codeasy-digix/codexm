@@ -1,39 +1,48 @@
 #!/bin/sh
 set -eu
 source_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_root=$(CDPATH= cd -- "$source_root/../.." && pwd)
+version=$(cat "$source_root/VERSION")
+release="v$version"
+install_mode=release
 target_os=$(uname -s | tr '[:upper:]' '[:lower:]')
 target_arch=$(uname -m)
 case "$target_arch" in aarch64) target_arch=arm64 ;; x86_64) target_arch=amd64 ;; esac
 case "$target_os/$target_arch" in darwin/arm64|darwin/amd64|linux/arm64|linux/amd64) ;; *) echo 'Unsupported platform' >&2; exit 2 ;; esac
-release=$(cat "$repo_root/config/home/codexm-release.txt")
-expected_version="codexm ${release#codexm-v}"
-platform_root="$repo_root/artifacts/$target_os-$target_arch"
-current="$platform_root/codexm-current/codexm"
-if [ -x "$current" ] && [ "$("$current" --version 2>/dev/null || true)" = "$expected_version" ]; then
-  printf '%s\n' "$current"
-  exit 0
+install_root="${CODEXM_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/codexm}"
+link_dir="${CODEXM_LINK_DIR:-$HOME/.local/bin}"
+mkdir -p "$install_root/versions" "$install_root/bin" "$link_dir"
+stage=$(mktemp -d "$install_root/.install-XXXXXX")
+trap 'rm -rf "$stage"' EXIT HUP INT TERM
+mkdir "$stage/payload"
+case "${1:-}" in
+  --build) install_mode=source; "$source_root/build.sh" "$target_os" "$target_arch" "$stage/payload/codexm" ;;
+  '')
+    command -v gh >/dev/null 2>&1 || { echo 'Install gh and sign in, or use ./install.sh --build.' >&2; exit 1; }
+    archive="codexm-$target_os-$target_arch.tar.gz"
+    gh release download "$release" --repo codeasy-digix/codexm --pattern "$archive" --pattern SHA256SUMS --dir "$stage"
+    expected=$(awk -v file="$archive" '$2 == file {print $1}' "$stage/SHA256SUMS")
+    test -n "$expected" || { echo 'Release checksum is missing.' >&2; exit 1; }
+    if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$stage/$archive" | awk '{print $1}'); else actual=$(shasum -a 256 "$stage/$archive" | awk '{print $1}'); fi
+    [ "$actual" = "$expected" ] || { echo 'Release checksum mismatch.' >&2; exit 1; }
+    tar -xzf "$stage/$archive" -C "$stage/payload"
+    ;;
+  *) echo 'Usage: ./install.sh [--build]' >&2; exit 2 ;;
+esac
+[ "$("$stage/payload/codexm" --version)" = "codexm $version" ] || { echo 'Installed version would not match.' >&2; exit 1; }
+install_version=$release
+if [ "$install_mode" = source ]; then
+  if command -v sha256sum >/dev/null 2>&1; then binary_id=$(sha256sum "$stage/payload/codexm" | awk '{print $1}'); else binary_id=$(shasum -a 256 "$stage/payload/codexm" | awk '{print $1}'); fi
+  install_version="$release-source-$binary_id"
 fi
-archive_name="codexm-$target_os-$target_arch.tar.gz"
-expected=$(awk -v asset="$archive_name" '$2 == asset {print $1}' "$repo_root/manifests/codexm-assets.sha256")
-test -n "$expected" || { echo 'Missing locked codexm archive checksum' >&2; exit 1; }
-command -v gh >/dev/null 2>&1 || { echo 'Restore requires gh auth login, or tools/codexm/build.sh with Go.' >&2; exit 1; }
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/home/$release"
-mkdir -p "$cache_dir" "$platform_root/codexm"
-download_dir=$(mktemp -d "$cache_dir/.download-XXXXXX")
-stage=$(mktemp -d "$platform_root/codexm/.install-XXXXXX")
-trap 'rm -rf "$stage" "$download_dir"' EXIT HUP INT TERM
-gh release download "$release" --repo account-main/.home --pattern "$archive_name" --dir "$download_dir"
-if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$download_dir/$archive_name" | awk '{print $1}'); else actual=$(shasum -a 256 "$download_dir/$archive_name" | awk '{print $1}'); fi
-[ "$actual" = "$expected" ] || { echo 'codexm archive checksum mismatch' >&2; exit 1; }
-tar -xzf "$download_dir/$archive_name" -C "$stage"
-[ -x "$stage/codexm" ] && [ "$("$stage/codexm" --version)" = "$expected_version" ] || { echo 'Incomplete or incompatible codexm archive' >&2; exit 1; }
-install_dir="$platform_root/codexm/$release"
-if [ -e "$install_dir" ]; then
-  cmp "$stage/codexm" "$install_dir/codexm" >/dev/null || { echo 'Existing codexm release differs; preserved for inspection' >&2; exit 1; }
+destination="$install_root/versions/$install_version/$target_os-$target_arch"
+if [ -e "$destination" ]; then
+  cmp "$stage/payload/codexm" "$destination/codexm" >/dev/null || { echo 'Existing immutable version differs; it was preserved.' >&2; exit 1; }
 else
-  mv "$stage" "$install_dir"
+  mkdir -p "$(dirname -- "$destination")"
+  mv "$stage/payload" "$destination"
 fi
-ln -s "codexm/$release" "$platform_root/.codexm-current-$$"
-case "$target_os" in darwin) mv -fh "$platform_root/.codexm-current-$$" "$platform_root/codexm-current" ;; *) mv -fT "$platform_root/.codexm-current-$$" "$platform_root/codexm-current" ;; esac
-printf '%s\n' "$platform_root/codexm-current/codexm"
+ln -s "$destination/codexm" "$install_root/bin/.codexm-$$"
+case "$target_os" in darwin) mv -fh "$install_root/bin/.codexm-$$" "$install_root/bin/codexm" ;; *) mv -fT "$install_root/bin/.codexm-$$" "$install_root/bin/codexm" ;; esac
+ln -s "$install_root/bin/codexm" "$link_dir/.codexm-$$"
+case "$target_os" in darwin) mv -fh "$link_dir/.codexm-$$" "$link_dir/codexm" ;; *) mv -fT "$link_dir/.codexm-$$" "$link_dir/codexm" ;; esac
+printf 'Installed codexm %s: %s\n' "$version" "$link_dir/codexm"

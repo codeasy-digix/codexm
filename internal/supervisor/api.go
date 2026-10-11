@@ -51,7 +51,7 @@ type JobArgs struct {
 func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	if s.isStopping() {
 		switch call.Command {
-		case "new", "resume", "resume-job", "manage", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "resolve-action":
+		case "new", "resume", "resume-job", "manage", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "set-worker-account", "resolve-action":
 			return nil, errors.New("supervisor is shutting down; restart it before submitting work")
 		}
 	}
@@ -109,9 +109,26 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	case "usage":
 		return s.usage()
 	case "settings":
-		c := s.Config
+		c := s.workerConfig()
 		c.Manager.Account = s.manager()
 		return c, nil
+	case "set-worker-account":
+		if !config.Nickname.MatchString(a.Account) || a.Account == "default" {
+			return nil, errors.New("invalid worker account")
+		}
+		c, e := config.Load(s.Config.Path)
+		if e != nil {
+			return nil, e
+		}
+		c.WorkerAccounts.DefaultAccount = a.Account
+		if !slices.Contains(c.WorkerAccounts.Priority, a.Account) {
+			position := len(c.WorkerAccounts.Priority)
+			if c.WorkerAccounts.FallbackAccount != "" {
+				position--
+			}
+			c.WorkerAccounts.Priority = slices.Insert(c.WorkerAccounts.Priority, position, a.Account)
+		}
+		return a.Account, c.Save()
 	case "set-manager":
 		if !config.Nickname.MatchString(a.Account) {
 			return nil, errors.New("invalid manager account")
@@ -122,7 +139,10 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		next := s.Config
+		next, e := config.Load(s.Config.Path)
+		if e != nil {
+			return nil, e
+		}
 		next.Manager.Account = a.Account
 		if e := next.Save(); e != nil {
 			return nil, e
@@ -370,9 +390,9 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 		return jobs.Job{}, errors.New("workspace directory is unavailable")
 	}
 	if n.Account == "" {
-		n.Account = s.Config.WorkerAccounts.Priority[0]
+		n.Account = s.defaultWorker()
 	}
-	if !slices.Contains(s.Config.WorkerAccounts.Priority, n.Account) {
+	if !slices.Contains(s.workerConfig().WorkerAccounts.Priority, n.Account) && n.Account != s.defaultWorker() {
 		return jobs.Job{}, errors.New("worker account is not in the configured priority list")
 	}
 	if n.Title == "" {
@@ -461,9 +481,9 @@ func (s *Server) importThread(ctx context.Context, a JobArgs) (jobs.Job, error) 
 		return jobs.Job{}, errors.New("an existing conversation cannot be imported as a group")
 	}
 	if a.Account == "" {
-		a.Account = s.Config.WorkerAccounts.Priority[0]
+		a.Account = s.defaultWorker()
 	}
-	if !slices.Contains(s.Config.WorkerAccounts.Priority, a.Account) {
+	if !slices.Contains(s.workerConfig().WorkerAccounts.Priority, a.Account) {
 		return jobs.Job{}, errors.New("account is not in worker priority")
 	}
 	host, _ := os.Hostname()

@@ -39,6 +39,34 @@ func TestInputTargetAndKoreanMultilinePaste(t *testing.T) {
 	}
 }
 
+func TestArrowSelectionKeepsComposerAndDraft(t *testing.T) {
+	c := config.Defaults()
+	c.Manager.Account = "account-backup"
+	m := New(c, "codexm")
+	m.Screen = "agents"
+	m.Status.Jobs = []jobs.Job{{ID: "first"}, {ID: "second"}, {ID: "third"}}
+	m.SelectedID = "first"
+	m.focusInput("작성 중인 초안\n두 번째 줄")
+	draft := m.Input.Value()
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = next.(Model)
+	if m.SelectedID != "second" || m.Focus != "input" || m.Input.Value() != draft {
+		t.Fatal("down did not select a job while preserving the draft")
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	m = next.(Model)
+	if m.SelectedID != "first" || m.Focus != "input" || m.Input.Value() != draft {
+		t.Fatal("up changed composer focus or input")
+	}
+	m.focusInput("/")
+	before := m.SelectedID
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = next.(Model)
+	if m.SelectedID != before || m.PaletteIndex != 1 {
+		t.Fatal("slash menu arrows moved the job selection")
+	}
+}
+
 func TestLogsRefreshDoesNotStealInputOrReopenAfterEscape(t *testing.T) {
 	c := config.Defaults()
 	c.Manager.Account = "account-backup"

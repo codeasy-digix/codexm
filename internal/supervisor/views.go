@@ -114,7 +114,7 @@ func (s *Server) hasJobViewer(id string) bool {
 // Loading a terminal preserves stopped/paused/completed state. It neither
 // reactivates a goal nor queues continuation of the last interrupted input.
 func (s *Server) loadView(ctx context.Context, j jobs.Job) error {
-	if e := s.ensureRuntime(ctx, j.ID, false); e != nil {
+	if e := s.ensureRuntimeMode(ctx, j.ID, false, true); e != nil {
 		return e
 	}
 	if j.Paused || jobs.Terminal(j.State) {

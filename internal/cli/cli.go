@@ -16,6 +16,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/activity"
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/daemon"
 	"github.com/codeasy-digix/codexm/internal/display"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
@@ -81,6 +82,15 @@ func Main(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), signals...)
 	defer cancel()
+	if command == "__daemon-watchdog" {
+		return (daemon.Manager{Config: c, Self: self, Out: os.Stdout}).Run(ctx)
+	}
+	if command == "daemon" {
+		return (daemon.Manager{Config: c, Self: self, Out: os.Stdout}).Command(ctx, args)
+	}
+	if command == "account" {
+		return accountCommand(ctx, c, args)
+	}
 	if command == "__supervisor" {
 		s, e := supervisor.New(ctx, c, self)
 		if e != nil {
@@ -400,6 +410,9 @@ func help() {
 	fmt.Fprintln(os.Stdout, `codexm — persistent Codex job manager
 
 codexm [--config FILE]                  Interactive task list / first-run setup
+codexm account [NAME] [--login]         Named login / saved default for new jobs
+codexm daemon watch|unwatch|status     Token-free official daemon recovery
+codexm daemon start|restart|stop       Official lifecycle, using the shared home
 codexm setup --manager NAME             Save manager account explicitly
 codexm status --json                    Jobs, health and named tmux sessions
 codexm logs [JOB_ID] [--json]            Session/account durations, quota observations and changes
@@ -440,7 +453,7 @@ func doctor(ctx context.Context, c config.Config, args []string) error {
 	} else {
 		checks["config"] = "ok"
 	}
-	for _, name := range []string{"tmux", c.Runtime.Controller} {
+	for _, name := range []string{"tmux"} {
 		if p, e := exec.LookPath(name); e != nil {
 			checks[name] = e.Error()
 			failures = append(failures, e.Error())

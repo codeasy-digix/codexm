@@ -236,6 +236,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case pollMsg:
+		if v.Status.DefaultWorkerAccount != "" {
+			m.Config.WorkerAccounts.DefaultAccount = v.Status.DefaultWorkerAccount
+		}
 		if v.Error != nil {
 			m.Notice = "연결 끊김: " + v.Error.Error() + " · R로 재연결"
 			return m, nil
@@ -491,6 +494,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, cmd
 			}
+			if m.Screen == "agents" && (key == "up" || key == "down") {
+				direction := 1
+				if key == "up" {
+					direction = -1
+				}
+				m.selectIndex(direction)
+				return m, nil
+			}
 			if key == "enter" || key == "ctrl+enter" {
 				text := m.Input.Value()
 				m.Input.Reset()
@@ -536,7 +547,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.Screen = "import-account"
-					m.focusInput(m.Config.WorkerAccounts.Priority[0])
+					m.focusInput(m.Config.DefaultWorker())
 					m.Notice = "가져올 대화의 작업 계정 · Enter로 새 터미널 열기"
 					return m, nil
 				}
@@ -668,7 +679,7 @@ func (m *Model) wizardNext() tea.Cmd {
 		return m.request("new", m.New)
 	}
 	next := m.Wizard[m.WizardIndex]
-	defaults := map[string]string{"account": m.Config.WorkerAccounts.Priority[0], "title": filepath.Base(m.New.Cwd)}
+	defaults := map[string]string{"account": m.Config.DefaultWorker(), "title": filepath.Base(m.New.Cwd)}
 	labels := map[string]string{"account": "최초 작업 계정", "title": "채팅 제목"}
 	m.Input.SetValue(defaults[next])
 	m.Notice = "새 채팅 · " + labels[next]
@@ -866,7 +877,7 @@ func (m Model) View() tea.View {
 	if m.Screen == "setup" {
 		b.WriteString(accent.Render("codexm · 최초 관리자 설정") + "\n\n" + plain(m.Notice) + "\n\n")
 		if len(m.Names) == 0 {
-			b.WriteString("등록된 계정이 없습니다. codex account NAME으로 로그인한 뒤 다시 실행하세요.\n")
+			b.WriteString("등록된 계정이 없습니다. codexm account NAME으로 로그인한 뒤 다시 실행하세요.\n")
 		}
 		for i, name := range m.Names {
 			prefix := "  "

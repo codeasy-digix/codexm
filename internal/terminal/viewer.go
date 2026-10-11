@@ -23,7 +23,7 @@ type pollResult struct {
 
 func nativeCommand(c config.Config, v supervisor.ViewState) *exec.Cmd {
 	shared, _ := json.Marshal(config.Expand(c.Runtime.SharedCodexHome))
-	cmd := exec.Command(v.Binary, "resume", "-c", "sqlite_home="+string(shared), "-c", "check_for_update_on_startup=false", "--remote", "unix://"+v.Socket, v.ThreadID)
+	cmd := exec.Command(v.Binary, "resume", "-c", "sqlite_home="+string(shared), "-c", `cli_auth_credentials_store="file"`, "-c", `forced_login_method="chatgpt"`, "-c", "check_for_update_on_startup=false", "--remote", "unix://"+v.Socket, v.ThreadID)
 	cmd.Env = cr.Env(c, v.Account, v.Binary)
 	cmd.Dir = v.Cwd
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -70,7 +70,17 @@ func Run(ctx context.Context, c config.Config, id, clientID string) error {
 		e := supervisor.Request(req, c, "client", supervisor.JobArgs{ID: id, ClientID: clientID}, &next)
 		return next, e
 	}
-	return follow(ctx, v, poll, func(v supervisor.ViewState) *exec.Cmd { return nativeCommand(c, v) }, 2*time.Second)
+	firstUI := true
+	return follow(ctx, v, poll, func(v supervisor.ViewState) *exec.Cmd {
+		if firstUI {
+			// Terminal launch/connection setup may leave a CR/LF queued before
+			// an editor exists. Clear it once, before the first official UI.
+			// Reconnection keeps the user's ongoing input intact.
+			_ = discardStartupInput(int(os.Stdin.Fd()))
+			firstUI = false
+		}
+		return nativeCommand(c, v)
+	}, 200*time.Millisecond)
 }
 
 // follow isolates process replacement from terminal creation, making a quota

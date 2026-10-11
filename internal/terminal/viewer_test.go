@@ -21,7 +21,7 @@ func TestNativeCommandUsesSelectedAccountAndExactSession(t *testing.T) {
 	c.Runtime.SharedCodexHome = t.TempDir()
 	v := supervisor.ViewState{Binary: "/pinned/codex", Socket: "/tmp/session socket", ThreadID: "exact-thread", Account: "account-secondary", Cwd: "/workspace"}
 	cmd := nativeCommand(c, v)
-	env := strings.Join(cmd.Env, "\n")
+	env := strings.Join(cmd.Env, "\n") + "\n"
 	if !strings.Contains(env, "CODEX_ACCOUNT=account-secondary\n") || !strings.Contains(env, "CODEX_HOME="+c.Runtime.AccountsDir+"/account-secondary\n") || strings.Contains(env, "OPENAI_API_KEY=") || strings.Contains(env, "CODEX_ACCOUNT=other") {
 		t.Fatal("child account was not isolated")
 	}
