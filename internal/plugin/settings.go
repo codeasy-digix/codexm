@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 
@@ -48,8 +49,11 @@ func (m MCP) readPluginSettings() (any, error) {
 		return nil, e
 	}
 	names, e := accounts.List(c)
-	if e != nil {
+	if e != nil && !os.IsNotExist(e) {
 		return nil, e
+	}
+	if names == nil {
+		names = []string{}
 	}
 	group := func(title string, keys ...string) map[string]any {
 		items := []any{}
@@ -62,7 +66,10 @@ func (m MCP) readPluginSettings() (any, error) {
 		"schema": map[string]any{"type": "object", "properties": settingProperties(names)},
 		"values": pluginValues(c),
 		"layout": []any{
-			map[string]any{"kind": "group", "title": "codexm 관리 화면", "items": []any{map[string]any{"kind": "tool", "tool": "codexm_open", "description": "작업·계정·사용 기록·설정을 패널에서 관리합니다."}}},
+			map[string]any{"kind": "group", "title": "codexm 관리", "items": []any{
+				map[string]any{"kind": "tool", "tool": "codexm_open", "description": "작업·계정·사용 기록·설정을 패널에서 관리합니다."},
+				map[string]any{"kind": "tool", "tool": "codexm_accounts_open", "description": "계정 추가·로그인과 저장 계정을 관리합니다."},
+			}},
 			group("계정 관리", "manager_account", "default_worker", "priority", "fallback_account"),
 			group("감시와 실행", "preferred_recheck_seconds", "reconcile_interval_seconds", "max_parallel_jobs", "usage_sample_seconds"),
 			group("알림", "five_hour_discord"),

@@ -22,33 +22,66 @@ export function mergeTurns(older, latest) {
   return [...older.filter(t=>!known.has(t.id)),...latest];
 }
 
+export function accountNames(snapshot) {
+  const configured=snapshot?.priority||[],saved=snapshot?.account_names||[];
+  return [...new Set([...configured,...saved,...(snapshot?.status?.accounts||[]).map(a=>a.account)].filter(name=>typeof name==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)))];
+}
+export function loginPending(login) {return ['pending','verifying'].includes(login?.status);}
+export function safeLoginURL(value) {
+  try{const url=new URL(value);return ['https://auth.openai.com','https://auth0.openai.com','https://chatgpt.com'].includes(url.origin)&&!url.username&&!url.password?url.href:null;}catch{return null;}
+}
+
 const UI_BUILD='__CODEXM_UI_BUILD__';
+// Inline panels have an intrinsic work area; fullscreen and fixed host frames
+// allocate the viewport instead. The iframe's current height is never an input
+// to the inline content height, so a host autosize update cannot feed itself.
+export function surfaceLayout(context={}) {
+  const dimensions=context.containerDimensions||{},positive=value=>Number.isFinite(value)&&value>0?value:null;
+  const height=positive(dimensions.height),maxHeight=positive(dimensions.maxHeight),displayMode=context.displayMode||'inline';
+  return {kind:height!=null?'fixed':['fullscreen','pip'].includes(displayMode)?'viewport':'content',displayMode,height,maxHeight};
+}
+export function panelSize(rect,width) {
+  if(!Number.isFinite(rect?.height)||rect.height<=0||!Number.isFinite(width)||width<=0)return null;
+  return {height:Math.ceil(rect.height),width:Math.ceil(width)};
+}
 export class Bridge {
-  constructor(){this.pending=new Map();this.id=0;this.compat=false;window.addEventListener('message',event=>this.receive(event));}
+  constructor(){this.pending=new Map();this.id=0;this.compat=false;this.hostContext={};this.sizeFrame=null;this.lastSize='';window.addEventListener('message',event=>this.receive(event));}
   receive(event){
     if(event.source!==window.parent || event.data?.jsonrpc!=='2.0')return;
     const m=event.data, p=this.pending.get(m.id);
     if(p){clearTimeout(p.timer);this.pending.delete(m.id);m.error?p.reject(new Error(m.error.message||'호스트 요청 오류')):p.resolve(m.result);return;}
     if(m.method==='ping'&&m.id!=null){window.parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*');return;}
+    if(m.method==='ui/notifications/tool-input'||m.method==='ui/notifications/partial-tool-input')this.onInput?.(m.params);
     if(m.method==='ui/notifications/tool-result')this.onResult?.(m.params);
     if(m.method==='ui/notifications/host-context-changed')this.context(m.params);
   }
-  context(ctx){if(ctx?.theme)document.documentElement.dataset.theme=ctx.theme;for(const [key,value] of Object.entries(ctx?.styles?.variables||{})){if(key.startsWith('--')&&typeof value==='string')document.documentElement.style.setProperty(key,value);}}
+  context(ctx){
+    this.hostContext={...this.hostContext,...ctx};
+    const root=document.documentElement,layout=surfaceLayout(this.hostContext);root.dataset.surfaceLayout=layout.kind;root.dataset.displayMode=layout.displayMode;root.dataset.heightBounded=String(layout.maxHeight!=null);
+    for(const [key,value]of [['--codexm-host-height',layout.height],['--codexm-host-max-height',layout.maxHeight]]){if(value!=null)root.style.setProperty(key,`${value}px`);else root.style.removeProperty?.(key);}
+    if(ctx?.theme)root.dataset.theme=ctx.theme;for(const [key,value] of Object.entries(ctx?.styles?.variables||{})){if(key.startsWith('--')&&typeof value==='string')root.style.setProperty(key,value);}
+    this.queueSize();
+  }
+  queueSize(){
+    if(this.sizeFrame!=null||typeof document.body?.getBoundingClientRect!=='function')return;
+    const schedule=typeof window.requestAnimationFrame==='function'?window.requestAnimationFrame.bind(window):fn=>setTimeout(fn,0);
+    this.sizeFrame=schedule(()=>{this.sizeFrame=null;if(document.hidden)return;const size=panelSize(document.body.getBoundingClientRect(),document.documentElement.clientWidth);if(!size)return;const key=`${size.width}:${size.height}`;if(this.lastSize===key)return;this.lastSize=key;window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:size},'*');});
+  }
   request(method,params,timeout=120000){return new Promise((resolve,reject)=>{const id=++this.id;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('연결 응답을 확인하지 못했습니다. 작업 상태를 확인한 후 다시 시도하세요.'));},timeout);this.pending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},'*');});}
   async initialize(){
-    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.4.1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
-    catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;}
-    let previous='';this.resize=new ResizeObserver(()=>{const height=document.documentElement.scrollHeight,width=document.documentElement.clientWidth,key=`${width}:${height}`;if(previous===key)return;previous=key;window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:{height,width}},'*');});this.resize.observe(document.body);
+    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.5.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
+    catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;this.context({displayMode:window.openai.displayMode||'inline'});}
+    this.resize=new ResizeObserver(()=>this.queueSize());this.resize.observe(document.body);window.addEventListener('resize',()=>this.queueSize());this.queueSize();
     void this.reportReady();
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden)void this.reportReady();});
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden){void this.reportReady();this.queueSize();}});
   }
   async reportReady(){try{const args={ui_build:UI_BUILD,bridge:this.compat?'legacy':'mcp-app',visible:!document.hidden};const r=this.compat?await window.openai.callTool('codexm_ui_ready',args):await this.request('tools/call',{name:'codexm_ui_ready',arguments:args},2000);return r?.isError!==true;}catch{return false;}}
   async call(name,args={}){const r=this.compat?await window.openai.callTool(name,args):await this.request('tools/call',{name,arguments:args});if(r?.isError)throw new Error(r.content?.find(x=>x.type==='text')?.text||'관리 요청 실패');return r?._meta?.codexm_data ?? r?.structuredContent?.codexm_data ?? r?.codexm_data ?? r;}
 }
 
-export function startUI(){
-  const $=id=>document.getElementById(id), bridge=new Bridge();
-  const state={snapshot:null,tab:'tasks',selected:'',details:null,detailKey:'',drafts:new Map(),history:new Map(),historyCursor:new Map(),stars:[],busy:false,polling:false,detailSequence:0,detailInFlight:new Map(),olderTurns:[],olderCursor:undefined,logFilters:{scope:'',account:'',period:'0'},conversationSignature:'',controlsSignature:'',logs:null,settings:null,listLimit:300,listFilter:'',focusComposer:false};
+export function startUI(options={}){
+  const $=id=>document.getElementById(id), bridge=options.bridge||new Bridge();
+  const state={snapshot:null,tab:'tasks',selected:'',details:null,detailKey:'',drafts:new Map(),history:new Map(),historyCursor:new Map(),stars:[],busy:false,polling:false,detailSequence:0,detailInFlight:new Map(),olderTurns:[],olderCursor:undefined,logFilters:{scope:'',account:'',period:'0'},conversationSignature:'',controlsSignature:'',logs:null,settings:null,listLimit:300,listFilter:'',focusComposer:false,accountsView:null,accountsSignature:'',offlineSignature:'',initialViewApplied:false,login:null,loginView:null,loginTimer:null,loginSequence:0,loginInFlight:false,loopTimer:null,disposed:false};
   const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n;};
   const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.addEventListener('click',fn);return b;};
   const option=(select,value,text)=>{const n=el('option',text);n.value=value;select.append(n);};
@@ -66,18 +99,21 @@ export function startUI(){
   async function control(command,args){if(!canManage())throw new Error('관리 서비스 업데이트가 필요합니다. 기존 작업을 보존하는 서비스 인계를 먼저 완료하세요.');return bridge.call('codexm_control',{command,args});}
   function savedUI(){try{const v=window.openai?.widgetState;if(v){state.stars=Array.isArray(v.stars)?v.stars:[];state.selected=v.selected||'';for(const [k,vv]of Object.entries(v.drafts||{}))if(typeof vv==='string')state.drafts.set(k,vv);}}catch{}}
   function persist(){if(typeof window.openai?.setWidgetState==='function')window.openai.setWidgetState({selected:state.selected,stars:state.stars,drafts:Object.fromEntries(state.drafts)});}
-  function closeDialog(){$('dialog').close();$('message').focus();}
+  function closeDialog(){state.loginSequence++;clearTimeout(state.loginTimer);if(loginPending(state.login))void cancelLogin(true);state.loginView=null;$('dialog').close();if(!$('message').disabled)$('message').focus();}
   function dialog(title){const d=$('dialog-body');d.replaceChildren(el('h2',title));$('dialog').showModal();return d;}
   function dialogEnd(d,submit){const bar=el('div',null,'toolbar');bar.append(button('취소',closeDialog));if(submit)bar.append(submit);d.append(bar);}
-  function setTab(tab){state.tab=tab;for(const t of ['tasks','accounts','logs','settings'])$(t).hidden=t!==tab;for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===tab);if(tab==='accounts')renderAccounts();if(tab==='logs')void loadLogs();if(tab==='settings')void loadSettings();}
+  function setTab(tab){if(state.snapshot?.connected===false&&tab!=='accounts'){message('관리 서비스를 시작하면 작업·사용 기록·설정을 사용할 수 있습니다.');return;}state.tab=tab;for(const t of ['tasks','accounts','logs','settings'])$(t).hidden=t!==tab;for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===tab);if(tab==='accounts')renderAccounts();if(tab==='logs')void loadLogs();if(tab==='settings')void loadSettings();}
+  function initialView(data){const view=data?.initial_view;if(!state.initialViewApplied&&['tasks','accounts','logs','settings'].includes(view)){state.initialViewApplied=true;setTab(view);}}
   async function refresh(){
-    if(state.polling)return;state.polling=true;
+    if(state.disposed||state.polling)return;state.polling=true;
     try{
-      state.snapshot=await bridge.call('codexm_snapshot');
+      const next=await bridge.call('codexm_snapshot');if(state.disposed)return;state.snapshot=next;
       const snap=state.snapshot;
-      $('app').hidden=!snap.connected;$('offline').hidden=!!snap.connected;
+      initialView(snap);$('app').hidden=false;$('offline').hidden=!!snap.connected;$('accounts-strip').hidden=!snap.connected;
+      for(const b of document.querySelectorAll('[data-tab]'))b.disabled=!snap.connected&&b.dataset.tab!=='accounts';
       $('connection').textContent=snap.connected?'● 관리 서비스 연결됨':'○ 관리 서비스 중지';
-      if(!snap.connected){renderOffline();return;}
+      $('new-button').disabled=!snap.connected||!canManage();
+      if(!snap.connected){if(state.tab!=='accounts')setTab('accounts');renderOffline();renderAccounts();return;}
       $('observed').textContent=`마지막 관측 ${date(snap.at)}`;
       $('new-button').disabled=!canManage();
       if(!canManage())message('연결된 관리 서비스가 이전 버전입니다. 업데이트/인계 후 세션 변경과 설정 편집이 활성화됩니다.');
@@ -86,7 +122,13 @@ export function startUI(){
     }catch(e){$('connection').textContent='○ 연결 확인 필요';message(e.message,true);}
     finally{state.polling=false;}
   }
-  function renderOffline(){const d=$('offline');d.replaceChildren(el('h2','로컬 관리자 연결'),el('p',state.snapshot.message||'관리 서비스를 시작하세요.'));const s=select(state.snapshot.account_names||[],state.snapshot.manager_account);if(state.snapshot.setup_required)field(d,'처음 사용할 관리자 계정',s);d.append(button('관리 서비스 시작',()=>action(async()=>{await bridge.call('codexm_start',{manager_account:s.value});message('관리 서비스에 연결했습니다.');}),'primary'));}
+  function renderOffline(){
+    const d=$('offline'),snap=state.snapshot||{},names=snap.account_names||[],signature=JSON.stringify([names,snap.manager_account,snap.setup_required,snap.message]);if(signature===state.offlineSignature)return;state.offlineSignature=signature;
+    const previous=d.querySelector('select')?.value;d.replaceChildren(el('h2','로컬 관리자 연결'),el('p',snap.message||'계정을 준비한 뒤 관리 서비스를 시작하세요.'));
+    if(!names.length){d.append(el('p','아래 계정 화면에서 계정을 추가하고 공식 로그인 페이지에서 인증하세요.','hint'));return;}
+    const s=field(d,snap.setup_required?'처음 사용할 관리자 계정':'관리자 계정',select(names,names.includes(previous)?previous:snap.manager_account||names[0]));
+    d.append(button('관리 서비스 시작',()=>action(async()=>{await bridge.call('codexm_start',{manager_account:s.value});message('관리 서비스에 연결했습니다.');}),'primary'));
+  }
   function accountCard(name){
     const snap=state.snapshot?.status?.accounts?.find(x=>x.account===name),q=quota(snap),card=el('div',null,'account-card');card.dataset.fallback=String(name===state.snapshot?.fallback_account);
     const head=el('div');head.append(el('strong',name));if(name===state.snapshot?.fallback_account)head.append(el('span',' 예비 계정','badge'));card.append(head);
@@ -160,7 +202,90 @@ export function startUI(){
       if(j.target_account)for(const b of card.querySelectorAll('button'))b.disabled=true;root.append(card);
     }
   }
-  function renderAccounts(){const d=$('accounts');d.replaceChildren(el('h2','계정 관리'),el('p',`우선순위: ${(state.snapshot.priority||[]).join(' → ')}. 관리자 계정: ${state.snapshot.status.manager_account}.`,'hint'),button('모든 계정 한도 새로 조회',()=>action(async()=>{await read('accounts');message('계정 한도를 다시 관측했습니다.');})));const grid=el('div',null,'grid');for(const n of state.snapshot.priority||[])grid.append(accountCard(n));d.append(grid,el('h3','계정별 관리 세션'));for(const n of state.snapshot.priority||[]){const js=state.snapshot.status.jobs.filter(j=>j.account===n);d.append(el('p',`${n} · ${js.length}개 · 실행 중 ${js.filter(j=>j.state==='running').length}개`));}d.append(el('p','비율은 계정 전체 한도입니다. 여러 세션의 사용량이 합쳐져 있으며 한 세션의 정확한 소비 비율을 뜻하지 않습니다.','hint'),el('p','새 로그인 추가: 터미널에서 codexm account 이름 --login. 공식 Codex 인증 화면을 사용합니다.','hint'));}
+  function renderAccounts(){
+    const d=$('accounts'),snap=state.snapshot||{},names=accountNames(snap),available=snap.login_available===true,signature=JSON.stringify([names,available,!!snap.connected,canManage()]);
+    if(signature!==state.accountsSignature||!state.accountsView){
+      state.accountsSignature=signature;d.replaceChildren(el('h2','계정 관리'));
+      const summary=el('p',null,'hint'),bar=el('div',null,'toolbar'),add=button('계정 추가',()=>loginDialog(),'primary'),reload=button('모든 계정 한도 새로 조회',()=>action(async()=>{await read('accounts');message('계정 한도를 다시 관측했습니다.');})),settings=button('우선순위·관리 설정',()=>setTab('settings'));
+      add.disabled=!available;reload.disabled=!snap.connected;settings.disabled=!snap.connected||!canManage();bar.append(add,reload,settings);d.append(summary,bar);
+      if(!available)d.append(el('p','이 연결에서는 GUI 로그인을 사용할 수 없습니다. codexm 플러그인을 갱신한 뒤 다시 열어주세요.','hint'));
+      if(!snap.connected)d.append(el('p','계정 추가와 재로그인은 관리 서비스가 중지된 상태에서도 가능합니다. 관리자·기본·예비 계정과 순서는 관리 서비스를 시작한 뒤 설정에서 저장하세요.','hint'));
+      const grid=el('div',null,'grid'),cards=new Map();
+      for(const name of names){
+        const card=el('div',null,'account-card'),metrics=el('div'),roles=el('p',null,'hint'),sessions=el('p',null,'hint'),actions=el('div',null,'toolbar'),login=button('재로그인',()=>loginDialog(name));login.setAttribute('aria-label',`${name} 재로그인`);login.disabled=!available;actions.append(login);card.append(metrics,roles,sessions,actions);grid.append(card);cards.set(name,{card,metrics,roles,sessions});
+      }
+      if(!names.length)grid.append(el('p','저장된 계정이 없습니다. 계정 추가를 눌러 별칭과 로그인 방식을 선택하세요.','hint'));
+      d.append(grid,el('p','비율은 계정 전체 한도입니다. 여러 세션의 사용량이 합쳐져 있으며 한 세션의 정확한 소비 비율을 뜻하지 않습니다.','hint'));
+      state.accountsView={summary,cards};
+    }
+    const view=state.accountsView,status=snap.status||{},manager=status.manager_account||snap.manager_account,worker=status.default_worker_account||snap.default_worker_account;
+    view.summary.textContent=`우선순위: ${(snap.priority||[]).join(' → ')||'미설정'} · 관리자: ${manager||'미설정'} · 새 작업 기본: ${worker||'미설정'}`;
+    for(const [name,refs]of view.cards){
+      const fresh=accountCard(name);refs.metrics.replaceChildren(...fresh.children);refs.card.dataset.fallback=String(name===snap.fallback_account);
+      const index=(snap.priority||[]).indexOf(name),roles=[index>=0?`우선순위 ${index+1}`:'자동 선택에서 제외',name===manager?'관리자':'',name===worker?'새 작업 기본':'',name===snap.fallback_account?'예비 계정':''];refs.roles.textContent=roles.filter(Boolean).join(' · ');
+      const jobs=(status.jobs||[]).filter(j=>j.account===name);refs.sessions.textContent=`관리 세션 ${jobs.length}개 · 실행 중 ${jobs.filter(j=>j.state==='running').length}개`;
+    }
+  }
+  async function openLoginPage(){
+    const url=safeLoginURL(state.login?.auth_url||state.login?.verification_url);if(!url){message('공식 로그인 페이지 주소를 확인하지 못했습니다. 요청을 취소하고 다시 시작하세요.',true);return;}
+    try{const result=bridge.compat&&typeof window.openai?.openExternal==='function'?await window.openai.openExternal({href:url,redirectUrl:false}):await bridge.request('ui/open-link',{url},10000);if(result?.isError)throw new Error('link denied');}catch{message('공식 로그인 페이지를 열지 못했습니다. 잠시 후 다시 눌러주세요.',true);}
+  }
+  function renderLogin(){
+    const view=state.loginView,login=state.login;if(!view||!login||!$('dialog').open)return;
+    if(!loginPending(login)){delete login.auth_url;delete login.verification_url;delete login.user_code;}
+    view.form.hidden=true;view.warning.textContent='';view.status.replaceChildren(el('strong',({pending:'공식 페이지에서 로그인 대기',verifying:'인증 확인 중',succeeded:'로그인 완료',failed:'로그인 실패',canceled:'로그인 취소됨',expired:'로그인 요청 종료'})[login.status]||'로그인 상태 확인 중'));
+    view.actions.replaceChildren();
+    if(loginPending(login)){
+      view.status.append(el('p',`${login.account} 계정의 공식 Codex 인증을 완료하세요. 이 화면이 자동으로 확인합니다.`,'hint'));
+      if(login.user_code)view.status.append(el('p','공식 로그인 페이지에 입력할 인증 코드'),el('code',login.user_code));
+      const link=button('공식 로그인 페이지 열기',openLoginPage,'primary');link.disabled=!safeLoginURL(login.auth_url||login.verification_url);view.actions.append(link,button('로그인 취소',()=>void cancelLogin()));
+      const deadline=login.deadline?date(login.deadline):'시작 후 최대 15분';view.status.append(el('p',`이 창의 로그인 요청 종료: ${deadline}. codexm의 관리 제한이며 공식 인증 코드의 만료 시각과는 다를 수 있습니다.`,'hint'));
+      if(link.disabled)view.status.append(el('p','공식 로그인 페이지 주소를 확인하지 못했습니다. 로그인 요청을 취소하고 다시 시작하세요.','bad'));
+    }else{
+      if(login.status==='succeeded')view.status.append(el('p',`${login.account} 계정을 저장했습니다. 계정 순서와 관리자·기본 계정은 설정에서 별도로 선택하세요.`,'hint'));
+      else if(login.error)view.status.append(el('p',login.error,'bad'));
+      view.actions.append(button('닫기',closeDialog));if(['failed','expired','canceled'].includes(login.status))view.actions.append(button('다시 시도',()=>loginDialog(login.account)));
+    }
+  }
+  function scheduleLoginPoll(sequence){
+    clearTimeout(state.loginTimer);if(state.disposed||!loginPending(state.login)||!$('dialog').open)return;
+    state.loginTimer=setTimeout(()=>void pollLogin(sequence),2000);
+  }
+  async function pollLogin(sequence){
+    const current=state.login;if(state.disposed||sequence!==state.loginSequence||!loginPending(current)||!$('dialog').open)return;
+    if(document.hidden){scheduleLoginPoll(sequence);return;}
+    try{
+      const update=await bridge.call('codexm_account',{command:'status',login_id:current.login_id});
+      if(state.disposed||sequence!==state.loginSequence||state.login?.login_id!==current.login_id)return;
+      state.login={...current,...update};if(!loginPending(state.login)){delete state.login.auth_url;delete state.login.verification_url;delete state.login.user_code;}
+      renderLogin();if(state.login.status==='succeeded')await refresh();
+    }catch{if(sequence===state.loginSequence&&state.loginView)state.loginView.warning.textContent='로그인 상태를 확인하지 못했습니다. 같은 요청의 상태를 다시 확인합니다.';}
+    scheduleLoginPoll(sequence);
+  }
+  async function cancelLogin(silent=false){
+    const current=state.login;if(!loginPending(current))return;
+    clearTimeout(state.loginTimer);
+    try{const update=await bridge.call('codexm_account',{command:'cancel',login_id:current.login_id});if(state.login?.login_id===current.login_id){state.login={...current,...update};delete state.login.auth_url;delete state.login.verification_url;delete state.login.user_code;if(!silent)renderLogin();}}
+    catch{if(!silent){message('로그인 취소 응답을 확인하지 못했습니다. 같은 요청의 상태를 다시 확인합니다.',true);scheduleLoginPoll(state.loginSequence);}}
+  }
+  function loginDialog(account=''){
+    if(loginPending(state.login)&&$('dialog').open){$('dialog').focus();return;}
+    clearTimeout(state.loginTimer);state.login=null;const sequence=++state.loginSequence,d=dialog(account?'계정 재로그인':'계정 추가'),form=el('form'),alias=input(account);alias.pattern='[A-Za-z0-9][A-Za-z0-9_-]{0,63}';alias.maxLength=64;alias.required=true;alias.readOnly=!!account;alias.autocomplete='off';field(form,'계정 별칭',alias);
+    const mode=field(form,'로그인 방식',select([['browser','브라우저 로그인'],['device','인증 코드로 로그인']],'browser'));form.append(el('p','별칭은 영문·숫자로 시작하고 영문·숫자·밑줄·하이픈을 사용할 수 있습니다. 인증은 공식 Codex 페이지에서 직접 진행합니다.','hint'));
+    const submit=el('button','로그인 시작','primary');submit.type='submit';const formActions=el('div',null,'toolbar');formActions.append(button('닫기',closeDialog),submit);form.append(formActions);
+    const status=el('div'),warning=el('p',null,'hint'),actions=el('div',null,'toolbar');status.setAttribute('role','status');status.setAttribute('aria-live','polite');warning.setAttribute('role','status');d.append(form,status,warning,actions);state.loginView={form,status,warning,actions};
+    form.onsubmit=async event=>{
+      event.preventDefault();if(state.loginInFlight||!form.reportValidity())return;const name=alias.value.trim();if(name==='default'){status.textContent='별칭 default는 사용할 수 없습니다.';alias.focus();return;}if(!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)){status.textContent='계정 별칭을 확인하세요.';alias.focus();return;}
+      state.loginInFlight=true;submit.disabled=true;status.textContent='공식 로그인 요청을 준비합니다.';
+      try{
+        const result=await bridge.call('codexm_account',{command:'start',account:name,mode:mode.value});
+        if(state.disposed||sequence!==state.loginSequence||!$('dialog').open||!d.contains(form)){if(loginPending(result))void bridge.call('codexm_account',{command:'cancel',login_id:result.login_id}).catch(()=>{});return;}
+        state.login=result;renderLogin();scheduleLoginPoll(sequence);if(result.status==='succeeded')await refresh();
+      }catch(error){if(sequence===state.loginSequence&&$('dialog').open)status.textContent=error.message||'로그인을 시작하지 못했습니다.';}
+      finally{state.loginInFlight=false;submit.disabled=false;}
+    };
+    if(!account)alias.focus();
+  }
   async function loadLogs(){try{state.logs=await read('logs',{limit:500});if(state.tab==='logs')renderLogs();}catch(e){message(e.message,true);}}
   function renderLogs(){
     const d=$('logs');d.replaceChildren(el('h2','사용 기록'),el('p','계정 전환 시점과 사유, 세션 실행 시간, 한도 관측을 함께 봅니다.','hint'));
@@ -184,8 +309,12 @@ export function startUI(){
   $('history-button').onclick=()=>{const target=state.selected,d=dialog('이 세션의 입력 기록');for(const text of [...(state.history.get(target)||[])].reverse()){d.append(button(text.slice(0,120),()=>{if(state.selected===target){$('message').value=text;state.drafts.set(target,text);}closeDialog();}));}if(!d.querySelector('button'))d.append(el('p','이 화면에서 보낸 지시가 아직 없습니다.','hint'));dialogEnd(d);};
   for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>setTab(b.dataset.tab);
   $('new-button').onclick=newDialog;for(const id of ['search','state-filter','project-filter'])$(id).addEventListener(id==='search'?'input':'change',renderList);
-  bridge.onResult=r=>{const data=r?._meta?.codexm_data;if(data?.connected!=null&&!state.snapshot){state.snapshot=data;void refresh();}};
-  savedUI();void(async()=>{try{await bridge.initialize();await refresh();}catch(e){message('이 호스트의 MCP Apps 연결을 확인할 수 없습니다. '+e.message,true);$('connection').textContent='연결 지원 확인 필요';}async function loop(){if(!document.hidden)await refresh();setTimeout(loop,4000);}setTimeout(loop,4000);})();
-  return {state,refresh};
+  bridge.onResult=r=>{const data=r?._meta?.codexm_data||r?.structuredContent?.codexm_data;initialView(data);if(data?.connected!=null&&!state.snapshot){state.snapshot=data;void refresh();}};
+  bridge.onInput=params=>initialView(params?.arguments||params?.toolInput||params);
+  function dispose(){if(state.disposed)return;state.disposed=true;state.loginSequence++;clearTimeout(state.loopTimer);clearTimeout(state.loginTimer);if(loginPending(state.login))void cancelLogin(true);state.loginView=null;bridge.resize?.disconnect?.();window.removeEventListener?.('pagehide',dispose);}
+  $('dialog').addEventListener('cancel',event=>{event.preventDefault();closeDialog();});window.addEventListener('pagehide',dispose);
+  savedUI();initialView(window.openai?.toolInput);
+  const ready=(async()=>{try{await bridge.initialize();if(!state.disposed)await refresh();}catch(e){if(!state.disposed){message('이 호스트의 MCP Apps 연결을 확인할 수 없습니다. '+e.message,true);$('connection').textContent='연결 지원 확인 필요';}}async function loop(){if(state.disposed)return;if(!document.hidden)await refresh();if(!state.disposed)state.loopTimer=setTimeout(loop,options.pollInterval??4000);}if(!state.disposed&&options.pollInterval!==0)state.loopTimer=setTimeout(loop,options.pollInterval??4000);})();
+  return {state,refresh,ready,dispose};
 }
 if(typeof document!=='undefined'&&document.getElementById('app'))startUI();

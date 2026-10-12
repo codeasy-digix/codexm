@@ -1,4 +1,4 @@
 interface:
   display_name: "codexm"
-  short_description: "현재 Codex 대화에 계정 관리를 등록하고 관리 패널을 사용합니다"
-  default_prompt: "Use $codexm to register this existing Codex conversation for account management."
+  short_description: "관리·계정 버튼과 현재 대화의 관리 등록을 안내합니다"
+  default_prompt: "Use $codexm to explain the codexm 관리 and 계정 관리 buttons. Register this chat only if I explicitly request management."

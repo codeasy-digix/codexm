@@ -89,9 +89,12 @@ func TestNativeSettingsRejectMalformedUpdatesWithoutChangingFile(t *testing.T) {
 
 func TestPreviousHostResourceReferenceRemainsReadableAfterPluginUpgrade(t *testing.T) {
 	m := configuredPlugin(t)
-	result, rpcErr := m.handle(context.Background(), rpcRequest{Method: "resources/read", Params: json.RawMessage(`{"uri":"ui://codexm/manager-v1.html"}`)})
-	b, _ := json.Marshal(result)
-	if rpcErr != nil || !strings.Contains(string(b), legacyResourceURI) || !strings.Contains(string(b), "ui/initialize") {
-		t.Fatal("cached host resource reference broke after upgrade")
+	for _, uri := range []string{legacyResourceURI, olderResourceURI, previousResourceURI} {
+		params, _ := json.Marshal(map[string]string{"uri": uri})
+		result, rpcErr := m.handle(context.Background(), rpcRequest{Method: "resources/read", Params: params})
+		b, _ := json.Marshal(result)
+		if rpcErr != nil || !strings.Contains(string(b), uri) || !strings.Contains(string(b), "ui/initialize") {
+			t.Fatal("cached host resource reference broke after upgrade", uri)
+		}
 	}
 }

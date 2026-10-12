@@ -48,8 +48,11 @@ func SafeText(s string) string {
 var secretPattern = regexp.MustCompile(`(?i)(?:bearer\s+[^\s"']+|(?:sk-|sk-proj-)[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:access_token|refresh_token|id_token|api_key|authorization)["']?\s*[:=]\s*["']?[^\s,"'}]+)`)
 
 type Client struct {
-	Events         chan Message
-	Done           chan struct{}
+	Events chan Message
+	Done   chan struct{}
+	// ProcessDone is non-nil for an owned stdio process and closes after Wait.
+	// Done alone means the RPC transport closed, which can precede process exit.
+	ProcessDone    <-chan struct{}
 	write          func([]byte) error
 	closeTransport func() error
 	pending        map[string]chan Message
@@ -175,6 +178,8 @@ func StartStdio(ctx context.Context, cmd *exec.Cmd) (*Client, error) {
 		return nil, e
 	}
 	c := newClient()
+	processDone := make(chan struct{})
+	c.ProcessDone = processDone
 	c.write = func(b []byte) error { _, e := in.Write(append(b, '\n')); return e }
 	c.closeTransport = func() error { _ = in.Close(); return nil }
 	go func() {
@@ -189,10 +194,15 @@ func StartStdio(ctx context.Context, cmd *exec.Cmd) (*Client, error) {
 		}
 		c.finish(e)
 	}()
-	go func() { e := cmd.Wait(); c.finish(e) }()
+	go func() { e := cmd.Wait(); c.finish(e); close(processDone) }()
 	if e = c.Initialize(ctx); e != nil {
 		c.Close()
-		_ = cmd.Process.Kill()
+		if cmd.Cancel != nil {
+			_ = cmd.Cancel()
+		} else {
+			_ = cmd.Process.Kill()
+		}
+		<-processDone
 		return nil, e
 	}
 	return c, nil

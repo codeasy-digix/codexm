@@ -80,6 +80,11 @@ func TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill(t *testi
 				if !bytes.Contains(capabilities, []byte("openai/settings")) || entry.Tools["codexm_settings_read"] == nil || entry.Tools["codexm_settings_update"] == nil {
 					t.Fatal("native settings extension absent")
 				}
+				for _, name := range []string{"codexm_account", "codexm_accounts_open"} {
+					if !bytes.Contains(entry.Tools[name], []byte(`"visibility":["app"]`)) {
+						t.Fatal("native account UI action absent or model-visible", name)
+					}
+				}
 				server = entry.Name
 			}
 		}
@@ -94,7 +99,7 @@ func TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill(t *testi
 	if e = c.Call(ctx, "mcpServer/tool/call", map[string]any{"threadId": thread.Thread.ID, "server": server, "tool": "codexm_settings_read", "arguments": map[string]any{}}, &result); e != nil {
 		t.Fatal(e)
 	}
-	if !bytes.Contains(result, []byte("codexm_open")) || !bytes.Contains(result, []byte("preferred_recheck_seconds")) {
+	if !bytes.Contains(result, []byte("codexm_open")) || !bytes.Contains(result, []byte("codexm_accounts_open")) || !bytes.Contains(result, []byte("preferred_recheck_seconds")) {
 		t.Fatal("settings did not expose management action and account policy")
 	}
 	// Exercise the real native resource transport as well as tool discovery.
@@ -104,6 +109,12 @@ func TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill(t *testi
 	}
 	if !bytes.Contains(result, []byte(ResourceURI)) {
 		t.Fatal("open result omitted its resource fallback")
+	}
+	if e = c.Call(ctx, "mcpServer/tool/call", map[string]any{"threadId": thread.Thread.ID, "server": server, "tool": "codexm_accounts_open", "arguments": map[string]any{}}, &result); e != nil {
+		t.Fatal(e)
+	}
+	if !bytes.Contains(result, []byte(ResourceURI)) || !bytes.Contains(result, []byte(`"initial_view":"accounts"`)) || !bytes.Contains(result, []byte(`"login_available":true`)) {
+		t.Fatal("account button did not reach the initial offline sign-in view")
 	}
 	if e = c.Call(ctx, "mcpServer/resource/read", map[string]any{"threadId": thread.Thread.ID, "server": server, "uri": ResourceURI}, &result); e != nil {
 		t.Fatal(e)

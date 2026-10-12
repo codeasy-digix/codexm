@@ -1,6 +1,6 @@
 ---
 name: codexm
-description: Register the current local Codex conversation with codexm when the user invokes @codexm or asks to apply codexm to this chat. Also explain its built-in plugin panels and inspect registration status.
+description: Explain codexm's direct management and account buttons, inspect registration status, or register the current local Codex conversation when the user explicitly asks to apply account management.
 ---
 
 An explicit `@codexm` invocation asking to apply management to this chat authorizes
@@ -15,12 +15,21 @@ account already changed. The returned `account` is the planned codexm worker acc
 `registration.origin_account`, when known, identifies the original execution account.
 Registration preserves its thread, goal and budget.
 
-For a request to open the management screen, use the available `codexm_open` tool.
-The plugin declares sidebar, conversation panel and settings entrypoints; their
-visibility depends on the host. Try now on the plugin details is not a managed job
-start action. A successful open tool call does not prove the UI was displayed.
-The manager UI should show tasks, accounts, usage logs, settings and New task.
-Do not launch a separate app or
+The primary GUI entrypoints are buttons: Plugins -> codexm -> `codexm 관리`
+and `계정 관리`. The sidebar and conversation panel also expose `codexm 관리`
+when supported by the host. The same panel has `작업`, `계정`, `사용 기록`,
+`설정` and `+ 새 작업`. `계정 관리` opens the account tab directly; its
+`계정 추가` and `재로그인` buttons use official browser/device authentication,
+including first setup while the manager service is stopped. Do not ask users
+to type a natural-language chat request as the normal way to open or operate it.
+
+If explicitly asked to open it through this chat, the available `codexm_open`
+tool requests the panel. Calls nested inside code-mode `exec` are not native
+MCP cards in some hosts. A successful tool result does not prove the UI was
+displayed. Try now on the plugin details is not a managed job start action.
+`@codexm manage` is not an implemented native slash/zero-token command; do not
+present it or `/setting` as one. An open request alone never authorizes chat
+registration, account login or starting work. Do not launch a separate app or
 website. If the host has not loaded the local MCP connection, report that exact
 condition; a filesystem link is not a plugin invocation.
 

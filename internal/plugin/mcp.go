@@ -22,14 +22,22 @@ import (
 	assets "github.com/codeasy-digix/codexm/plugin"
 )
 
-const ResourceURI = "ui://codexm/manager-v3.html"
-const previousResourceURI = "ui://codexm/manager-v2.html"
+const ResourceURI = "ui://codexm/manager-v4.html"
+const previousResourceURI = "ui://codexm/manager-v3.html"
+const olderResourceURI = "ui://codexm/manager-v2.html"
 const legacyResourceURI = "ui://codexm/manager-v1.html"
 const ResourceMIME = "text/html;profile=mcp-app"
 
 type MCP struct {
 	Config config.Config
 	Self   string
+	Logins loginBroker
+}
+type loginBroker interface {
+	Start(context.Context, string, string) (accounts.LoginStatus, error)
+	Status(string) (accounts.LoginStatus, error)
+	Cancel(context.Context, string) (accounts.LoginStatus, error)
+	Close()
 }
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -45,6 +53,10 @@ type rpcError struct {
 func (m MCP) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if m.Logins == nil {
+		m.Logins = accounts.NewLoginBroker(ctx, m.Config)
+	}
+	defer m.Logins.Close()
 	// Stdio may be idle when the host terminates the server. Closing its reader
 	// unblocks Scan so cancellation can finish without another input line.
 	finished := make(chan struct{})
@@ -98,6 +110,10 @@ func (m MCP) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			respond(req.ID, result, err)
 		}(req)
 	}
+	// EOF ends ownership of login helpers even while another request is active.
+	// Do not wait for a login's provider deadline or cancel unrelated RPCs merely
+	// because a client closed stdin normally.
+	m.Logins.Close()
 	active.Wait()
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -140,15 +156,24 @@ func toolList() []any {
 		meta := map[string]any{"ui": map[string]any{"visibility": []string{"app"}}}
 		if render {
 			meta = map[string]any{"ui": map[string]any{"resourceUri": ResourceURI}, "openai/outputTemplate": ResourceURI, "openai/ui": map[string]any{"entrypoints": []any{map[string]any{"type": "global"}, map[string]any{"type": "thread"}, map[string]any{"type": "settings"}}}}
+			if name == "codexm_accounts_open" {
+				meta["ui"].(map[string]any)["visibility"] = []string{"app"}
+				meta["openai/ui"] = map[string]any{"entrypoints": []any{map[string]any{"type": "settings"}}}
+			}
 		}
 		title := name
 		if name == "codexm_open" {
 			title = "codexm 관리"
+		} else if name == "codexm_accounts_open" {
+			title = "계정 관리"
 		}
 		tools = append(tools, map[string]any{"name": name, "title": title, "description": desc, "inputSchema": schema, "annotations": map[string]any{"readOnlyHint": readOnly, "destructiveHint": false, "openWorldHint": false}, "_meta": meta})
+		tools[len(tools)-1].(map[string]any)["outputSchema"] = object(map[string]any{"ok": property("boolean")}, "ok")
 	}
 	add("codexm_open", "Open the local codexm account and task manager. Merely opening it never starts a model or changes a worker account.", true, object(map[string]any{}), true)
+	add("codexm_accounts_open", "Open account management directly from plugin settings, including first account setup. Opening the panel does not sign in or start the manager.", true, object(map[string]any{}), true)
 	add("codexm_snapshot", "Refresh account observations and task list without a model call. Cached quotas include their observation time.", true, object(map[string]any{}), false)
+	add("codexm_account", "Explicit account sign-in buttons only. Start official browser or device sign-in, inspect its status or cancel this connection's request. Authentication details are private UI metadata; existing credentials change only after verification.", false, object(map[string]any{"command": choice("start", "status", "cancel"), "account": property("string"), "mode": choice("browser", "device"), "login_id": map[string]any{"type": "string", "pattern": "^[a-f0-9]{32}$"}}, "command"), false)
 	add("codexm_ui_ready", "Record an optional panel bridge observation. Never starts supervision or a model, and does not prove the host displayed the UI.", false, object(map[string]any{"ui_build": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}, "bridge": choice("mcp-app", "legacy"), "visible": property("boolean")}, "ui_build", "bridge", "visible"), false)
 	add("codexm_read", "Read selected conversation, logs, settings or models. Account refresh uses authenticated quota APIs without generating a turn.", true, object(map[string]any{"command": choice("read", "details", "logs", "events", "accounts", "settings-edit", "models"), "id": property("string"), "thread_id": property("string"), "cursor": property("string"), "limit": property("integer")}, "command"), false)
 	add("codexm_control", "Explicit user action on a selected managed conversation. Register preserves the existing chat and goal without generating a turn. New/send/resume may start work. Account switching obeys fallback restrictions.", false, object(map[string]any{"command": choice("new", "resume", "manage", "register", "unregister", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account"), "args": object(map[string]any{"id": property("string"), "thread_id": property("string"), "account": property("string"), "expected_account": property("string"), "operation_id": property("string"), "run_id": property("string"), "text": property("string"), "steer": property("boolean"), "manage": property("boolean"), "kind": choice("chat", "task", "goal"), "cwd": property("string"), "title": property("string"), "model": property("string"), "effort": property("string"), "prompt": property("string"), "goal": property("string"), "read_only": property("boolean"), "request_id": map[string]any{}, "result": map[string]any{}})}, "command", "args"), false)
@@ -186,7 +211,7 @@ func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 		if e := json.Unmarshal(req.Params, &p); e != nil {
 			return bad(e)
 		}
-		if p.URI != ResourceURI && p.URI != previousResourceURI && p.URI != legacyResourceURI {
+		if p.URI != ResourceURI && p.URI != previousResourceURI && p.URI != olderResourceURI && p.URI != legacyResourceURI {
 			return bad(errors.New("unknown UI resource"))
 		}
 		html, e := HTML()
@@ -209,6 +234,11 @@ func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 		}
 		result, e := m.call(ctx, p.Name, p.Arguments)
 		if e != nil {
+			if p.Name == "codexm_account" {
+				// Even unexpected implementation errors must not inject provider
+				// URLs, one-time codes or account identifiers into model context.
+				return map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": "계정 로그인 요청을 처리하지 못했습니다. 별칭과 진행 중인 로그인을 확인하고 다시 시도하세요."}}}, nil
+			}
 			return map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": cr.SafeText(e.Error())}}}, nil
 		}
 		if p.Name == "codexm_settings_read" || p.Name == "codexm_settings_update" {
@@ -218,11 +248,13 @@ func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 		// the surrounding model context on every refresh.
 		message := "codexm 관리 데이터를 조회했습니다."
 		meta := map[string]any{"codexm_data": result}
-		if p.Name == "codexm_open" {
+		if p.Name == "codexm_open" || p.Name == "codexm_accounts_open" {
 			message = "codexm 관리 화면 열기를 요청했습니다. 실제 화면 표시는 호스트에서 확인해야 합니다."
 			// Some hosts resolve the completed result before their tool catalog.
 			meta["ui"] = map[string]any{"resourceUri": ResourceURI}
 			meta["openai/outputTemplate"] = ResourceURI
+		} else if p.Name == "codexm_account" {
+			message = "계정 로그인 요청을 처리했습니다. 상태는 계정 관리 화면에서 확인하세요."
 		}
 		return map[string]any{"content": []any{map[string]any{"type": "text", "text": message}}, "structuredContent": map[string]any{"ok": true}, "_meta": meta}, nil
 	default:
@@ -240,11 +272,18 @@ func (m MCP) call(ctx context.Context, name string, args json.RawMessage) (any, 
 	if name == "codexm_settings_update" {
 		return m.updatePluginSettings(ctx, args)
 	}
-	if name == "codexm_open" || name == "codexm_snapshot" {
-		if name == "codexm_open" {
+	if name == "codexm_account" {
+		return m.accountLogin(ctx, args)
+	}
+	if name == "codexm_open" || name == "codexm_accounts_open" || name == "codexm_snapshot" {
+		if name != "codexm_snapshot" {
 			_ = m.observePanel("open_requested", nil)
 		}
-		return m.snapshot(ctx)
+		snapshot, e := m.snapshot(ctx)
+		if e == nil && name == "codexm_accounts_open" {
+			snapshot.(map[string]any)["initial_view"] = "accounts"
+		}
+		return snapshot, e
 	}
 	if name == "codexm_start" {
 		var a struct {
@@ -344,6 +383,40 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+func (m MCP) accountLogin(ctx context.Context, raw json.RawMessage) (any, error) {
+	if m.Logins == nil {
+		return nil, errors.New("account sign-in connection is unavailable")
+	}
+	var args struct {
+		Command string `json:"command"`
+		Account string `json:"account"`
+		Mode    string `json:"mode"`
+		LoginID string `json:"login_id"`
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		return nil, errors.New("invalid account sign-in request")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&args) != nil {
+		return nil, errors.New("invalid account sign-in request")
+	}
+	if args.Command == "start" {
+		if len(fields) != 3 || fields["account"] == nil || fields["mode"] == nil || args.LoginID != "" || !config.Nickname.MatchString(args.Account) || args.Account == "default" || (args.Mode != "browser" && args.Mode != "device") {
+			return nil, errors.New("choose an account nickname and sign-in mode")
+		}
+		return m.Logins.Start(ctx, args.Account, args.Mode)
+	}
+	if (args.Command != "status" && args.Command != "cancel") || len(fields) != 2 || fields["login_id"] == nil || args.Account != "" || args.Mode != "" || len(args.LoginID) != 32 || strings.Trim(args.LoginID, "0123456789abcdef") != "" {
+		return nil, errors.New("select this connection's sign-in request")
+	}
+	if args.Command == "cancel" {
+		return m.Logins.Cancel(ctx, args.LoginID)
+	}
+	return m.Logins.Status(args.LoginID)
+}
+
 func (m MCP) snapshot(ctx context.Context) (any, error) {
 	c, e := config.Load(m.Config.Path)
 	if e != nil {
@@ -353,8 +426,13 @@ func (m MCP) snapshot(ctx context.Context) (any, error) {
 	if e != nil && c.Manager.Account != "" {
 		return nil, e
 	}
+	if names == nil {
+		names = []string{}
+	}
+	snapshot := map[string]any{"connected": false, "setup_required": c.Manager.Account == "", "account_names": names, "login_available": m.Logins != nil, "manager_account": c.Manager.Account, "default_worker_account": c.DefaultWorker(), "priority": c.WorkerAccounts.Priority, "fallback_account": c.WorkerAccounts.FallbackAccount, "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "at": time.Now()}
 	if supervisor.Ping(ctx, c) != nil {
-		return map[string]any{"connected": false, "setup_required": c.Manager.Account == "", "account_names": names, "manager_account": c.Manager.Account, "message": "관리 서비스가 연결되지 않았습니다. 시작 버튼으로 연결하세요."}, nil
+		snapshot["message"] = "관리 서비스가 연결되지 않았습니다. 계정을 준비한 뒤 시작 버튼으로 연결하세요."
+		return snapshot, nil
 	}
 	var capability struct {
 		API int `json:"manager_api"`
@@ -379,5 +457,6 @@ func (m MCP) snapshot(ctx context.Context) (any, error) {
 		}
 	}
 	st.ManagerDecision = nil
-	return map[string]any{"connected": true, "manager_api": capability.API, "status": st, "catalog": list, "account_names": names, "priority": c.WorkerAccounts.Priority, "fallback_account": c.WorkerAccounts.FallbackAccount, "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "at": time.Now()}, nil
+	snapshot["connected"], snapshot["manager_api"], snapshot["status"], snapshot["catalog"] = true, capability.API, st, list
+	return snapshot, nil
 }

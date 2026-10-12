@@ -129,7 +129,7 @@ func AccountLoginLock(c config.Config, name string) (*os.File, error) {
 		return nil, e
 	}
 	p := filepath.Join(config.Expand(c.Runtime.AccountsDir), name, ".account-login.lock")
-	fd, e := syscall.Open(p, syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	fd, e := syscall.Open(p, syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
 	if e != nil {
 		return nil, e
 	}

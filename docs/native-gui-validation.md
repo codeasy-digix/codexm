@@ -127,3 +127,46 @@ PyYAML을 설치해 재실행한 최종 결과는 valid였다. 시스템 Python�
 writer API 조사와 코드 검토는 읽기 전용 하위 에이전트가 병렬 수행했다. 현재 공개 API의
 GUI 인계 부재는 [별도 경계 기록](gui-handoff-boundary.md)에 남긴다. 실제 설정 버튼 노출·
 관리 화면 표시와 투명한 GUI 계정 인계는 아직 완료 검증을 통과하지 않았다.
+
+## 0.5.0 계정 버튼·로그인·높이 수정 검증
+
+2026-10-13. 기본 진입을 `codexm 관리`와 `계정 관리` 버튼으로, 패널 메뉴를
+`작업·계정·사용 기록·설정`으로 통일했다. 설정 전용 계정 열기는 같은 v4 resource의
+계정 탭을 선택한다. 기존 v1/v2/v3 resource도 읽는다. 새 native slash 명령은 선언하지 않는다.
+
+실행한 검사는 다음과 같다.
+
+- `go test -race ./...`, `go vet ./...`: 통과.
+- `node --test plugin/ui/*.test.mjs`: 14개 통과. UI login/취소/지연 응답, 입력·포커스,
+  민감정보 경계, URL origin 검증과 autosize ack 회귀를 포함한다.
+- skill `quick_validate.py`와 `git diff --check`: 통과.
+- 공식 설치 엔진 0.162.1에서 `TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill`
+  통과. 실제 MCP에서 두 열기 버튼과 app-only 로그인 도구, 초기 계정 탭, 설정과 resource를
+  발견·호출했으며 모델 turn은 없다.
+- `TestOfficialLoginBrokerPreviewAndCancelUseOnlyEmptyIsolatedAuth`: 통과. 빈 인증에서
+  공식 로그인 preview/cancel 응답과 process Wait 종료, lock 해제·임시 폴더 정리를 검사했다.
+  실제 계정 인증은 수행하지 않는다. 로그인 성공·원자 저장과 기존 ID·지문 충돌·취소는
+  fake fixture로 검증했다.
+
+모의 autosize host에 수정 전 UI를 연결하면 같은 3개 대화 DOM에서 height 알림이
+34회 증가하여 iframe 2452px/body 약 2500px에 도달했다. 이는 목록 fetch가 아니라
+viewport 높이 되먹임이다. 기존 모의 host는 size-changed 알림을 무시해 이 문제를 발견하지 못했다.
+
+수정 후 실제 MCP와 격리 native supervisor를 연결한 브라우저 시험에서 계정 버튼으로
+계정 탭을 열고, 계정 추가의 빈 browser preview를 취소했으며 저장 인증과 임시 로그인
+폴더가 남지 않음을 확인했다. 설정의 아래 버튼으로 account-secondary/account-work 순서를 변경·저장했고
+기존 작업 계정 account-work는 유지됐다. 자동 높이는 95→918px, 설정/공지 변경 후 959px로
+수렴했으며 자동 증가 guard는 작동하지 않았다. 390×480px에서는 body 높이와 scrollHeight가
+모두 480px, app clientHeight 333px/scrollHeight 1150px로 내부 스크롤을 제공했다.
+선택 작업의 여러 줄 한글 초안과 입력 포커스도 유지됐다. 표의 계정 한도는 시험 데이터다.
+
+시험은 named tmux `codexm-test-native-v050-20261013`, `codexm-test-panel-v050-20261013`에서
+실행했다. 기록은 private `validation/gui-20261013/{native-ui-v050,login-native-v050}.*`와
+`panel-v050/`에 남긴다. 중단된 하위 에이전트의 앞선 native panel fixture는 15분 timeout으로
+실패했으며 그 host를 종료하고 새 격리 fixture에서 다시 검증했다. 그 실패를 통과로 표기하지 않는다.
+최종 panel fixture는 정상 종료(239.45초, exit 0)했으며 위 임시 tmux와 이전 높이 시험
+세션은 모두 정리됐다. 운영 legacy worker의 tmux 3개는 유지했다.
+
+이 결과는 실제 Codex GUI 설정 화면의 버튼 표시·클릭 성공을 대신하지 않는다.
+컴퓨터 제어의 native Codex 접근 제한은 우회하지 않았고 실제 앱 렌더링은 사용자 확인이
+필요하다. 기존 GUI 대화의 투명한 계정 교체도 공개 API 경계로 아직 완료되지 않았다.
