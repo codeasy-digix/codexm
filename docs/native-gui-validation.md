@@ -170,3 +170,28 @@ viewport 높이 되먹임이다. 기존 모의 host는 size-changed 알림을 �
 이 결과는 실제 Codex GUI 설정 화면의 버튼 표시·클릭 성공을 대신하지 않는다.
 컴퓨터 제어의 native Codex 접근 제한은 우회하지 않았고 실제 앱 렌더링은 사용자 확인이
 필요하다. 기존 GUI 대화의 투명한 계정 교체도 공개 API 경계로 아직 완료되지 않았다.
+
+### 0.5.0 로컬 설치·서비스 인계
+
+구현 commit `5aed09430b60e829d8287fbb7a0b34c22f994661`을 `.home`의 고정 소스
+복구·독립 installer로 빌드·적용했다. `codexm service upgrade`와 `codexm daemon watch`로
+관찰자만 교체했다. supervisor PID 33175, watchdog PID 33231은 같은 0.5.0 불변 바이너리를
+사용한다. 공식 공용 Codex daemon PID 13383은 유지됐다.
+
+`codexm plugin install`과 공식 `codex --no-daemon plugin add codexm@local-personal --json`을
+수행했다. `plugin doctor`는 설치/활성/캐시 일치, 버전 0.5.0, MCP 도구 11개와 등록 스킬
+1개를 확인했다. UI resource가 준비됐지만 실제 화면은 확인하지 못해
+`host_ui_verified:false`, `panel_connection_matches_current_ui:false`를 그대로 기록한다.
+
+설치 전후 SQLite backup과 private 상태/인증 지문으로 작업 9개의 ID·대화·계정·실행 의도,
+목표·예산·실행 ID와 엔진, 기존 worker pane PID 3개, config/알림 정책과 전역 로그인,
+공식 Codex 바이너리를 비교하여 보존을 확인했다. `account-backup` named auth의 파일 지문은
+기존 quota reader의 `account/read refreshToken:true`로 바뀌었다. 원래 관측한 account ID가
+같음을 확인했으며 인증 파일이 byte 단위로 동일하다고 표시하지 않는다.
+새 GUI 로그인은 시험용 빈 인증 홈에서만 preview/cancel했고 운영 계정 로그인은 하지 않았다.
+
+운영 영수증은 private `validation/gui-20261013/production-v050-after/receipt.json`이다.
+`.home`에서 동시 작업 중인 파일 10개의 지문도 병합 전후 같았다. `homectl plan`을 저장하고
+독립 제품 설치기를 통해 codexm만 적용했다. `homectl doctor`의 codexm/공식 Codex 검사 2개는
+통과했으며 전체 doctor의 실패 3개는 동시 개발 중인 `markdown2pdf` 경로다. 그 파일과
+설치에는 개입하지 않았다. 다른 장비 배포나 정식 Release/npm/tap 게시도 수행하지 않았다.
