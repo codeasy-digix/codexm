@@ -149,12 +149,31 @@ func (i Installer) Install() (installReceipt, error) {
 	}
 	server := map[string]any{"command": i.Self, "args": []string{"--config", i.Config.Path, "plugin", "mcp"}}
 	compat := raw(map[string]any{"mcpServers": map[string]any{"codexm": server}})
-	modern := map[string]any{"type": "stdio", "command": i.Self, "args": []string{"--config", i.Config.Path, "plugin", "mcp"}}
+	// Portable plugins require a bare command or an executable inside the
+	// package. The launcher keeps GUI PATH and app installation paths irrelevant;
+	// it calls our owned, immutable binary without wrapping official Codex.
+	launcher := []byte("#!/bin/sh\nexec '" + strings.ReplaceAll(i.Self, "'", "'\"'\"'") + "' \"$@\"\n")
+	modern := map[string]any{"type": "stdio", "command": "./bin/codexm", "args": []string{"--config", i.Config.Path, "plugin", "mcp"}}
 	mcp := raw(map[string]any{"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json", "mcpServers": map[string]any{"codexm": modern}})
-	h := sha256.Sum256(append(append(append([]byte{}, portable...), legacy...), mcp...))
+	files := map[string][]byte{"plugin.json": portable, ".codex-plugin/plugin.json": legacy, "mcp.json": mcp, ".mcp.json": compat, "bin/codexm": launcher}
+	for _, name := range []string{"skills/codexm/SKILL.md", "skills/codexm/agents/openai.yaml"} {
+		files[name], e = assets.Files.ReadFile(name)
+		if e != nil {
+			return installReceipt{}, e
+		}
+	}
+	content := append(append(append([]byte{}, portable...), legacy...), mcp...)
+	content = append(content, files["skills/codexm/SKILL.md"]...)
+	content = append(content, files["skills/codexm/agents/openai.yaml"]...)
+	content = append(content, launcher...)
+	h := sha256.Sum256(content)
 	dest := filepath.Join(i.root(), hex.EncodeToString(h[:12]))
-	for name, data := range map[string][]byte{"plugin.json": portable, ".codex-plugin/plugin.json": legacy, "mcp.json": mcp, ".mcp.json": compat} {
+	for name, data := range files {
 		p := filepath.Join(dest, name)
+		mode := os.FileMode(0600)
+		if name == "bin/codexm" {
+			mode = 0700
+		}
 		if st, e := os.Lstat(p); e == nil && !st.Mode().IsRegular() {
 			return installReceipt{}, errors.New("plugin asset must be a regular file")
 		} else if e != nil && !os.IsNotExist(e) {
@@ -164,11 +183,14 @@ func (i Installer) Install() (installReceipt, error) {
 			if string(b) != string(data) {
 				return installReceipt{}, errors.New("immutable plugin files differ; existing files preserved")
 			}
+			if st, e := os.Stat(p); e != nil || st.Mode().Perm() != mode {
+				return installReceipt{}, errors.New("immutable plugin file permissions differ; existing files preserved")
+			}
 			continue
 		} else if !os.IsNotExist(e) {
 			return installReceipt{}, e
 		}
-		if e = config.AtomicWrite(p, data, 0600); e != nil {
+		if e = config.AtomicWrite(p, data, mode); e != nil {
 			return installReceipt{}, e
 		}
 	}
@@ -267,6 +289,15 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 			html, e := HTML()
 			s["ui_resource_ready"] = e == nil && strings.Contains(html, "ui/initialize")
 			s["mcp_tools"] = len(toolList())
+			if s["registered"] == true {
+				if discovery, e := i.Discovery(ctx); e == nil {
+					for key, value := range discovery {
+						s[key] = value
+					}
+				} else {
+					s["host_discovery_problem"] = cr.SafeText(e.Error())
+				}
+			}
 		}
 		return json.NewEncoder(out).Encode(s)
 	default:

@@ -93,6 +93,12 @@ func (s *Server) reconcile() {
 	}
 }
 func (s *Server) reconcileJob(j jobs.Job) {
+	if j.Registration != nil && j.Session == "" {
+		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+		defer cancel()
+		s.observeRegistered(ctx, j)
+		return
+	}
 	if j.TargetAccount != "" {
 		// The durable handoff action owns interruption, restart and continuation.
 		return

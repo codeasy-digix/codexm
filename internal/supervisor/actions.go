@@ -90,6 +90,13 @@ func (s *Server) execute(a jobs.Action) {
 		s.finishAction(a, "failed", e)
 		return
 	}
+	if !j.Managed {
+		switch a.Kind {
+		case "start", "send_input", "goal_continue", "switch_account", "prefer_account", "change_account":
+			s.finishAction(a, "cancelled", nil)
+			return
+		}
+	}
 	if j.TargetAccount != "" && a.Kind != "change_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" {
 		a.NotBefore = time.Now().Add(time.Second)
 		_ = s.Store.PutAction(a)
@@ -585,6 +592,11 @@ func (s *Server) connect(ctx context.Context, j jobs.Job, user bool) error {
 	return s.update(j.ID, func(j *jobs.Job) {
 		j.Goal = g
 		j.ResumeLimitedGoal = false
+		if j.Registration != nil {
+			r := *j.Registration
+			r.HandoffDue = false
+			j.Registration = &r
+		}
 		if len(r.Thread.Turns) > 0 {
 			t := r.Thread.Turns[len(r.Thread.Turns)-1]
 			if user && j.Kind != "goal" && (t.Status == "interrupted" || t.Status == "failed") {

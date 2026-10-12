@@ -58,7 +58,7 @@ func (s *Server) requestAccountChange(a JobArgs) (jobs.Action, error) {
 	if a.ExpectedAccount != "" && a.ExpectedAccount != j.Account {
 		return jobs.Action{}, errors.New("the session account changed; refresh before selecting again")
 	}
-	if j.State == "external_writer" {
+	if j.State == "external_writer" && j.Registration == nil {
 		return jobs.Action{}, errForeignWriter
 	}
 	if j.TargetAccount != "" {
@@ -143,6 +143,9 @@ func (s *Server) manualAccountChange(ctx context.Context, action *jobs.Action) e
 			return errors.New("session execution changed; refresh before selecting an account")
 		}
 		if cr.WriterBusy(j.Store, j.ThreadID) && !cr.HasSession(ctx, j.Session) {
+			if j.Registration != nil {
+				return later("registered conversation is still owned by the original Codex; waiting for writer release")
+			}
 			return errForeignWriter
 		}
 		if e = s.checkSelectedAccount(ctx, j, p.Account); e != nil {

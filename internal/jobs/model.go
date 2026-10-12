@@ -38,6 +38,7 @@ type Job struct {
 	TokenUsage        json.RawMessage `json:"token_usage,omitempty"`
 	State             string          `json:"state"`
 	Managed           bool            `json:"managed"`
+	Registration      *Registration   `json:"registration,omitempty"`
 	Paused            bool            `json:"paused"`
 	ReadOnly          bool            `json:"read_only"`
 	TurnID            string          `json:"turn_id,omitempty"`
@@ -56,6 +57,13 @@ type Job struct {
 	LastObserved      time.Time       `json:"last_observed"`
 	LastAccountCheck  time.Time       `json:"last_account_check"`
 	RetryCount        int             `json:"retry_count"`
+}
+
+type Registration struct {
+	OriginAccount string `json:"origin_account,omitempty"`
+	ExternalState string `json:"external_state,omitempty"`
+	LastTurnID    string `json:"last_turn_id,omitempty"`
+	HandoffDue    bool   `json:"handoff_due,omitempty"`
 }
 type Goal struct {
 	Objective       string `json:"objective"`

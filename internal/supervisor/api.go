@@ -43,6 +43,7 @@ type JobArgs struct {
 	OperationID     string          `json:"operation_id,omitempty"`
 	RunID           string          `json:"run_id,omitempty"`
 	ExpectedAccount string          `json:"expected_account,omitempty"`
+	OriginAccount   string          `json:"origin_account,omitempty"`
 	Manage          bool            `json:"manage"`
 	Kind            string          `json:"kind"`
 	Search          string          `json:"search"`
@@ -57,7 +58,7 @@ type JobArgs struct {
 func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	if s.isStopping() {
 		switch call.Command {
-		case "new", "resume", "resume-job", "manage", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "set-worker-account", "switch-account", "settings-save", "resolve-action":
+		case "new", "resume", "resume-job", "manage", "register", "unregister", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "set-worker-account", "switch-account", "settings-save", "resolve-action":
 			return nil, errors.New("supervisor is shutting down; restart it before submitting work")
 		}
 	}
@@ -69,7 +70,7 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	}
 	switch call.Command {
 	case "ping":
-		return map[string]any{"version": config.Version, "manager_api": 1}, nil
+		return map[string]any{"version": config.Version, "manager_api": 2}, nil
 	case "status":
 		return s.status()
 	case "sessions":
@@ -124,6 +125,10 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		return s.refreshAccounts(ctx)
 	case "switch-account":
 		return s.requestAccountChange(a)
+	case "register":
+		return s.registerThread(ctx, a)
+	case "unregister":
+		return s.unregisterThread(ctx, a.ID)
 	case "usage":
 		return s.usage()
 	case "settings":
@@ -504,6 +509,8 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 	return j, s.persist(j, as...)
 }
 func (s *Server) importThread(ctx context.Context, a JobArgs) (jobs.Job, error) {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
 	if a.ThreadID == "" {
 		return jobs.Job{}, errors.New("thread ID required")
 	}

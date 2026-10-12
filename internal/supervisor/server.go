@@ -39,6 +39,7 @@ type Server struct {
 	stopping       bool
 	started        time.Time
 	dispatching    map[string]bool
+	importMu       sync.Mutex
 	accountMu      sync.Mutex
 	managerAccount string
 	wg             sync.WaitGroup

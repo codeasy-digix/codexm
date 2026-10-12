@@ -77,9 +77,19 @@ func TestInstallPreservesPersonalMarketplaceAndUninstallsOnlyOwnedEntry(t *testi
 		if e = json.Unmarshal(b, &v); e != nil {
 			t.Fatal(e)
 		}
-		if v.Servers["codexm"].Command != i.Self || strings.Join(v.Servers["codexm"].Args, "|") != "--config|"+i.Config.Path+"|plugin|mcp" {
+		wantCommand := i.Self
+		if name == "mcp.json" {
+			wantCommand = "./bin/codexm"
+		}
+		if v.Servers["codexm"].Command != wantCommand || strings.Join(v.Servers["codexm"].Args, "|") != "--config|"+i.Config.Path+"|plugin|mcp" {
 			t.Fatal("wrong MCP invocation")
 		}
+	}
+	if st, e := os.Stat(filepath.Join(r.Root, "bin", "codexm")); e != nil || st.Mode().Perm() != 0700 {
+		t.Fatal("portable launcher is not executable")
+	}
+	if _, e := os.Stat(filepath.Join(r.Root, "skills", "codexm", "SKILL.md")); e != nil {
+		t.Fatal("registration skill not packaged", e)
 	}
 	if e = i.Uninstall(); e != nil {
 		t.Fatal(e)
@@ -133,7 +143,7 @@ func TestMCPStdioDiscoveryAndOfflineUIHaveNoSideEffects(t *testing.T) {
 	requests := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
-{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"ui://codexm/manager-v1.html"}}
+{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"ui://codexm/manager-v2.html"}}
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"codexm_open","arguments":{}}}
 `
 	if e := m.Serve(context.Background(), strings.NewReader(requests), &out); e != nil {

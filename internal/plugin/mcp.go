@@ -22,7 +22,8 @@ import (
 	assets "github.com/codeasy-digix/codexm/plugin"
 )
 
-const ResourceURI = "ui://codexm/manager-v1.html"
+const ResourceURI = "ui://codexm/manager-v2.html"
+const legacyResourceURI = "ui://codexm/manager-v1.html"
 const ResourceMIME = "text/html;profile=mcp-app"
 
 type MCP struct {
@@ -132,22 +133,36 @@ func toolList() []any {
 		if render {
 			meta = map[string]any{"ui": map[string]any{"resourceUri": ResourceURI}, "openai/outputTemplate": ResourceURI, "openai/ui": map[string]any{"entrypoints": []any{map[string]any{"type": "global"}, map[string]any{"type": "thread"}}}}
 		}
-		tools = append(tools, map[string]any{"name": name, "description": desc, "inputSchema": schema, "annotations": map[string]any{"readOnlyHint": readOnly, "destructiveHint": false, "openWorldHint": false}, "_meta": meta})
+		title := name
+		if name == "codexm_open" {
+			title = "codexm 관리"
+		}
+		tools = append(tools, map[string]any{"name": name, "title": title, "description": desc, "inputSchema": schema, "annotations": map[string]any{"readOnlyHint": readOnly, "destructiveHint": false, "openWorldHint": false}, "_meta": meta})
 	}
 	add("codexm_open", "Open the local codexm account and task manager. Merely opening it never starts a model or changes a worker account.", true, object(map[string]any{}), true)
 	add("codexm_snapshot", "Refresh account observations and task list without a model call. Cached quotas include their observation time.", true, object(map[string]any{}), false)
 	add("codexm_read", "Read selected conversation, logs, settings or models. Account refresh uses authenticated quota APIs without generating a turn.", true, object(map[string]any{"command": choice("read", "details", "logs", "events", "accounts", "settings-edit", "models"), "id": property("string"), "thread_id": property("string"), "cursor": property("string"), "limit": property("integer")}, "command"), false)
-	add("codexm_control", "Explicit user action on a selected managed conversation. New/send/resume may start work. Switching accounts preserves the same conversation and obeys fallback restrictions.", false, object(map[string]any{"command": choice("new", "resume", "manage", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account"), "args": object(map[string]any{"id": property("string"), "thread_id": property("string"), "account": property("string"), "expected_account": property("string"), "operation_id": property("string"), "run_id": property("string"), "text": property("string"), "steer": property("boolean"), "manage": property("boolean"), "kind": choice("chat", "task", "goal"), "cwd": property("string"), "title": property("string"), "model": property("string"), "effort": property("string"), "prompt": property("string"), "goal": property("string"), "read_only": property("boolean"), "request_id": map[string]any{}, "result": map[string]any{}})}, "command", "args"), false)
+	add("codexm_control", "Explicit user action on a selected managed conversation. Register preserves the existing chat and goal without generating a turn. New/send/resume may start work. Account switching obeys fallback restrictions.", false, object(map[string]any{"command": choice("new", "resume", "manage", "register", "unregister", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account"), "args": object(map[string]any{"id": property("string"), "thread_id": property("string"), "account": property("string"), "expected_account": property("string"), "operation_id": property("string"), "run_id": property("string"), "text": property("string"), "steer": property("boolean"), "manage": property("boolean"), "kind": choice("chat", "task", "goal"), "cwd": property("string"), "title": property("string"), "model": property("string"), "effort": property("string"), "prompt": property("string"), "goal": property("string"), "read_only": property("boolean"), "request_id": map[string]any{}, "result": map[string]any{}})}, "command", "args"), false)
 	add("codexm_settings_save", "Save editable manager/account policy with the exact revision returned by settings-edit. Never changes credentials or runtime paths.", false, object(map[string]any{"revision": property("string"), "values": property("object")}, "revision", "values"), false)
 	add("codexm_start", "Explicitly start the local manager service. At first setup a saved manager account must be selected and verified.", false, object(map[string]any{"manager_account": property("string")}), false)
+	add("codexm_settings_read", "Read codexm's native plugin settings and management-panel action. Does not start the service or a model.", true, object(map[string]any{}), false)
+	tools[len(tools)-1].(map[string]any)["outputSchema"] = object(map[string]any{"schema": property("object"), "values": property("object"), "layout": map[string]any{"type": "array", "items": property("object")}}, "schema", "values")
+	add("codexm_settings_update", "Save only changed plugin settings; preserve other settings and existing session accounts.", false, object(map[string]any{"set": map[string]any{"type": "object", "properties": settingProperties(nil), "minProperties": 1, "additionalProperties": false}}, "set"), false)
+	tools[len(tools)-1].(map[string]any)["outputSchema"] = object(map[string]any{"values": property("object")}, "values")
 	return tools
+}
+
+func settingsCapability() map[string]any {
+	return map[string]any{"openai/settings": map[string]any{"readTool": "codexm_settings_read", "updateTool": "codexm_settings_update"}}
 }
 
 func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 	bad := func(e error) (any, *rpcError) { return nil, &rpcError{-32602, cr.SafeText(e.Error())} }
 	switch req.Method {
 	case "initialize":
-		return map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{"tools": map[string]any{}, "resources": map[string]any{}}, "serverInfo": map[string]any{"name": "codexm", "version": config.Version}, "instructions": "Open codexm for local account and task management. Routine UI actions call tools directly and need no manager model turn."}, nil
+		return map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{"tools": map[string]any{}, "resources": map[string]any{}, "extensions": settingsCapability(), "experimental": settingsCapability()}, "serverInfo": map[string]any{"name": "codexm", "title": "codexm", "version": config.Version}, "instructions": "Open codexm from the sidebar, conversation panel or plugin settings. Routine UI actions call tools directly and need no manager model turn."}, nil
+	case "server/discover":
+		return map[string]any{"resultType": "complete", "supportedVersions": []string{"2025-11-25"}, "_meta": map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "codexm", "title": "codexm", "version": config.Version}}, "capabilities": map[string]any{"tools": map[string]any{}, "resources": map[string]any{}, "extensions": settingsCapability()}}, nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
@@ -161,7 +176,7 @@ func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 		if e := json.Unmarshal(req.Params, &p); e != nil {
 			return bad(e)
 		}
-		if p.URI != ResourceURI {
+		if p.URI != ResourceURI && p.URI != legacyResourceURI {
 			return bad(errors.New("unknown UI resource"))
 		}
 		html, e := HTML()
@@ -169,7 +184,7 @@ func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 			return bad(e)
 		}
 		meta := map[string]any{"ui": map[string]any{"prefersBorder": false, "csp": map[string]any{"connectDomains": []string{}, "resourceDomains": []string{}}}, "openai/widgetDescription": "Manage local Codex accounts, task handoffs, quota observations and settings."}
-		return map[string]any{"contents": []any{map[string]any{"uri": ResourceURI, "mimeType": ResourceMIME, "text": html, "_meta": meta}}}, nil
+		return map[string]any{"contents": []any{map[string]any{"uri": p.URI, "mimeType": ResourceMIME, "text": html, "_meta": meta}}}, nil
 	case "tools/call":
 		var p struct {
 			Name      string          `json:"name"`
@@ -185,6 +200,9 @@ func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 		if e != nil {
 			return map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": cr.SafeText(e.Error())}}}, nil
 		}
+		if p.Name == "codexm_settings_read" || p.Name == "codexm_settings_update" {
+			return map[string]any{"content": []any{}, "structuredContent": result}, nil
+		}
 		// Conversation contents are for the user-facing iframe, not injected into
 		// the surrounding model context on every refresh.
 		return map[string]any{"content": []any{map[string]any{"type": "text", "text": "codexm 관리 화면을 갱신했습니다."}}, "structuredContent": map[string]any{"ok": true}, "_meta": map[string]any{"codexm_data": result}}, nil
@@ -194,6 +212,12 @@ func (m MCP) handle(ctx context.Context, req rpcRequest) (any, *rpcError) {
 }
 
 func (m MCP) call(ctx context.Context, name string, args json.RawMessage) (any, error) {
+	if name == "codexm_settings_read" {
+		return m.readPluginSettings()
+	}
+	if name == "codexm_settings_update" {
+		return m.updatePluginSettings(ctx, args)
+	}
 	if name == "codexm_open" || name == "codexm_snapshot" {
 		return m.snapshot(ctx)
 	}
@@ -261,7 +285,7 @@ func (m MCP) call(ctx context.Context, name string, args json.RawMessage) (any, 
 			return nil, errors.New("unsupported read command")
 		}
 	case "codexm_control":
-		if !contains([]string{"new", "resume", "manage", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account"}, command) {
+		if !contains([]string{"new", "resume", "manage", "register", "unregister", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account"}, command) {
 			return nil, errors.New("unsupported management command")
 		}
 		var keys map[string]json.RawMessage

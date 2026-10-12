@@ -44,6 +44,7 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 	var doc struct {
 		Revision string           `json:"revision"`
 		Values   EditableSettings `json:"values"`
+		Changed  []string         `json:"changed,omitempty"`
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
@@ -54,6 +55,13 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 		return SettingsDocument{}, errors.New("a settings revision is required")
 	}
 	v := doc.Values
+	validFields := []string{"manager_account", "default_worker", "priority", "fallback_account", "preferred_recheck_seconds", "reconcile_interval_seconds", "max_parallel_jobs", "usage_sample_seconds", "five_hour_discord"}
+	for _, field := range doc.Changed {
+		if !slices.Contains(validFields, field) {
+			return SettingsDocument{}, errors.New("unsupported changed setting")
+		}
+	}
+	changed := func(field string) bool { return len(doc.Changed) == 0 || slices.Contains(doc.Changed, field) }
 	if v.ManagerAccount == "" || v.PreferredRecheckSeconds < 60 || v.PreferredRecheckSeconds > 86400 || v.ReconcileIntervalSeconds < 1 || v.ReconcileIntervalSeconds > 300 || v.MaxParallelJobs < 1 || v.MaxParallelJobs > 32 || v.UsageSampleSeconds < 10 || v.UsageSampleSeconds > 3600 {
 		return SettingsDocument{}, errors.New("invalid settings: recheck 60–86400s, reconcile 1–300s, parallel 1–32, usage sampling 10–3600s; manager required")
 	}
@@ -78,17 +86,33 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, _, e = config.Update(s.Config.Path, doc.Revision, func(c *config.Config) error {
-		c.Manager.Account = v.ManagerAccount
-		c.WorkerAccounts.DefaultAccount = v.DefaultWorker
-		c.WorkerAccounts.Priority = slices.Clone(v.Priority)
-		c.WorkerAccounts.FallbackAccount = v.FallbackAccount
+		if changed("manager_account") {
+			c.Manager.Account = v.ManagerAccount
+		}
+		if changed("default_worker") {
+			c.WorkerAccounts.DefaultAccount = v.DefaultWorker
+		}
+		if changed("priority") {
+			c.WorkerAccounts.Priority = slices.Clone(v.Priority)
+		}
+		if changed("fallback_account") {
+			c.WorkerAccounts.FallbackAccount = v.FallbackAccount
+		}
 		c.WorkerAccounts.FallbackRequiresAllPrimaryExhausted = true
 		c.WorkerAccounts.UnknownIsExhausted = false
-		c.WorkerAccounts.PreferredRecheckSeconds = v.PreferredRecheckSeconds
-		c.Supervisor.ReconcileIntervalSeconds = v.ReconcileIntervalSeconds
-		c.Execution.MaxParallelJobs = v.MaxParallelJobs
-		c.Logging.UsageSampleSeconds = v.UsageSampleSeconds
-		if v.FiveHourDiscord != nil {
+		if changed("preferred_recheck_seconds") {
+			c.WorkerAccounts.PreferredRecheckSeconds = v.PreferredRecheckSeconds
+		}
+		if changed("reconcile_interval_seconds") {
+			c.Supervisor.ReconcileIntervalSeconds = v.ReconcileIntervalSeconds
+		}
+		if changed("max_parallel_jobs") {
+			c.Execution.MaxParallelJobs = v.MaxParallelJobs
+		}
+		if changed("usage_sample_seconds") {
+			c.Logging.UsageSampleSeconds = v.UsageSampleSeconds
+		}
+		if changed("five_hour_discord") && v.FiveHourDiscord != nil {
 			c.Notifications.FiveHourDiscord = *v.FiveHourDiscord
 		}
 		return c.Validate()

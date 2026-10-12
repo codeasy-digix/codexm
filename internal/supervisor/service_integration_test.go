@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -130,6 +131,32 @@ func TestOSServiceRestartsAndAdoptsOwnedNativeWorker(t *testing.T) {
 	}
 	verify()
 	m = upgrade
+	// A new observer that fails its readiness check must restore the previous
+	// definition without replacing the live native worker or its writer lease.
+	previous, e := os.ReadFile(m.DefinitionPath())
+	if e != nil {
+		t.Fatal(e)
+	}
+	failed := m
+	failed.Self = s.Self + ".rollback-test"
+	if e = os.Link(s.Self, failed.Self); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = os.Remove(failed.Self) })
+	failure, stopFailure := context.WithTimeout(ctx, 6*time.Second)
+	e = failed.Upgrade(failure, func(context.Context) error { return errors.New("injected readiness failure") })
+	stopFailure()
+	if e == nil {
+		t.Fatal("failed readiness was accepted")
+	}
+	restored, e := os.ReadFile(m.DefinitionPath())
+	if e != nil || !bytes.Equal(previous, restored) {
+		t.Fatal("previous service definition was not restored", e)
+	}
+	if e = service.WaitReady(ctx, func(ctx context.Context) error { return Ping(ctx, s.Config) }); e != nil {
+		t.Fatal("rollback service did not reconnect", e)
+	}
+	verify()
 	// Explicit shutdown disarms recovery and parks this isolated worker.
 	if e = Request(ctx, s.Config, "shutdown", nil, nil); e != nil {
 		t.Fatal(e)

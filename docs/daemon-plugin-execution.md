@@ -3,6 +3,10 @@
 계획: [daemon-plugin-plan.md](daemon-plugin-plan.md). 시작일: 2026-10-12.
 계정 관리가 제품의 핵심이며, 서비스와 UI는 같은 계정 정책/전환 경로를 사용한다.
 
+후속 0.4.0 구현·실행한 추가 시험과 실제 앱 UI의 미확인 범위는
+[앱 내 패널 검증](native-gui-validation.md)을 따른다. 아래의 테스트 보류는
+0.3.1 작업 당시 기록이며 후속 시험 결과를 대신하지 않는다.
+
 ## 검증한 관리 코어
 
 - `codexm switch-account JOB ACCOUNT`, TUI `/account` 선택 메뉴와 `/account 이름` 추가.

@@ -105,6 +105,9 @@ func Main(args []string) error {
 	if command == "account" {
 		return accountCommand(ctx, c, args)
 	}
+	if command == "register" {
+		return registerCommand(ctx, c, self, args)
+	}
 	if command == "__supervisor" || command == "__service" {
 		s, e := supervisor.New(ctx, c, self)
 		if e != nil {
@@ -226,6 +229,15 @@ func Main(args []string) error {
 	}
 	var result any
 	switch command {
+	case "unregister":
+		if len(args) != 1 {
+			return errors.New("usage: codexm unregister JOB_ID")
+		}
+		if e = supervisor.Request(ctx, c, "unregister", supervisor.JobArgs{ID: args[0]}, nil); e != nil {
+			return e
+		}
+		fmt.Println("Management registration removed; native conversation retained.")
+		return nil
 	case "switch-account":
 		if len(args) != 2 {
 			return errors.New("usage: codexm switch-account JOB_ID ACCOUNT")
@@ -455,6 +467,9 @@ codexm notify off|status              Disable or inspect quota notifications
 codexm setup --manager NAME             Save manager account explicitly
 codexm status --json                    Jobs, health and worker processes
 codexm switch-account JOB ACCOUNT      Change one session's account, preserving the conversation
+codexm register --current [--account NAME]  Apply management to this existing Codex chat
+codexm register THREAD_ID [--json]       Register without generating a turn
+codexm unregister JOB_ID                Remove management; retain the native conversation
 codexm session list [--search TEXT]     All Codex conversations, read-only (including archived)
 codexm session list --managed          Only jobs registered with codexm
 codexm session list --active-only      Exclude archived conversations
