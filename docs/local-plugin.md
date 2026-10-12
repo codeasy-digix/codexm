@@ -18,13 +18,23 @@ codex plugin add codexm@local-personal
 실제 자산은 `~/.local/share/codexm/plugins/<digest>/`이다. 다른 항목을 보존하고
 변경 전 marketplace 사본을 `.codexm.previous`로 남긴다. 인증은 이 파일에 기록하지 않는다.
 
-Codex 앱의 Plugins에서 codexm을 설치/새로고침한다. 채팅에 요청하지 않고
-사이드바의 **codexm 관리**, 대화 옆 플러그인 패널, 또는 플러그인 설정의
-**codexm 관리** 버튼으로 연다. 설정 버튼은 공식 `openai/settings`의 UI tool action이고,
-관리 패널은 공식 global/thread entrypoint이다. 해당 진입점을 제공하는 호스트가 필요하다.
+Codex 앱의 Plugins에서 codexm을 설치/새로고침한다. 플러그인은 사이드바의
+**codexm 관리**, 대화 옆 플러그인 패널, 플러그인 설정의 **codexm 관리** 버튼을
+공식 진입점으로 선언한다. 설정 버튼은 `openai/settings`의 UI tool action이고,
+관리 패널은 global/thread entrypoint이다. 해당 진입점을 노출하는 호스트가 필요하다.
 호스트가 로컬 stdio MCP 도구와 MCP Apps 화면을 모두 지원해야 한다. MCP 도구 연결은
 화면 렌더링 성공과 다르다. `codexm plugin doctor`도 실제 호스트 렌더링을 성공으로
 보고하지 않는다. 캐시된 플러그인은 원본만 변경해도 자동 갱신된다고 가정하지 않는다.
+
+**Try now**가 있는 플러그인 소개·상세 화면은 작업 관리 화면과 구분한다. Try now는
+codexm 작업 실행 명령이 아니며, 그것을 누르거나 플러그인을 선택했다고 관리 작업이
+생성됐다고 안내하지 않는다. 실제 관리 화면에는 **작업·계정·사용 기록·설정·+ 새 작업**이
+있어야 한다. 현재 설치 앱에서 사용자가 확인한 화면은 Try now가 있는 상세 화면으로,
+실제 관리 화면의 렌더링 성공은 아직 확인되지 않았다.
+
+연결된 플러그인에는 `@codexm 관리 화면 열어줘`로 `codexm_open`을 호출할 수 있다.
+도구의 성공 응답도 호스트가 관리 화면을 표시했다는 증거와 구분한다. 관리 메뉴가
+나타나기 전에는 **+ 새 작업**을 현재 앱에서 사용할 수 있는 버튼으로 안내하지 않는다.
 
 최초 관리자 계정이 없으면 화면에서 반드시 저장된 계정을 선택한다. 이미 저장돼 있으면
 불러온다. 계정 추가·재로그인은 `codexm account NAME --login`으로 공식 인증을 사용한다.
