@@ -62,3 +62,22 @@
 [plugin 구조/skill 설치](https://developers.openai.com/plugins/build/plugins),
 [skill 묶기](https://developers.openai.com/plugins/build/skills#package-the-skill).
 로컬 엔진 protocol schema는 Git 밖 `~/.local/state/codexm/validation/gui-20261013/schema/`에 생성했다.
+
+## 실제 앱 진입 확인 보완 (2026-10-13)
+
+사용자의 후속 확인에서 실제로 본 화면은 Try now가 있는 플러그인 상세 화면이었다.
+관리 패널이 렌더링됐다는 기존 판단은 철회했다. 다음 보완은 기존 완료 기준을 대체하지
+않으며 실제 앱의 작업·계정 관리 화면 확인을 계속 요구한다.
+
+1. 플러그인 열기 응답을 화면 표시의 확인으로 표현하지 않는다. bundled skill도 공식
+   진입점을 선언했다는 사실과 해당 호스트가 노출한다는 사실을 구분한다.
+2. 로컬 진단에서 열기 요청, UI resource 응답, UI 브리지 연결 시각을 따로 기록한다.
+   UI build와 현재 resource의 일치도 확인한다. JSON-RPC 인수, 대화, 계정 인증,
+   호스트 원문은 진단에 저장하지 않는다. 진단 저장 실패는 관리 기능을 막지 않는다.
+3. 패널 연결 기록은 화면의 표시·조작 검증과 구분한다. `host_ui_verified`는 이 기록만으로
+   true가 되지 않는다. 모의 호스트는 격리된 설정/상태를 사용한다.
+4. 현재 GUI 대화의 즉시 계정 교체를 지원한다고 안내하지 않는다. 공식 writer 인계의
+   실제 범위를 확인하며, 원래 GUI 실행이 남아 있을 때의 무기한 대기를 해결했다고
+   표시하지 않는다. GUI 실행의 투명한 계정 교체는 아직 남은 요구사항이다.
+5. Go race/vet, JS 브리지, 격리 실제 MCP/native 엔진으로 진단과 보존 조건을 확인한 뒤
+   로컬 플러그인을 갱신한다. 실제 앱 메뉴/화면은 지원 도구 또는 사용자 확인으로 검증한다.
