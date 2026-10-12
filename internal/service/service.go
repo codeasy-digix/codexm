@@ -207,6 +207,8 @@ func (m Manager) Install(ctx context.Context, start bool) error {
 			return errors.New("stop the existing codexm service before replacing its definition")
 		}
 		enabled = r.Enabled
+	} else if !os.IsNotExist(e) {
+		return e
 	}
 	if e = os.MkdirAll(m.root(), 0700); e != nil {
 		return e
@@ -276,6 +278,54 @@ func (m Manager) Ensure(ctx context.Context) error {
 		return nil
 	}
 	return m.Start(ctx)
+}
+
+// Upgrade replaces only the observer binary. Workers outlive service Stop.
+// A failed definition/start/readiness check restores the owned previous unit.
+func (m Manager) Upgrade(ctx context.Context, ready func(context.Context) error) error {
+	r, e := m.read()
+	if e != nil {
+		return e
+	}
+	if e = m.checkOwned(r); e != nil {
+		return e
+	}
+	previous, e := os.ReadFile(m.DefinitionPath())
+	if e != nil {
+		return e
+	}
+	if e = m.Stop(ctx); e != nil {
+		return e
+	}
+	e = m.Install(ctx, r.Enabled)
+	if e == nil && r.Enabled {
+		e = WaitReady(ctx, ready)
+	}
+	if e == nil {
+		return nil
+	}
+	rollback, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if stop := m.Stop(rollback); stop != nil {
+		return fmt.Errorf("upgrade failed: %w; rollback stop failed: %v", e, stop)
+	}
+	if restore := config.AtomicWrite(m.DefinitionPath(), previous, 0600); restore != nil {
+		return fmt.Errorf("upgrade failed: %w; definition restore failed: %v", e, restore)
+	}
+	if restore := m.write(r); restore != nil {
+		return fmt.Errorf("upgrade failed: %w; receipt restore failed: %v", e, restore)
+	}
+	if runtime.GOOS == "linux" {
+		if _, reload := m.run(rollback, "daemon-reload"); reload != nil {
+			return fmt.Errorf("upgrade failed: %w; rollback reload failed: %v", e, reload)
+		}
+	}
+	if r.Enabled {
+		if restart := m.Start(rollback); restart != nil {
+			return fmt.Errorf("upgrade failed: %w; rollback restart failed: %v", e, restart)
+		}
+	}
+	return fmt.Errorf("upgrade failed; previous service definition restored: %w", e)
 }
 
 // Disarm records explicit stop intent before a graceful shutdown. It leaves the

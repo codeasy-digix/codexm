@@ -1,3 +1,5 @@
+> 이 문서는 초기 설계 기록을 포함합니다. 0.3의 현재 서비스·플러그인 사용법은 [README](../README.md)와 [로컬 플러그인](local-plugin.md)을 따릅니다. 신규 supervisor/worker는 tmux를 사용하지 않습니다.
+
 # codexm 작업 관리자
 
 `codexm`은 여러 Codex 작업의 목록·로그·사용량·계정 전환을 관리하는 프로그램이다.

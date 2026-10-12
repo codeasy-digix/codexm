@@ -41,6 +41,7 @@ type JobArgs struct {
 	ThreadID        string          `json:"thread_id"`
 	Account         string          `json:"account"`
 	OperationID     string          `json:"operation_id,omitempty"`
+	RunID           string          `json:"run_id,omitempty"`
 	ExpectedAccount string          `json:"expected_account,omitempty"`
 	Manage          bool            `json:"manage"`
 	Kind            string          `json:"kind"`
@@ -68,7 +69,7 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	}
 	switch call.Command {
 	case "ping":
-		return map[string]any{"version": config.Version}, nil
+		return map[string]any{"version": config.Version, "manager_api": 1}, nil
 	case "status":
 		return s.status()
 	case "sessions":
@@ -199,25 +200,51 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 			cursor = strconv.Itoa(end)
 		}
 		return map[string]any{"threads": ts[offset:end], "cursor": cursor}, nil
-	case "read":
-		if a.ThreadID == "" {
-			j, e := s.Store.Job(a.ID)
+	case "read", "details":
+		var j jobs.Job
+		if a.ID != "" {
+			var e error
+			j, e = s.Store.Job(a.ID)
 			if e != nil {
 				return nil, e
 			}
 			a.ThreadID = j.ThreadID
 		}
-		p, e := s.Resolver.Probe(ctx, s.manager())
-		if e != nil {
-			return nil, e
+		if a.ThreadID == "" {
+			return map[string]any{"job": j}, nil
 		}
-		defer p.Close()
+		p := s.client(j.ID)
+		if p == nil {
+			var e error
+			p, e = s.Resolver.Probe(ctx, s.manager())
+			if e != nil {
+				return nil, e
+			}
+			defer p.Close()
+		}
 		t, cursor, e := p.Recent(ctx, a.ThreadID, 20, a.Cursor)
 		if e != nil {
 			return nil, e
 		}
 		g, e := p.Goal(ctx, a.ThreadID)
-		return map[string]any{"thread": t, "goal": g, "cursor": cursor}, e
+		result := map[string]any{"thread": t, "goal": g, "cursor": cursor}
+		if call.Command == "details" {
+			result["job"] = j
+		}
+		return result, e
+	case "models":
+		p, e := s.Resolver.Probe(ctx, s.manager())
+		if e != nil {
+			return nil, e
+		}
+		defer p.Close()
+		var result json.RawMessage
+		params := map[string]any{"includeHidden": false, "limit": 100}
+		if a.Cursor != "" {
+			params["cursor"] = a.Cursor
+		}
+		e = p.Call(ctx, "model/list", params, &result)
+		return result, e
 	case "resume":
 		return s.importThread(ctx, a)
 	case "send":
@@ -600,6 +627,12 @@ func (s *Server) reply(ctx context.Context, a JobArgs) (any, error) {
 	}
 	if c == nil {
 		return nil, errors.New("runtime is disconnected; unresolved input must be inspected in the original chat")
+	}
+	if a.RunID != "" && a.RunID != j.RunID {
+		return nil, errors.New("this request belongs to a previous execution; refresh before responding")
+	}
+	if j.TargetAccount != "" {
+		return nil, errors.New("account handoff in progress; wait for the new execution before responding")
 	}
 	if j.Paused {
 		return nil, errors.New("job is paused; resume before responding")

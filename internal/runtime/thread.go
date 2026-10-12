@@ -34,9 +34,16 @@ type TurnError struct {
 	CodexErrorInfo json.RawMessage `json:"codexErrorInfo"`
 }
 type Item struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Text    string `json:"text"`
+	ID               string `json:"id"`
+	Type             string `json:"type"`
+	Text             string `json:"text"`
+	Command          string `json:"command,omitempty"`
+	AggregatedOutput string `json:"aggregatedOutput,omitempty"`
+	Status           string `json:"status,omitempty"`
+	Changes          []struct {
+		Path string `json:"path"`
+		Diff string `json:"diff"`
+	} `json:"changes,omitempty"`
 	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`

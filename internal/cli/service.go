@@ -13,6 +13,9 @@ import (
 
 func serviceCommand(ctx context.Context, c config.Config, self string, args []string) error {
 	m := service.Manager{Config: c, Self: self}
+	if len(args) == 1 && args[0] == "upgrade" {
+		return m.Upgrade(ctx, func(ctx context.Context) error { return supervisor.Ping(ctx, c) })
+	}
 	if len(args) > 0 && (args[0] == "stop" || args[0] == "uninstall") {
 		if !m.Registered() {
 			return errors.New("codexm service is not installed; no process was stopped")

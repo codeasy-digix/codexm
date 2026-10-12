@@ -1,0 +1,14 @@
+{
+  "name": "codexm",
+  "version": "0.3.0",
+  "description": "Local Codex account and task manager",
+  "author": {"name": "account-main"},
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "codexm",
+    "shortDescription": "계정, 작업, 사용량을 한 곳에서 관리",
+    "developerName": "account-main",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"]
+  }
+}

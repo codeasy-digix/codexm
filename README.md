@@ -1,6 +1,6 @@
 # codexm
 
-공식 Codex를 하위 작업으로 관리하는 독립 터미널 프로그램입니다. 채팅 화면이나 기본 명령을 복제하지 않습니다. `codex` 명령, 로그인, 업데이트는 공식 CLI가 그대로 소유합니다.
+공식 Codex의 계정과 하위 작업을 관리하는 독립 프로그램입니다. 모델 호출 없이 계정 한도·작업 상태를 감시하고, 같은 대화를 다른 계정으로 이어갑니다. TUI와 로컬 ChatGPT 플러그인이 하나의 관리 서비스에 연결됩니다. `codex` 명령, 로그인, 업데이트는 공식 CLI가 그대로 소유합니다.
 
 ## 실행
 
@@ -13,6 +13,8 @@ codexm은 공식 Codex 실행 파일·로그인·업데이트를 설치하거나
 ./install.sh                       # 정식 Release 이후 사용 (private 저장소: gh 로그인 필요)
 codexm account account-work              # 기본 작업 계정 저장
 codexm setup --manager account-backup     # 관리 판단에 사용할 별도 계정 저장
+codexm service install            # 사용자 OS 서비스 설치 및 시작
+codexm plugin install             # 개인 로컬 marketplace 등록
 codexm                            # 작업 목록 TUI
 ```
 
@@ -37,7 +39,8 @@ DB 파일의 버전 번호와 실제 컬럼을 확인하며, 지원하지 않는
 `codexm open THREAD_ID`도 지원합니다. 이미 다른 Codex가 쓰고 있는 대화의 소유권은
 가져오지 않습니다. 관리 로그는 codexm 등록 이후의 관측부터 기록합니다.
 
-- 입력창 포커스에서 ↑↓로 작업을 선택합니다. `/` 메뉴가 열려 있으면 ↑↓는 메뉴를 선택합니다. 작성 중인 입력은 보존합니다.
+- 입력창의 ↑↓는 입력 기록·커서 이동입니다. 목록은 Tab 또는 Alt+↑↓로 이동합니다. `/` 메뉴 안에서는 ↑↓로 명령을 선택합니다.
+- 선택 작업의 `/account`로 계정을 고르거나 `/account account-secondary`를 입력합니다. CLI는 `codexm switch-account JOB_ID account-secondary`입니다. 수동 전환도 예비 계정 제한을 지킵니다.
 - 목록 Enter 또는 `/open`: 같은 대화 ID를 해당 작업의 계정으로 새 터미널에 연결합니다. `/new`: 새 채팅, `/chats 검색어`: 전체 대화 검색입니다.
 - 채팅·추가 지시·모델 선택·Codex 기본 명령은 새 터미널의 공식 Codex에서 사용합니다.
 - `/status`, `/usage`: 전체 상태·사용량. `/info`, `/logs`: 선택한 작업. `/logs all`: 전체 로그.
@@ -55,12 +58,16 @@ codexm daemon status      # 감시·공식 데몬 상태
 codexm daemon restart     # 공식 데몬 재시작
 codexm daemon stop        # 자동 복구 일시 중지와 공식 데몬 중지
 codexm daemon start       # 공식 데몬 시작과 설정된 자동 복구 재개
-codexm daemon unwatch     # 감시 tmux 정리, 공식 데몬 유지
+codexm daemon unwatch     # 복구 감시 서비스 중지, 공식 데몬 유지
 ```
 
-감시 세션은 `codexm-daemon-watchdog`이며 `tmux attach -t codexm-daemon-watchdog`로 연결합니다. `killall codex`는 공식 서버들을 강제 종료하므로 실행 중인 작업에도 영향을 줍니다. 감시가 활성화돼 있으면 공용 서버를 복구하고, 관리 중인 작업은 supervisor가 작업 상태에 맞춰 복구합니다. 자동 복구를 켠 상태에서 의도적으로 중지하려면 `codexm daemon stop`을 사용합니다. 공식 CLI에서 직접 `daemon stop`을 실행하면 감시가 다시 시작할 수 있습니다.
+작업 관리 서비스는 `org.codeasy.codexm.supervisor`, 공용 데몬 감시는 `org.codeasy.codexm.watchdog` 사용자 서비스입니다. macOS는 launchd, Linux는 systemd를 사용합니다. 새 worker는 독립 프로세스이고, 기존 tmux worker는 현재 실행을 유지한 채 다음 재시작·계정 전환부터 이동합니다. `killall codex`는 공식 서버들을 강제 종료하므로 실행 중인 작업에도 영향을 줍니다. 감시가 활성화돼 있으면 공용 서버를 복구하고, 관리 중인 작업은 supervisor가 작업 상태에 맞춰 복구합니다. 자동 복구를 켠 상태에서 의도적으로 중지하려면 `codexm daemon stop`을 사용합니다. 공식 CLI에서 직접 `daemon stop`을 실행하면 감시가 다시 시작할 수 있습니다.
 
 수동 공식 명령은 `codex app-server daemon start`, `restart`, `version`입니다. codexm 없이도 사용할 수 있습니다.
+
+## 로컬 플러그인
+
+[설치·사용법](docs/local-plugin.md)에 따라 개인 marketplace에서 `codexm`을 설치합니다. 계정별 잔여 한도, 선택 세션의 계정 변경, 새 작업·기존 대화·추가 지시, 전체/세션별 기록과 설정 편집을 제공합니다. 별도 웹 서버나 공개 포트를 열지 않습니다. 일반 화면 조작은 MCP에서 로컬 관리 서비스로 바로 전달하며 관리자 모델을 호출하지 않습니다.
 
 ## 업데이트와 저장 위치
 
@@ -68,6 +75,8 @@ codexm daemon unwatch     # 감시 tmux 정리, 공식 데몬 유지
 
 공식 npm 설치에서는 실제 native optional package를 찾아 보관합니다. Node 런처를
 그대로 복사하지 않으며, 계정 관리 제품이 공식 Codex의 npm/Brew 업데이트를 가로채지 않습니다.
+
+codexm 실행 파일을 업데이트한 뒤 `codexm service upgrade`로 관리 서비스만 교체합니다. 기존 worker를 보존하며 실패 시 이전 서비스 정의로 돌아갑니다. 플러그인은 `codexm plugin install` 후 공식 플러그인 설치/새로고침을 다시 수행합니다.
 
 설정은 `~/.config/codexm/config.toml`, 작업 DB와 로그는 `~/.local/state/codexm`입니다. 인증·대화·실행 상태는 Git에 보관하지 않습니다. `~/.home`은 독립 저장소의 고정 설치 버전과 로컬 셸 통합만 관리합니다.
 

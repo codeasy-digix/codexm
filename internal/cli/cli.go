@@ -18,6 +18,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/daemon"
 	"github.com/codeasy-digix/codexm/internal/display"
 	"github.com/codeasy-digix/codexm/internal/jobs"
+	"github.com/codeasy-digix/codexm/internal/plugin"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"github.com/codeasy-digix/codexm/internal/service"
 	"github.com/codeasy-digix/codexm/internal/store"
@@ -94,6 +95,9 @@ func Main(args []string) error {
 	}
 	if command == "service" {
 		return serviceCommand(ctx, c, self, args)
+	}
+	if command == "plugin" {
+		return plugin.Command(ctx, c, self, args, os.Stdout)
 	}
 	if command == "account" {
 		return accountCommand(ctx, c, args)
@@ -440,6 +444,9 @@ codexm daemon watch|unwatch|status     Token-free official daemon recovery
 codexm daemon start|restart|stop       Official lifecycle, using the shared home
 codexm service install|start|stop       codexm OS user service (separate from Codex daemon)
 codexm service restart|status|logs      Service lifecycle and diagnostics
+codexm service upgrade                Replace manager binary, preserving running workers
+codexm plugin install|status|doctor    Local ChatGPT plugin registration and diagnostics
+codexm plugin uninstall               Remove only codexm's local marketplace entry
 codexm setup --manager NAME             Save manager account explicitly
 codexm status --json                    Jobs, health and worker processes
 codexm switch-account JOB ACCOUNT      Change one session's account, preserving the conversation

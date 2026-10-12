@@ -1,0 +1,185 @@
+export function remaining(window) {
+  return window && Number.isFinite(window.usedPercent ?? window.used_percent)
+    ? Math.max(0, Math.min(100, 100 - (window.usedPercent ?? window.used_percent))) : null;
+}
+export function quota(snapshot) {
+  const bucket = snapshot?.rateLimitsByLimitId?.codex ?? snapshot?.rateLimits ?? {};
+  return {primary: remaining(bucket.primary), secondary: remaining(bucket.secondary), bucket};
+}
+export function label(state) {
+  return ({running:'실행 중', idle:'대기', paused:'일시중지', stopped:'중지', complete:'완료', queued:'실행 대기', starting:'시작 중', switching:'계정 전환 중', quota_wait:'한도 대기', budget_limited:'목표 예산 도달', blocked:'진행 막힘', error:'오류', saved:'저장된 대화', observed:'열람', archived:'보관', result_ready:'결과 확인', waiting_on_user:'답변 필요', waiting_on_approval:'승인 필요', external_writer:'다른 Codex에서 실행', auth_required:'로그인 필요'})[state] ?? state ?? '미확인';
+}
+export function date(value) {const d=new Date(value);return value && !Number.isNaN(+d) ? d.toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '미관측';}
+export function duration(start,end=Date.now()) {const n=Math.max(0,Math.floor((+new Date(end)-+new Date(start))/1000));return Number.isFinite(n) ? n>=3600?`${Math.floor(n/3600)}시간 ${Math.floor(n%3600/60)}분`:n>=60?`${Math.floor(n/60)}분 ${n%60}초`:`${n}초`:'—';}
+export function entryKey(e) {return e?.job_id || e?.thread_id || e?.id || '';}
+export function filterSessions(entries,search,filter,project,stars=[]) {
+  const q=search.trim().toLocaleLowerCase();
+  return entries.filter(e=>(!q || `${e.title} ${e.cwd} ${e.account||''} ${e.thread_id||''}`.toLocaleLowerCase().includes(q)) && (!project || e.cwd===project) && (filter==='all' || filter==='managed'&&e.managed || filter==='running'&&['running','starting','switching','queued'].includes(e.state) || filter==='attention'&&['error','blocked','waiting_on_user','waiting_on_approval','auth_required','budget_limited','quota_wait','external_writer'].includes(e.state) || filter==='starred'&&stars.includes(entryKey(e))));
+}
+
+export function mergeTurns(older, latest) {
+  const known=new Set(latest.map(t=>t.id).filter(Boolean));
+  return [...older.filter(t=>!known.has(t.id)),...latest];
+}
+
+class Bridge {
+  constructor(){this.pending=new Map();this.id=0;this.compat=false;window.addEventListener('message',event=>this.receive(event));}
+  receive(event){
+    if(event.source!==window.parent || event.data?.jsonrpc!=='2.0')return;
+    const m=event.data, p=this.pending.get(m.id);
+    if(p){clearTimeout(p.timer);this.pending.delete(m.id);m.error?p.reject(new Error(m.error.message||'호스트 요청 오류')):p.resolve(m.result);return;}
+    if(m.method==='ping'&&m.id!=null){window.parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*');return;}
+    if(m.method==='ui/notifications/tool-result')this.onResult?.(m.params);
+    if(m.method==='ui/notifications/host-context-changed')this.context(m.params);
+  }
+  context(ctx){if(ctx?.theme)document.documentElement.dataset.theme=ctx.theme;}
+  request(method,params,timeout=120000){return new Promise((resolve,reject)=>{const id=++this.id;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('연결 응답을 확인하지 못했습니다. 작업 상태를 확인한 후 다시 시도하세요.'));},timeout);this.pending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},'*');});}
+  async initialize(){
+    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.3.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
+    catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;}
+    let previous='';this.resize=new ResizeObserver(()=>{const height=document.documentElement.scrollHeight,width=document.documentElement.clientWidth,key=`${width}:${height}`;if(previous===key)return;previous=key;window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:{height,width}},'*');});this.resize.observe(document.body);
+  }
+  async call(name,args={}){const r=this.compat?await window.openai.callTool(name,args):await this.request('tools/call',{name,arguments:args});if(r?.isError)throw new Error(r.content?.find(x=>x.type==='text')?.text||'관리 요청 실패');return r?._meta?.codexm_data ?? r?.structuredContent?.codexm_data ?? r?.codexm_data ?? r;}
+}
+
+export function startUI(){
+  const $=id=>document.getElementById(id), bridge=new Bridge();
+  const state={snapshot:null,tab:'tasks',selected:'',details:null,detailKey:'',drafts:new Map(),history:new Map(),stars:[],busy:false,polling:false,detailSequence:0,detailInFlight:new Map(),olderTurns:[],olderCursor:undefined,logFilters:{scope:'',account:'',period:'0'},conversationSignature:'',controlsSignature:'',logs:null,settings:null};
+  const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n;};
+  const button=(text,fn,cls)=>{const b=el('button',text,cls);b.type='button';b.addEventListener('click',fn);return b;};
+  const option=(select,value,text)=>{const n=el('option',text);n.value=value;select.append(n);};
+  const field=(form,text,input)=>{const l=el('label',null,'field');l.append(el('span',text),input);form.append(l);return input;};
+  const input=(value='',type='text')=>{const i=el('input');i.type=type;i.value=value;return i;};
+  const select=(values,current)=>{const s=el('select');for(const v of values)option(s,typeof v==='string'?v:v[0],typeof v==='string'?v:v[1]);s.value=current??'';return s;};
+  const message=(text,error=false)=>{$('notice').textContent=text;$('notice').className=error?'error':'';};
+  const entries=()=>state.snapshot?.catalog?.sessions||[];
+  const selected=()=>entries().find(e=>entryKey(e)===state.selected);
+  const job=()=>state.snapshot?.status?.jobs?.find(j=>j.id===selected()?.job_id);
+  const canManage=()=>state.snapshot?.manager_api>=1;
+  const uid=()=>globalThis.crypto?.randomUUID?.()||`ui-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  async function action(fn){if(state.busy)return;state.busy=true;try{await fn();}catch(e){message(e.message,true);}finally{state.busy=false;await refresh();}}
+  const read=(command,args={})=>bridge.call('codexm_read',{command,...args});
+  async function control(command,args){if(!canManage())throw new Error('관리 서비스 업데이트가 필요합니다. 기존 작업을 보존하는 서비스 인계를 먼저 완료하세요.');return bridge.call('codexm_control',{command,args});}
+  function savedUI(){try{const v=window.openai?.widgetState;if(v){state.stars=Array.isArray(v.stars)?v.stars:[];state.selected=v.selected||'';for(const [k,vv]of Object.entries(v.drafts||{}))if(typeof vv==='string')state.drafts.set(k,vv);}}catch{}}
+  function persist(){if(typeof window.openai?.setWidgetState==='function')window.openai.setWidgetState({selected:state.selected,stars:state.stars,drafts:Object.fromEntries(state.drafts)});}
+  function closeDialog(){$('dialog').close();$('message').focus();}
+  function dialog(title){const d=$('dialog-body');d.replaceChildren(el('h2',title));$('dialog').showModal();return d;}
+  function dialogEnd(d,submit){const bar=el('div',null,'toolbar');bar.append(button('취소',closeDialog));if(submit)bar.append(submit);d.append(bar);}
+  function setTab(tab){state.tab=tab;for(const t of ['tasks','accounts','logs','settings'])$(t).hidden=t!==tab;for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===tab);if(tab==='accounts')renderAccounts();if(tab==='logs')void loadLogs();if(tab==='settings')void loadSettings();}
+  async function refresh(){
+    if(state.polling)return;state.polling=true;
+    try{
+      state.snapshot=await bridge.call('codexm_snapshot');
+      const snap=state.snapshot;
+      $('app').hidden=!snap.connected;$('offline').hidden=!!snap.connected;
+      $('connection').textContent=snap.connected?'● 관리 서비스 연결됨':'○ 관리 서비스 중지';
+      if(!snap.connected){renderOffline();return;}
+      $('observed').textContent=`마지막 관측 ${date(snap.at)}`;
+      $('new-button').disabled=!canManage();
+      if(!canManage())message('연결된 관리 서비스가 이전 버전입니다. 업데이트/인계 후 세션 변경과 설정 편집이 활성화됩니다.');
+      renderStrip();renderProjects();renderList();renderTask();if(state.tab==='accounts')renderAccounts();
+      if(state.selected && state.tab==='tasks' && !state.busy)await loadDetails();
+    }catch(e){$('connection').textContent='○ 연결 확인 필요';message(e.message,true);}
+    finally{state.polling=false;}
+  }
+  function renderOffline(){const d=$('offline');d.replaceChildren(el('h2','로컬 관리자 연결'),el('p',state.snapshot.message||'관리 서비스를 시작하세요.'));const s=select(state.snapshot.account_names||[],state.snapshot.manager_account);if(state.snapshot.setup_required)field(d,'처음 사용할 관리자 계정',s);d.append(button('관리 서비스 시작',()=>action(async()=>{await bridge.call('codexm_start',{manager_account:s.value});message('관리 서비스에 연결했습니다.');}),'primary'));}
+  function accountCard(name){
+    const snap=state.snapshot?.status?.accounts?.find(x=>x.account===name),q=quota(snap),card=el('div',null,'account-card');card.dataset.fallback=String(name===state.snapshot?.fallback_account);
+    const head=el('div');head.append(el('strong',name));if(name===state.snapshot?.fallback_account)head.append(el('span',' 예비 계정','badge'));card.append(head);
+    const usable=snap?.authenticated&&!snap?.error,primary=usable?q.primary:null,secondary=usable?q.secondary:null;
+    card.append(el('div',primary==null?'미확인':`${primary}%`, 'amount'),el('div',`단기 남음 · 장기 ${secondary==null?'미확인':`${secondary}% 남음`}`,'small'));
+    const bar=el('div',null,'meter'),fill=el('i');fill.style.width=`${primary??0}%`;bar.append(fill);card.append(bar);
+    const reset=q.bucket.primary?.resetsAt;card.append(el('div',`관측 ${date(snap?.checked_at)}`,'small'));if(reset)card.append(el('div',`재설정 ${date(reset*1000)}`,'small'));if(snap?.error)card.append(el('div','조회 실패 · 값 미확인','small bad'));return card;
+  }
+  function renderStrip(){$('accounts-strip').replaceChildren(...(state.snapshot.priority||[]).map(accountCard));}
+  function renderProjects(){const s=$('project-filter'),values=[...new Set(entries().map(e=>e.cwd).filter(Boolean))].sort(),signature=JSON.stringify(values);if(s.dataset.signature===signature)return;const old=s.value;s.replaceChildren();option(s,'','모든 프로젝트');for(const p of values)option(s,p,p.split('/').filter(Boolean).pop()||p);s.value=old;s.dataset.signature=signature;}
+  function renderList(){
+    const list=filterSessions(entries(),$('search').value,$('state-filter').value,$('project-filter').value,state.stars);$('session-count').textContent=`${list.length}개 대화 · 관리 중 ${entries().filter(e=>e.managed).length}개`;
+    const focus=document.activeElement?.dataset?.sessionKey;const nodes=list.slice(0,300).map(e=>{const key=entryKey(e),b=button('',()=>choose(e));b.className='session';b.dataset.sessionKey=key;b.role='option';b.setAttribute('aria-selected',String(key===state.selected));b.append(el('b',`${state.stars.includes(key)?'★ ':''}${e.title}`),el('small',`${label(e.state)} · ${e.account||'계정 미배정'} · ${e.cwd?.split('/').pop()||''}`));b.addEventListener('keydown',ev=>{if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){ev.preventDefault();const adjacent=ev.key==='ArrowDown'?b.nextElementSibling:b.previousElementSibling;adjacent?.focus();}if(ev.key==='Enter'){ev.preventDefault();choose(e);}});return b;});
+    $('sessions').replaceChildren(...nodes);if(focus)nodes.find(n=>n.dataset.sessionKey===focus)?.focus();if(list.length>300)$('sessions').append(el('p','300개까지 표시됩니다. 검색으로 범위를 줄이세요.','hint'));
+  }
+  function choose(e){state.drafts.set(state.selected,$('message').value);state.selected=entryKey(e);state.details=null;state.detailKey='';state.conversationSignature='';state.controlsSignature='';state.detailSequence++;state.olderTurns=[];state.olderCursor=undefined;$('requests').replaceChildren();$('message').value=state.drafts.get(state.selected)||'';persist();renderList();renderTask();$('message').focus();void loadDetails();}
+  function renderTask(){
+    const e=selected(),j=job();
+    if(!e){$('task-header').replaceChildren(el('h2','대화를 선택하세요'));$('task-controls').replaceChildren();$('conversation').replaceChildren(el('p','기존 Codex 대화를 선택하거나 새 작업을 만드세요.','empty'));$('message').disabled=true;$('send-button').disabled=true;return;}
+    const signature=JSON.stringify([state.selected,e.title,e.state,e.account,j?.target_account,j?.paused,e.managed,state.stars]);
+    if(signature!==state.controlsSignature){
+      state.controlsSignature=signature;$('task-header').replaceChildren(el('h2',e.title),el('div',e.cwd||'','path'));
+      const controls=$('task-controls');controls.replaceChildren(el('span',label(e.state),'badge'));
+      controls.append(button(`${e.account||'계정 선택'}${j?.target_account?` → ${j.target_account}`:''}`,()=>accountDialog(e,j)));
+      if(e.managed){for(const [cmd,text]of [['pause','일시중지'],['resume-job','재개'],['stop','중지']])controls.append(button(text,()=>action(async()=>{await control(cmd,{id:e.job_id});message(`${e.title}: ${text} 요청됨`);})));}
+      else controls.append(button('관리 시작',()=>accountDialog(e,j),'primary'));
+      controls.append(button(state.stars.includes(state.selected)?'★':'☆',()=>{state.stars=state.stars.includes(state.selected)?state.stars.filter(k=>k!==state.selected):[...state.stars,state.selected];persist();renderList();renderTask();}));
+      if(!canManage())for(const b of controls.querySelectorAll('button'))b.disabled=true;
+    }
+    $('task-alerts').textContent=[j?.last_error,j?.target_account?`계정 전환 대기: ${j.account} → ${j.target_account}`:'',j?.goal?`목표 ${label(j.goal.status)} · 사용 ${Number(j.goal.tokensUsed||0).toLocaleString()} 토큰${j.goal.tokenBudget!=null?` / 예산 ${Number(j.goal.tokenBudget).toLocaleString()}`:''}`:''].filter(Boolean).join('\n');
+    const editable=e.managed&&canManage()&&!j?.paused&&!j?.target_account&&j?.state!=='external_writer';$('message').disabled=!editable;$('send-button').disabled=!editable;$('input-target').textContent=`추가 지시 대상: ${e.title} · ${e.account||'계정 미배정'}`;
+  }
+  function accountDialog(e,j){
+    const target={...e},current=j?.account||e.account||state.snapshot.status.default_worker_account,d=dialog(e.managed?'세션 계정 변경':'기존 대화 관리');d.append(el('p',e.title),el('p','이 대화의 계정만 바뀝니다. 진행 중인 작업은 중단 확인 후 이어가며, 일시중지 상태는 유지됩니다.','hint'));
+    const s=field(d,'사용할 계정',select(state.snapshot.priority,current));d.append(el('p',`${state.snapshot.fallback_account}: 상위 계정이 모두 소진된 경우에 사용하며 ${state.snapshot.preferred_recheck_seconds/60}분마다 복귀를 확인합니다.`,'hint'));
+    const operation=uid();dialogEnd(d,button(e.managed?'계정 변경':'관리 시작',()=>{const account=s.value;closeDialog();void action(async()=>{if(target.managed)await control('switch-account',{id:target.job_id,account,expected_account:current,operation_id:operation});else{const registered=await control('resume',{thread_id:target.thread_id||target.id,account});await control('manage',{id:registered.id});if(registered.account&&registered.account!==account)await control('switch-account',{id:registered.id,account,expected_account:registered.account,operation_id:operation});state.selected=registered.id;}message('계정 관리 요청을 접수했습니다. 상태와 사용 기록에서 결과를 확인할 수 있습니다.');});},'primary'));
+  }
+  async function loadDetails(cursor=''){
+    const e=selected();if(!e)return;const key=state.selected,sequence=state.detailSequence;
+    if(state.detailInFlight.has(key))return state.detailInFlight.get(key);
+    const promise=(async()=>{try{const d=await read('details',e.job_id?{id:e.job_id,cursor}:{thread_id:e.thread_id||e.id,cursor});if(sequence!==state.detailSequence||key!==state.selected)return;
+      if(cursor){state.olderTurns=mergeTurns(d.thread?.turns||[],state.details?.thread?.turns||[]);state.olderCursor=d.cursor??null;}else if(state.olderCursor!==undefined){state.olderTurns=state.details?.thread?.turns||state.olderTurns;}
+      const latest=cursor?state.details:d;
+      if(latest?.thread){latest.thread={...latest.thread,turns:mergeTurns(state.olderTurns,latest.thread.turns||[])};if(state.olderCursor!==undefined)latest.cursor=state.olderCursor;}
+      state.details=latest||d;state.detailKey=key;renderConversation(state.details,!!cursor);renderRequests(state.details.job);
+    }catch(error){if(key===state.selected)message(error.message,true);}finally{state.detailInFlight.delete(key);}})();
+    state.detailInFlight.set(key,promise);return promise;
+  }
+  function renderConversation(d,older){
+    const turns=d.thread?.turns||[],signature=JSON.stringify([turns,d.job?.last_output,d.cursor]);if(signature===state.conversationSignature&&!older)return;state.conversationSignature=signature;
+    const viewport=$('conversation'),atBottom=viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight<70,oldHeight=viewport.scrollHeight,nodes=[];
+    if(d.cursor)nodes.push(button('이전 대화 더 보기',()=>loadDetails(d.cursor)));
+    for(const turn of turns){for(const item of turn.items||[]){
+      if(item.type==='userMessage'||item.type==='agentMessage'){const text=item.type==='userMessage'?(item.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n'):item.text;const m=el('article',null,`message ${item.type==='userMessage'?'user':'assistant'}`);m.append(el('div',item.type==='userMessage'?'사용자':'Codex','role'),el('p',text||''));nodes.push(m);}
+      else{const details=el('details');details.append(el('summary',`${item.type} ${item.status||''}`),el('pre',[item.command,item.aggregatedOutput,...(item.changes||[]).map(c=>`${c.path}\n${c.diff}`)].filter(Boolean).join('\n')||'실행 항목'));nodes.push(details);}
+    }if(turn.error)nodes.push(el('p',turn.error.message,'bad'));}
+    if(d.job?.state==='running'&&d.job.last_output&&!turns.some(t=>(t.items||[]).some(i=>i.text===d.job.last_output)))nodes.push(el('article',d.job.last_output,'message assistant'));
+    if(!nodes.length)nodes.push(el('p','이 대화에 아직 메시지가 없습니다.','empty'));
+    const oldTop=viewport.scrollTop;viewport.replaceChildren(...nodes);if(older)viewport.scrollTop=oldTop+viewport.scrollHeight-oldHeight;else if(atBottom)viewport.scrollTop=viewport.scrollHeight;else viewport.scrollTop=oldTop;
+  }
+  function renderRequests(j){
+    const root=$('requests'),signature=JSON.stringify([j?.run_id,j?.pending_requests,j?.target_account]);if(root.dataset.signature===signature)return;root.dataset.signature=signature;root.replaceChildren();
+    for(const request of j?.pending_requests||[]){const card=el('div',null,'request');card.append(el('strong','작업에서 응답을 기다리고 있습니다.'));const p=request.params||{},reply=result=>action(async()=>{await control('reply',{id:j.id,run_id:j.run_id,request_id:request.id,result});message('응답을 전달했습니다.');await loadDetails();});
+      if(request.method==='item/tool/requestUserInput'){const inputs=[];for(const q of p.questions||[]){card.append(el('p',q.question||q.header));let answer;if(q.options?.length){answer=select([['','선택하세요'],...q.options.map(o=>[o.label,`${o.label}${o.description?' · '+o.description:''}`]),['__custom','직접 입력']], '');field(card,q.header||'답변',answer);}else answer=input();const free=input();field(card,'직접 입력',free);inputs.push({q,answer,free});}card.append(button('답변 보내기',()=>{const answers={};for(const x of inputs){const value=x.free.value.trim()||x.answer.value;if(!value||value==='__custom'){message('각 질문에 답변을 입력하세요.',true);return;}answers[x.q.id]={answers:[value]};}void reply({answers});},'primary'));}
+      else if(['item/commandExecution/requestApproval','item/fileChange/requestApproval'].includes(request.method)){card.append(el('pre',p.command||p.reason||'변경 승인이 필요합니다.'));const bar=el('div',null,'toolbar');for(const [decision,text]of [['accept','이번 실행 허용'],['decline','거절'],['cancel','취소']])bar.append(button(text,()=>reply({decision})));card.append(bar);}
+      else if(request.method==='item/permissions/requestApproval'){card.append(el('p',p.reason||'추가 권한 요청'),el('pre',JSON.stringify(p.permissions||{},null,2)));const bar=el('div',null,'toolbar');bar.append(button('요청한 권한을 이번 턴에 허용',()=>reply({permissions:p.permissions||{},scope:'turn'})),button('거절',()=>reply({permissions:{},scope:'turn'})));card.append(bar);}
+      else if(request.method==='mcpServer/elicitation/request'){card.append(el('p',p.message||'추가 정보 요청'));const form=el('form'),fields=[],schema=p.requestedSchema||{},supported=p.mode==='form'&&Object.values(schema.properties||{}).every(v=>['string','number','integer','boolean'].includes(v.type));if(supported){for(const [key,def]of Object.entries(schema.properties||{})){const n=def.enum?select([['','선택하세요'],...def.enum.map(v=>[String(v),String(v)])],def.default??''):input(def.default??'',def.type==='boolean'?'checkbox':['number','integer'].includes(def.type)?'number':'text');if(def.type==='boolean')n.checked=!!def.default;if(def.type==='integer')n.step='1';if(def.minimum!=null)n.min=def.minimum;if(def.maximum!=null)n.max=def.maximum;if(def.minLength!=null)n.minLength=def.minLength;if(def.maxLength!=null)n.maxLength=def.maxLength;if(schema.required?.includes(key))n.required=true;field(form,def.title||key,n);fields.push({key,def,n});}const accept=el('button','입력 전달','primary');accept.type='submit';form.append(accept);form.onsubmit=e=>{e.preventDefault();if(!form.reportValidity())return;const content={};for(const {key,def,n}of fields){if(!n.required&&n.value==='')continue;content[key]=def.type==='boolean'?n.checked:['number','integer'].includes(def.type)?Number(n.value):n.value;}void reply({action:'accept',content});};card.append(form);}else{card.append(el('p','이 요청 형식은 공식 Codex 터미널에서 완료할 수 있습니다.','hint'));if(p.mode==='url')card.append(el('pre',p.url));}const bar=el('div',null,'toolbar');bar.append(button('거절',()=>reply({action:'decline'})),button('취소',()=>reply({action:'cancel'})));card.append(bar);}
+      else{card.append(el('p','이 종류의 요청은 공식 Codex 터미널에서 확인하세요.','hint'));}
+      if(j.target_account)for(const b of card.querySelectorAll('button'))b.disabled=true;root.append(card);
+    }
+  }
+  function renderAccounts(){const d=$('accounts');d.replaceChildren(el('h2','계정 관리'),el('p',`우선순위: ${(state.snapshot.priority||[]).join(' → ')}. 관리자 계정: ${state.snapshot.status.manager_account}.`,'hint'),button('모든 계정 한도 새로 조회',()=>action(async()=>{await read('accounts');message('계정 한도를 다시 관측했습니다.');})));const grid=el('div',null,'grid');for(const n of state.snapshot.priority||[])grid.append(accountCard(n));d.append(grid,el('h3','계정별 관리 세션'));for(const n of state.snapshot.priority||[]){const js=state.snapshot.status.jobs.filter(j=>j.account===n);d.append(el('p',`${n} · ${js.length}개 · 실행 중 ${js.filter(j=>j.state==='running').length}개`));}d.append(el('p','비율은 계정 전체 한도입니다. 여러 세션의 사용량이 합쳐져 있으며 한 세션의 정확한 소비 비율을 뜻하지 않습니다.','hint'),el('p','새 로그인 추가: 터미널에서 codexm account 이름 --login. 공식 Codex 인증 화면을 사용합니다.','hint'));}
+  async function loadLogs(){try{state.logs=await read('logs',{limit:500});if(state.tab==='logs')renderLogs();}catch(e){message(e.message,true);}}
+  function renderLogs(){
+    const d=$('logs');d.replaceChildren(el('h2','사용 기록'),el('p','계정 전환 시점과 사유, 세션 실행 시간, 한도 관측을 함께 봅니다.','hint'));
+    const scope=select([['','전체 세션'],...state.snapshot.status.jobs.map(j=>[j.id,j.title])],state.logFilters.scope),account=select([['','모든 계정'],...state.snapshot.priority.map(n=>[n,n])],state.logFilters.account),period=select([['0','모든 기간'],['1','최근 24시간'],['7','최근 7일']],state.logFilters.period),bar=el('div',null,'toolbar');scope.setAttribute('aria-label','로그 세션');account.setAttribute('aria-label','로그 계정');period.setAttribute('aria-label','로그 기간');bar.append(scope,account,period,button('새로고침',loadLogs));if(selected()?.job_id)bar.append(button('선택한 작업만',()=>{scope.value=selected().job_id;draw();}));d.append(bar);const content=el('div');d.append(content);
+    function draw(){state.logFilters={scope:scope.value,account:account.value,period:period.value};const from=period.value==='0'?0:Date.now()-Number(period.value)*86400000;content.replaceChildren();const log=state.logs||{},runs=(log.runs||[]).filter(r=>(!scope.value||r.JobID===scope.value)&&(!account.value||r.Account===account.value)&&(+new Date(r.EndedAt||Date.now())>=from));const wrap=el('div',null,'table-wrap'),table=el('table'),head=el('tr');for(const text of ['세션 / 계정','시작','실행 시간','시작 잔여','최근 잔여'])head.append(el('th',text));table.append(head);for(const r of runs){const row=el('tr'),name=state.snapshot.status.jobs.find(j=>j.id===r.JobID)?.title||r.JobID,percent=u=>u?`${remaining(u.primary)??'—'}% / ${remaining(u.secondary)??'—'}%`:'미관측';for(const text of [`${name} · ${r.Account}`,date(r.StartedAt),duration(r.StartedAt,r.EndedAt||Date.now()),percent(r.UsageStart),percent(r.UsageLatest)])row.append(el('td',text));table.append(row);}wrap.append(table);content.append(wrap,el('p',log.note||'한도는 계정 전체의 관측값이며 세션별 정확한 소비율이 아닙니다.','hint'),el('h3','계정 전환'));const timeline=el('div',null,'timeline');for(const c of(log.changes||[]).filter(c=>(!scope.value||c.job_id===scope.value)&&(!account.value||c.from===account.value||c.to===account.value)&&+new Date(c.at)>=from)){const n=el('div');n.append(el('strong',`${c.from} → ${c.to}`),el('p',c.reason),el('small',`${date(c.at)} · ${state.snapshot.status.jobs.find(j=>j.id===c.job_id)?.title||c.job_id}`));timeline.append(n);}if(!timeline.children.length)timeline.append(el('p','이 조건의 전환 기록이 없습니다.','hint'));content.append(timeline);}
+    for(const s of [scope,account,period])s.onchange=draw;draw();
+  }
+  async function loadSettings(){if(!canManage())return;try{const doc=await read('settings-edit');if(state.tab!=='settings')return;state.settings=doc;renderSettings(doc);}catch(e){message(e.message,true);}}
+  function renderSettings(doc){
+    const d=$('settings');d.replaceChildren(el('h2','관리 설정'),el('p',doc.application,'hint'));const form=el('form'),values=structuredClone(doc.values),names=doc.accounts||[],manager=field(form,'관리자 계정 (명시적으로 관리자 호출할 때 사용)',select(names,values.manager_account)),worker=field(form,'새 작업의 기본 계정',select(names,values.default_worker)),fallback=field(form,'예비 계정 (항상 마지막 우선순위)',select([['','사용하지 않음'],...names.map(n=>[n,n])],values.fallback_account));
+    form.append(el('h3','작업 계정 우선순위'));const order=el('div');form.append(order);function orderView(){order.replaceChildren();values.priority.forEach((name,index)=>{const row=el('div',null,'priority-row');row.append(el('span',`${index+1}. ${name}`));for(const [delta,text]of [[-1,'위'],[1,'아래']]){const b=button(text,()=>{const next=index+delta;if(next<0||next>=values.priority.length)return;[values.priority[index],values.priority[next]]=[values.priority[next],values.priority[index]];orderView();});b.disabled=index+delta<0||index+delta>=values.priority.length;row.append(b);}row.append(button('제외',()=>{values.priority.splice(index,1);orderView();}));order.append(row);});}orderView();const add=select([['','계정 추가'],...names.map(n=>[n,n])],'');add.onchange=()=>{if(add.value&&!values.priority.includes(add.value)){values.priority.push(add.value);orderView();}add.value='';};form.append(add);
+    const grid=el('div',null,'grid'),fields={};for(const [key,text,min,max]of [['preferred_recheck_seconds','예비 계정에서 복귀 확인 (초)',60,86400],['reconcile_interval_seconds','실행 상태 대조 주기 (초)',1,300],['max_parallel_jobs','동시 실행 작업 수',1,32],['usage_sample_seconds','사용량 관측 간격 (초)',10,3600]]){const i=input(values[key],'number');i.min=min;i.max=max;i.required=true;fields[key]=field(grid,text,i);}form.append(grid,el('p','예비 계정은 상위 계정이 모두 소진된 경우에만 사용합니다. 조회 실패를 소진으로 취급하지 않습니다.','hint'));const save=el('button','설정 저장','primary');save.type='submit';const actions=el('div',null,'toolbar');actions.append(save,button('저장된 값 다시 불러오기',loadSettings));form.append(actions);form.onsubmit=ev=>{ev.preventDefault();if(!form.reportValidity())return;void action(async()=>{const next={...values,manager_account:manager.value,default_worker:worker.value,fallback_account:fallback.value};for(const [key,i]of Object.entries(fields))next[key]=Number(i.value);const saved=await bridge.call('codexm_settings_save',{revision:doc.revision,values:next});state.settings=saved;renderSettings(saved);message('설정을 저장했습니다. 기존 세션 계정은 유지됩니다.');});};d.append(form);
+  }
+  async function newDialog(){
+    const d=dialog('새 작업'),form=el('form'),cwd=field(form,'작업 폴더 (절대 경로)',input(selected()?.cwd||'')),title=field(form,'제목',input()),account=field(form,'작업 계정',select(state.snapshot.priority,state.snapshot.status.default_worker_account)),kind=field(form,'작업 종류',select([['chat','일반 대화'],['task','완료 조건 없는 작업'],['goal','목표를 이어가는 작업']],'chat')),model=field(form,'모델',select([['','Codex 기본값']],'')),goal=field(form,'목표 (목표 작업인 경우 필수)',input()),prompt=field(form,'첫 지시',el('textarea'));cwd.required=true;const submit=el('button','작업 시작','primary');submit.type='submit';d.append(form);const bar=el('div',null,'toolbar');bar.append(button('취소',closeDialog),submit);form.append(bar);form.onsubmit=ev=>{ev.preventDefault();if(!form.reportValidity())return;if(kind.value==='goal'&&!goal.value.trim()){message('목표를 입력하세요.',true);goal.focus();return;}const args={cwd:cwd.value,title:title.value,account:account.value,kind:kind.value,prompt:prompt.value};if(model.value)args.model=model.value;if(kind.value==='goal')args.goal=goal.value;closeDialog();void action(async()=>{const j=await control('new',args);state.selected=j.id;state.controlsSignature='';setTab('tasks');message('새 작업을 생성했습니다.');});};
+    try{const list=await read('models');if(d.contains(model)&&$('dialog').open){for(const m of list.data||[])option(model,m.model||m.id,m.displayName||m.model||m.id);}}catch{if($('dialog').open)d.append(el('p','모델 목록을 확인하지 못했습니다. Codex 기본값으로 시작할 수 있습니다.','hint'));}
+  }
+  $('composer').onsubmit=ev=>{ev.preventDefault();const e=selected(),j=job(),text=$('message').value;if(!e?.managed||!text.trim()||state.busy)return;const target=state.selected,steer=$('steer').checked;void action(async()=>{await control('send',{id:e.job_id,text,steer});const history=state.history.get(target)||[];history.push(text);state.history.set(target,history.slice(-100));state.drafts.delete(target);if(state.selected===target)$('message').value='';persist();message('지시를 접수했습니다.');});};
+  $('message').addEventListener('input',()=>{state.drafts.set(state.selected,$('message').value);persist();});
+  $('message').addEventListener('keydown',ev=>{if(ev.key==='Enter'&&!ev.shiftKey&&!ev.isComposing&&ev.keyCode!==229){ev.preventDefault();$('composer').requestSubmit();}});
+  $('history-button').onclick=()=>{const target=state.selected,d=dialog('이 세션의 입력 기록');for(const text of [...(state.history.get(target)||[])].reverse()){d.append(button(text.slice(0,120),()=>{if(state.selected===target){$('message').value=text;state.drafts.set(target,text);}closeDialog();}));}if(!d.querySelector('button'))d.append(el('p','이 화면에서 보낸 지시가 아직 없습니다.','hint'));dialogEnd(d);};
+  for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>setTab(b.dataset.tab);
+  $('new-button').onclick=newDialog;for(const id of ['search','state-filter','project-filter'])$(id).addEventListener(id==='search'?'input':'change',renderList);
+  bridge.onResult=r=>{const data=r?._meta?.codexm_data;if(data?.connected!=null&&!state.snapshot){state.snapshot=data;void refresh();}};
+  savedUI();void(async()=>{try{await bridge.initialize();await refresh();}catch(e){message('이 호스트의 MCP Apps 연결을 확인할 수 없습니다. '+e.message,true);$('connection').textContent='연결 지원 확인 필요';}async function loop(){if(!document.hidden)await refresh();setTimeout(loop,4000);}setTimeout(loop,4000);})();
+  return {state,refresh};
+}
+if(typeof document!=='undefined'&&document.getElementById('app'))startUI();

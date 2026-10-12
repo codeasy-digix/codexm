@@ -118,6 +118,18 @@ func TestOSServiceRestartsAndAdoptsOwnedNativeWorker(t *testing.T) {
 		t.Fatal(e)
 	}
 	verify()
+	// Change the immutable manager executable path while keeping the same worker.
+	upgrade := m
+	upgrade.Self = s.Self + ".upgrade-test"
+	if e = os.Link(s.Self, upgrade.Self); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { _ = os.Remove(upgrade.Self) })
+	if e = upgrade.Upgrade(ctx, func(ctx context.Context) error { return Ping(ctx, s.Config) }); e != nil {
+		t.Fatal(e)
+	}
+	verify()
+	m = upgrade
 	// Explicit shutdown disarms recovery and parks this isolated worker.
 	if e = Request(ctx, s.Config, "shutdown", nil, nil); e != nil {
 		t.Fatal(e)

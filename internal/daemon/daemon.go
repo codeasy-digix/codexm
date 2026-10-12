@@ -158,6 +158,14 @@ func (m Manager) Command(ctx context.Context, args []string) error {
 		if m.hasSession() && !m.ownsSession() {
 			return errors.New("watchdog tmux session belongs to another process; it was preserved")
 		}
+		svc := service.Manager{Config: m.Config, Self: m.Self, Kind: "watchdog"}
+		// Prepare and validate before removing the legacy observer. The official
+		// daemon and individual workers are not stopped during this handoff.
+		if !svc.Registered() {
+			if e := svc.Install(ctx, false); e != nil {
+				return e
+			}
+		}
 		if e := m.enable(ctx, true); e != nil {
 			return e
 		}
@@ -166,12 +174,7 @@ func (m Manager) Command(ctx context.Context, args []string) error {
 				return e
 			}
 		}
-		svc := service.Manager{Config: m.Config, Self: m.Self, Kind: "watchdog"}
-		if svc.Registered() {
-			if e := svc.Start(ctx); e != nil {
-				return e
-			}
-		} else if e := svc.Install(ctx, true); e != nil {
+		if e := svc.Start(ctx); e != nil {
 			return e
 		}
 		fmt.Fprintf(m.Out, "Automatic official daemon recovery enabled; no model calls.\nUser service: %s\nLog: %s\n", svc.Label(), filepath.Join(m.root(), "watchdog.log"))
