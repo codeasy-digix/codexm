@@ -8,14 +8,19 @@ registration of this existing conversation. Run `~/.local/bin/codexm register --
 Use `--account NAME` only if the user names a worker account. The CLI resolves the
 current `CODEX_THREAD_ID`; do not substitute the newest thread or create a chat.
 
-Report the returned job ID, account and actual state briefly. `external_writer`
+Report the returned job ID, account policy and actual state briefly. `external_writer`
 means registration/monitoring is active while the original Codex owns the writer;
 account handoff waits for its release. Do not claim the original running agent's
-account already changed. Registration preserves its thread, goal and budget.
+account already changed. The returned `account` is the planned codexm worker account;
+`registration.origin_account`, when known, identifies the original execution account.
+Registration preserves its thread, goal and budget.
 
 For a request to open the management screen, use the available `codexm_open` tool.
-The same GUI is available from the app sidebar, the conversation's plugin panel,
-and the codexm plugin details' management action. Do not launch a separate app or
+The plugin declares sidebar, conversation panel and settings entrypoints; their
+visibility depends on the host. Try now on the plugin details is not a managed job
+start action. A successful open tool call does not prove the UI was displayed.
+The manager UI should show tasks, accounts, usage logs, settings and New task.
+Do not launch a separate app or
 website. If the host has not loaded the local MCP connection, report that exact
 condition; a filesystem link is not a plugin invocation.
 

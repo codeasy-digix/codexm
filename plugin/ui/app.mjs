@@ -22,7 +22,8 @@ export function mergeTurns(older, latest) {
   return [...older.filter(t=>!known.has(t.id)),...latest];
 }
 
-class Bridge {
+const UI_BUILD='__CODEXM_UI_BUILD__';
+export class Bridge {
   constructor(){this.pending=new Map();this.id=0;this.compat=false;window.addEventListener('message',event=>this.receive(event));}
   receive(event){
     if(event.source!==window.parent || event.data?.jsonrpc!=='2.0')return;
@@ -35,10 +36,13 @@ class Bridge {
   context(ctx){if(ctx?.theme)document.documentElement.dataset.theme=ctx.theme;for(const [key,value] of Object.entries(ctx?.styles?.variables||{})){if(key.startsWith('--')&&typeof value==='string')document.documentElement.style.setProperty(key,value);}}
   request(method,params,timeout=120000){return new Promise((resolve,reject)=>{const id=++this.id;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('연결 응답을 확인하지 못했습니다. 작업 상태를 확인한 후 다시 시도하세요.'));},timeout);this.pending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},'*');});}
   async initialize(){
-    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.4.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
+    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.4.1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
     catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;}
     let previous='';this.resize=new ResizeObserver(()=>{const height=document.documentElement.scrollHeight,width=document.documentElement.clientWidth,key=`${width}:${height}`;if(previous===key)return;previous=key;window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/size-changed',params:{height,width}},'*');});this.resize.observe(document.body);
+    void this.reportReady();
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)void this.reportReady();});
   }
+  async reportReady(){try{const args={ui_build:UI_BUILD,bridge:this.compat?'legacy':'mcp-app',visible:!document.hidden};const r=this.compat?await window.openai.callTool('codexm_ui_ready',args):await this.request('tools/call',{name:'codexm_ui_ready',arguments:args},2000);return r?.isError!==true;}catch{return false;}}
   async call(name,args={}){const r=this.compat?await window.openai.callTool(name,args):await this.request('tools/call',{name,arguments:args});if(r?.isError)throw new Error(r.content?.find(x=>x.type==='text')?.text||'관리 요청 실패');return r?._meta?.codexm_data ?? r?.structuredContent?.codexm_data ?? r?.codexm_data ?? r;}
 }
 

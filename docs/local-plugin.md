@@ -1,4 +1,4 @@
-# codexm 0.4.0 앱 내 플러그인과 계정 관리
+# codexm 0.4.1 앱 내 플러그인과 계정 관리
 
 CLI·사용자 서비스·MCP Apps 화면은 같은 Go 실행 파일에 포함된다. 공용 웹 화면과
 TCP 수신 서버는 없다. 공식 Codex 설치가 필요하며 공식 CLI/ChatGPT 앱을 개조하지 않는다.
@@ -22,6 +22,8 @@ Codex 앱의 Plugins에서 codexm을 설치/새로고침한다. 플러그인은 
 **codexm 관리**, 대화 옆 플러그인 패널, 플러그인 설정의 **codexm 관리** 버튼을
 공식 진입점으로 선언한다. 설정 버튼은 `openai/settings`의 UI tool action이고,
 관리 패널은 global/thread entrypoint이다. 해당 진입점을 노출하는 호스트가 필요하다.
+0.4.1은 같은 도구에 `settings` entrypoint도 선언해 구조화 설정과 별도로 관리 버튼을
+제공한다. 열기 결과에도 UI resource URI를 넣어 도구 목록 캐시가 없는 경우의 조회를 돕는다.
 호스트가 로컬 stdio MCP 도구와 MCP Apps 화면을 모두 지원해야 한다. MCP 도구 연결은
 화면 렌더링 성공과 다르다. `codexm plugin doctor`도 실제 호스트 렌더링을 성공으로
 보고하지 않는다. 캐시된 플러그인은 원본만 변경해도 자동 갱신된다고 가정하지 않는다.
@@ -29,12 +31,16 @@ Codex 앱의 Plugins에서 codexm을 설치/새로고침한다. 플러그인은 
 **Try now**가 있는 플러그인 소개·상세 화면은 작업 관리 화면과 구분한다. Try now는
 codexm 작업 실행 명령이 아니며, 그것을 누르거나 플러그인을 선택했다고 관리 작업이
 생성됐다고 안내하지 않는다. 실제 관리 화면에는 **작업·계정·사용 기록·설정·+ 새 작업**이
-있어야 한다. 현재 설치 앱에서 사용자가 확인한 화면은 Try now가 있는 상세 화면으로,
-실제 관리 화면의 렌더링 성공은 아직 확인되지 않았다.
+있어야 한다. 0.4.0에서 사용자가 확인한 화면은 Try now가 있는 상세 화면이었고,
+열기 도구를 호출해도 화면이나 안내 글이 표시되지 않았다고 확인했다. 0.4.1의 실제
+앱 렌더링은 별도로 확인해야 한다.
 
 연결된 플러그인에는 `@codexm 관리 화면 열어줘`로 `codexm_open`을 호출할 수 있다.
 도구의 성공 응답도 호스트가 관리 화면을 표시했다는 증거와 구분한다. 관리 메뉴가
 나타나기 전에는 **+ 새 작업**을 현재 앱에서 사용할 수 있는 버튼으로 안내하지 않는다.
+설치 앱은 독립 MCP tool call을 화면 대상으로 처리하며 `functions.exec` 출력 JSON을
+관리 화면으로 바꾸지 않는다. 도구가 이 경로로 실행되는 환경에서는 플러그인 설정이나
+사이드바의 직접 진입을 사용한다. 채팅 인라인 화면에는 호스트의 별도 기능 조건도 있다.
 
 최초 관리자 계정이 없으면 화면에서 반드시 저장된 계정을 선택한다. 이미 저장돼 있으면
 불러온다. 계정 추가·재로그인은 `codexm account NAME --login`으로 공식 인증을 사용한다.
@@ -75,6 +81,9 @@ codexm unregister JOB_ID
 다른 Codex를 강제 종료하거나 잠금 파일을 삭제하지 않는다. 앱이 writer를 계속 보유하면
 인계도 계속 대기한다. 처음부터 codexm이 실행한 작업은 이 외부 writer 대기가 없다.
 관리 해제는 codexm의 실행을 정리하고 등록만 해제하며 원래 채팅과 목표는 보존한다.
+현재 공식 API에서 GUI 대화 하나의 writer를 회수하거나 실행 계정만 교체하는 경로는
+찾지 못했다. 화면 이동·답변 중단이 즉시 해제를 보장하지 않는다.
+[GUI 인계의 현재 경계](gui-handoff-boundary.md)를 참고한다.
 
 ## 계정 선택의 세 가지 범위
 
@@ -148,7 +157,8 @@ MCP Apps 브리지로만 연결하고, 패널은 필요한 호스트 기능을 �
 
 플러그인은 digest별 불변 자산과 패키지 내부 실행 경로를 사용한다. GUI의 PATH나 앱 설치
 위치에 의존하지 않고 codexm의 고정 바이너리를 실행한다. UI는 버전별 resource URI를
-사용하고 이전 resource URI도 읽을 수 있게 유지한다. 도구와 관리 API를 확장할 때
+사용하고 이전 resource URI도 읽을 수 있게 유지한다. 0.4.1은 `manager-v3.html`을 제공하며
+v1/v2 URI도 계속 읽을 수 있다. 도구와 관리 API를 확장할 때
 이전 계약을 유지하고 API 버전에 따라 새 기능을 표시한다.
 
 호스트가 향후 공식 확장을 제거·변경하는 경우까지 무조건 동작한다고 보장하지 않는다.
@@ -164,9 +174,19 @@ codexm plugin doctor
 뜻이다. MCP/캐시 문제가 있으면 `codexm plugin install`과 `codex plugin add`로 갱신한다.
 UI가 지원되지 않더라도 CLI/TUI와 독립 서비스로 동일 계정·작업을 관리할 수 있다.
 
+0.4.1의 `plugin doctor`는 `panel_health`에 `mcp_initialized`, `open_requested`,
+`resource_served`, `panel_connected`의 마지막 관측을 구분해 표시한다. 패널은 UI 브리지
+초기화 후 현재 UI build를 보고한다. 이 기록은 현재 패널이 살아 있다는 증거나 화면 조작
+성공이 아니며 `host_ui_verified`는 계속 false다. `panel_connection_matches_current_ui`가
+false면 오래된 UI 또는 아직 연결되지 않은 상태를 구분해 확인한다.
+
+관측 파일은 `~/.local/state/codexm/plugin-health/`에 시각·제품 버전·UI build·브리지 종류·
+visibility만 저장한다. RPC 인수·대화·인증 원문은 저장하지 않는다. 진단 저장 실패나
+이전 호스트의 진단 도구 부재가 관리 화면의 초기화를 막지 않는다.
+
 ## 검증 범위
 
-[0.4.0 검증 기록](native-gui-validation.md)에 공식 엔진의 설치·MCP·설정 발견,
+[0.4.0 및 0.4.1 검증 기록](native-gui-validation.md)에 공식 엔진의 설치·MCP·설정 발견,
 서비스 복구/업데이트, 현재 대화 등록과 격리 패널 조작 결과를 기록한다. 테스트용
 `scripts/plugin-panel-host.mjs`는 모의 호스트이며 제품 설치에 포함되지 않는다.
 그곳의 브라우저 렌더링을 실제 Codex 앱 설정 화면의 렌더링 성공으로 표시하지 않는다.

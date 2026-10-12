@@ -96,3 +96,34 @@ fixture 종료 정책을 수정한 최종 시험은 PASS이며 관리 모델 호
 로컬 설치/서비스/캐시 갱신은 `.home/docs/codexm.md`의 운영 반영 기록으로 구분한다. ibs 등 다른 장비에는
 이번 버전을 배포하지 않는다. 앱 호스트의 공식 규격 변경은 UI 호환성 문제로 진단하고
 독립 관리 서비스와 기존 worker/계정 상태는 유지하는 구조이다.
+
+## 0.4.1 진입점·연결 진단 보완
+
+사용자는 0.4.0의 열기 도구 호출 후 화면이나 안내 글도 표시되지 않았다고 확인했다.
+실제 root rollout에는 해당 호출이 exec/custom tool output으로 남았고 독립 MCP tool
+call은 없었다. 설치 앱은 독립 `mcpToolCall`을 인라인 화면 대상으로 처리한다. 텍스트로
+출력한 JSON을 화면으로 재해석하지 않는다. 따라서 기존 호출 성공은 GUI 성공이 아니다.
+
+현재 앱의 정적 parser는 local stdio의 global/thread/settings 진입점을 지원한다. 0.4.1은
+settings entrypoint, 열기 결과의 resource URI fallback, resource의 inline/fullscreen
+display modes를 추가했다. UI URI는 v3로 올리고 v1/v2 읽기를 유지한다. 별도 앱·웹 서버나
+private rollout 설정 변경은 하지 않았다. 인라인 카드에는 별도 호스트 feature 조건이 있다.
+
+연결 진단은 열기 요청·UI resource 응답·브리지 연결을 구분하고 현재 UI build를 확인한다.
+시각·버전·허용된 bridge·visibility만 기록하며 `host_ui_verified`는 false로 유지한다.
+오래된 캐시·임의 데이터 거부·동시 stage 보존·진단 저장 실패와 이전 호스트의 진단 부재가
+기존 기능을 막지 않는 조건을 Go/JS 시험에서 확인했다.
+
+격리 native 시험을 `codexm-test-ui-contract-20261013`에서 실행해 PASS/exit 0을 확인했다.
+공식 engine의 plugin install, settings/global/thread metadata, `mcpServer/tool/call`,
+`mcpServer/resource/read`와 synthetic UI bridge report를 모두 통과했다. 빈 인증·임시 HOME이며
+모델 turn 0개, 관리 서비스 생성 없음이다. synthetic report의 visibility는 false였고 이를
+실제 GUI 렌더링으로 판정하지 않았다. 시험 세션은 정상 종료 후 제거됐다.
+
+`go test -race ./...`, `go vet ./...`, JS 5개 시험과 bundled skill validator가 통과했다.
+기본 및 bundled Python에는 PyYAML이 없어 validator가 처음 실패했다. Git 밖 별도 venv에
+PyYAML을 설치해 재실행한 최종 결과는 valid였다. 시스템 Python은 변경하지 않았다.
+
+writer API 조사와 코드 검토는 읽기 전용 하위 에이전트가 병렬 수행했다. 현재 공개 API의
+GUI 인계 부재는 [별도 경계 기록](gui-handoff-boundary.md)에 남긴다. 실제 설정 버튼 노출·
+관리 화면 표시와 투명한 GUI 계정 인계는 아직 완료 검증을 통과하지 않았다.

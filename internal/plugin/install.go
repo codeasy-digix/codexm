@@ -298,6 +298,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 					s["host_discovery_problem"] = cr.SafeText(e.Error())
 				}
 			}
+			s["panel_health"] = i.panelHealth()
 		}
 		return json.NewEncoder(out).Encode(s)
 	default:

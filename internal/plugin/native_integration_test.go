@@ -73,7 +73,7 @@ func TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill(t *testi
 		}
 		for _, entry := range status.Data {
 			if tool, found := entry.Tools["codexm_open"]; found && entry.RuntimeStatus == "connected" {
-				if !bytes.Contains(tool, []byte(`"openai/ui"`)) || !bytes.Contains(tool, []byte(`"global"`)) || !bytes.Contains(tool, []byte(`"thread"`)) {
+				if !bytes.Contains(tool, []byte(`"openai/ui"`)) || !bytes.Contains(tool, []byte(`"global"`)) || !bytes.Contains(tool, []byte(`"thread"`)) || !bytes.Contains(tool, []byte(`"settings"`)) {
 					t.Fatal("management entrypoints absent")
 				}
 				capabilities, _ := json.Marshal(entry.Capabilities)
@@ -96,6 +96,27 @@ func TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill(t *testi
 	}
 	if !bytes.Contains(result, []byte("codexm_open")) || !bytes.Contains(result, []byte("preferred_recheck_seconds")) {
 		t.Fatal("settings did not expose management action and account policy")
+	}
+	// Exercise the real native resource transport as well as tool discovery.
+	// This is still a synthetic client, not evidence of a displayed GUI.
+	if e = c.Call(ctx, "mcpServer/tool/call", map[string]any{"threadId": thread.Thread.ID, "server": server, "tool": "codexm_open", "arguments": map[string]any{}}, &result); e != nil {
+		t.Fatal(e)
+	}
+	if !bytes.Contains(result, []byte(ResourceURI)) {
+		t.Fatal("open result omitted its resource fallback")
+	}
+	if e = c.Call(ctx, "mcpServer/resource/read", map[string]any{"threadId": thread.Thread.ID, "server": server, "uri": ResourceURI}, &result); e != nil {
+		t.Fatal(e)
+	}
+	_, build, e := uiResource()
+	if e != nil || !bytes.Contains(result, []byte(build)) || !bytes.Contains(result, []byte("availableDisplayModes")) {
+		t.Fatal("native transport did not return the current UI and display modes", e)
+	}
+	if e = c.Call(ctx, "mcpServer/tool/call", map[string]any{"threadId": thread.Thread.ID, "server": server, "tool": "codexm_ui_ready", "arguments": map[string]any{"ui_build": build, "bridge": "mcp-app", "visible": false}}, &result); e != nil {
+		t.Fatal(e)
+	}
+	if i.panelHealth()["panel_connection_matches_current_ui"] != true || i.Status()["host_ui_verified"] != false {
+		t.Fatal("native diagnostics confused a synthetic connection with visible UI")
 	}
 	if _, e := os.Stat(filepath.Join(i.Config.StateDir(), "services")); !os.IsNotExist(e) {
 		t.Fatal("plugin discovery started supervision")

@@ -66,7 +66,7 @@ func TestNativePluginSettingsAdvertisePanelsAndMergeOnlyChangedValues(t *testing
 		entry := tool.(map[string]any)
 		if entry["name"] == "codexm_open" {
 			b, _ := json.Marshal(entry)
-			if !strings.Contains(string(b), `"type":"global"`) || !strings.Contains(string(b), `"type":"thread"`) || entry["title"] != "codexm 관리" {
+			if !strings.Contains(string(b), `"type":"global"`) || !strings.Contains(string(b), `"type":"thread"`) || !strings.Contains(string(b), `"type":"settings"`) || entry["title"] != "codexm 관리" {
 				t.Fatal("missing click-to-open entrypoint")
 			}
 		}
