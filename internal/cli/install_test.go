@@ -52,6 +52,7 @@ func TestInstallerChecksArchiveBeforeReplacingCurrent(t *testing.T) {
 	checksum := filepath.Join(repo, "SHA256SUMS")
 	write(checksum, []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(valid), asset)), 0600)
 	bin := filepath.Join(repo, "test-bin")
+	write(filepath.Join(bin, "codex"), []byte("#!/bin/sh\necho 'codex-cli 0.0-test'\n"), 0700)
 	write(filepath.Join(bin, "gh"), []byte(`#!/bin/sh
 set -eu
 download_dest=
@@ -116,7 +117,7 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 	write(local, binary, 0700)
 	runSource := func() error {
 		cmd := exec.Command("sh", script, "--build")
-		cmd.Env = append(os.Environ(), "CODEXM_INSTALL_ROOT="+installRoot, "CODEXM_LINK_DIR="+filepath.Join(repo, "entrypoint"), "CODEXM_TEST_LOCAL_BINARY="+local)
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEXM_INSTALL_ROOT="+installRoot, "CODEXM_LINK_DIR="+filepath.Join(repo, "entrypoint"), "CODEXM_TEST_LOCAL_BINARY="+local)
 		if out, e := cmd.CombinedOutput(); e != nil {
 			return fmt.Errorf("%w: %s", e, out)
 		}

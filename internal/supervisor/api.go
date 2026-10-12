@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	"github.com/codeasy-digix/codexm/internal/policy"
@@ -66,6 +68,16 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		return map[string]any{"version": config.Version}, nil
 	case "status":
 		return s.status()
+	case "sessions":
+		list, err := catalog.Read(ctx, config.Expand(s.Config.Runtime.SharedCodexHome))
+		if err != nil {
+			list.Warning = err.Error()
+		}
+		js, err := s.Store.Jobs()
+		if err != nil {
+			return nil, err
+		}
+		return catalog.Merge(list, js), nil
 	case "client":
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -156,13 +168,34 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		}
 		return s.newJob(n)
 	case "threads":
-		p, e := s.Resolver.Probe(ctx, s.manager())
-		if e != nil {
-			return nil, e
+		list, err := catalog.Read(ctx, config.Expand(s.Config.Runtime.SharedCodexHome))
+		if err != nil {
+			return nil, err
 		}
-		defer p.Close()
-		ts, cursor, e := p.List(ctx, a.Search, a.Cursor)
-		return map[string]any{"threads": ts, "cursor": cursor}, e
+		ts := []cr.Thread{}
+		for _, e := range list.Sessions {
+			if a.Search != "" && !strings.Contains(strings.ToLower(e.Title+" "+e.ID+" "+e.Cwd), strings.ToLower(a.Search)) {
+				continue
+			}
+			t := cr.Thread{ID: e.ID, Name: e.Title, Cwd: e.Cwd, UpdatedAt: e.UpdatedAt / 1000, Source: mustJSON(e.Source)}
+			t.Status.Type = "notLoaded"
+			ts = append(ts, t)
+		}
+		offset := 0
+		if a.Cursor != "" {
+			var err error
+			offset, err = strconv.Atoi(a.Cursor)
+			if err != nil || offset < 0 {
+				return nil, errors.New("invalid conversation list cursor")
+			}
+		}
+		offset = min(offset, len(ts))
+		end := min(offset+50, len(ts))
+		cursor := ""
+		if end < len(ts) {
+			cursor = strconv.Itoa(end)
+		}
+		return map[string]any{"threads": ts[offset:end], "cursor": cursor}, nil
 	case "read":
 		if a.ThreadID == "" {
 			j, e := s.Store.Job(a.ID)

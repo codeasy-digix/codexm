@@ -16,14 +16,14 @@ type slashCommand struct {
 // codexm owns management commands. Chat commands belong to the official TUI
 // opened in its own terminal, so no native command emulation is necessary.
 var slashCommands = []slashCommand{
-	{Name: "agents", Description: "관리 작업 목록"},
+	{Name: "agents", Description: "전체 Codex 대화·관리 작업 목록"},
 	{Name: "status", Description: "전체 작업·관리자·감시 상태"},
 	{Name: "info", Description: "선택한 세션의 계정·모델·목표·토큰"},
 	{Name: "usage", Description: "전체 계정 한도·관리자 호출·세션별 토큰"},
 	{Name: "logs", Args: "[all]", Description: "선택 작업 로그 · all은 전체 세션"},
 	{Name: "open", Description: "선택한 작업을 새 터미널의 공식 Codex로 열기"},
 	{Name: "new", Description: "새 채팅을 만들고 새 터미널에서 열기"},
-	{Name: "chats", Args: "[검색어]", Description: "저장된 Codex 대화 찾기·열기"},
+	{Name: "chats", Args: "[검색어]", Description: "전체 대화 목록 검색"},
 	{Name: "accounts", Description: "모든 계정 한도를 새로 조회 (모델 호출 없음)"},
 	{Name: "manager-account", Args: "[이름]", Description: "저장된 관리자 계정 조회 또는 변경"},
 	{Name: "pause", Description: "선택 작업 일시 중지"},
@@ -116,6 +116,6 @@ func commandHelp() string {
 	for _, c := range slashCommands {
 		b.WriteString("/" + c.Name + " " + c.Args + " · " + c.Description + "\n")
 	}
-	b.WriteString("\n입력창 기본 포커스 · 일반 텍스트 + Enter: 작업 검색 (모델 호출 없음)\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 미리보기 스크롤\n목록: ↑↓ 선택 · Enter 새 터미널 열기 · v 미리보기 · l 전체 로그\n새 터미널을 닫아도 작업 감시는 계속됩니다. /quit는 관리 화면만 닫습니다.\n")
+	b.WriteString("\n입력창 기본 포커스 · 일반 텍스트 + Enter: 작업 검색 (모델 호출 없음)\n빈 입력 + Enter: 선택 대화 열기 · ↑↓: 대화 선택\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 미리보기 스크롤\n목록: ↑↓ 선택 · Enter 새 터미널 열기 · v 미리보기 · l 전체 로그\n새 터미널을 닫아도 작업 감시는 계속됩니다. /quit는 관리 화면만 닫습니다.\n")
 	return b.String()
 }

@@ -165,6 +165,9 @@ func Main(args []string) error {
 		help()
 		return nil
 	}
+	if command == "session" || command == "sessions" {
+		return sessionCommand(ctx, c, args)
+	}
 	if c.Manager.Account == "" {
 		return errors.New("choose the manager account first: codexm (interactive) or codexm setup --manager NAME")
 	}
@@ -339,12 +342,16 @@ func Main(args []string) error {
 		e = supervisor.Request(ctx, c, command, supervisor.JobArgs{ID: args[0], From: args[1]}, &result)
 	case "open", "attach":
 		if len(args) != 1 {
-			return fmt.Errorf("usage: codexm %s JOB_ID", command)
+			return fmt.Errorf("usage: codexm %s JOB_ID|THREAD_ID", command)
+		}
+		j, e := existingJob(ctx, c, args[0])
+		if e != nil {
+			return e
 		}
 		if command == "attach" {
-			return terminal.Run(ctx, c, args[0], jobs.ID())
+			return terminal.Run(ctx, c, j.ID, jobs.ID())
 		}
-		opened, e := terminal.Open(ctx, c, self, args[0])
+		opened, e := terminal.Open(ctx, c, self, j.ID)
 		if e != nil {
 			return e
 		}
@@ -415,6 +422,9 @@ codexm daemon watch|unwatch|status     Token-free official daemon recovery
 codexm daemon start|restart|stop       Official lifecycle, using the shared home
 codexm setup --manager NAME             Save manager account explicitly
 codexm status --json                    Jobs, health and named tmux sessions
+codexm session list [--search TEXT]     All Codex conversations, read-only (including archived)
+codexm session list --managed          Only jobs registered with codexm
+codexm session list --active-only      Exclude archived conversations
 codexm logs [JOB_ID] [--json]            Session/account durations, quota observations and changes
 codexm manage JOB_ID                    Own an imported conversation without generating a turn
 codexm new --cwd DIR --kind chat --prompt 'instruction'
@@ -425,8 +435,8 @@ codexm resume THREAD --manage           Take ownership and continue
 codexm send JOB --text 'followup'        Queue another instruction
 codexm steer JOB --text 'correction'    Steer the active turn explicitly
 codexm pause|resume-job|stop|complete JOB
-codexm open JOB                        Open official Codex in a new terminal
-codexm attach JOB                      Official Codex in the current terminal
+codexm open JOB|THREAD                 Open official Codex in a new terminal
+codexm attach JOB|THREAD               Official Codex in the current terminal
 codexm read|events JOB
 codexm manager JOB --text 'instruction' Short manager model call
 codexm manager --all --text 'instruction'
@@ -438,7 +448,7 @@ codexm doctor [--json] [--live]          Runtime/configuration diagnostics
 codexm runtime refresh                 Explicit compatible engine adoption
 codexm shutdown                        Stop managed workers and supervisor
 
-TUI: input is focused by default · text searches jobs · / opens management commands
+TUI: all local Codex conversations · input focused · text searches · / management commands
      /status /usage: all jobs · /info: selected session · /logs [all]
      /open or list Enter: official Codex in a new terminal · /chats: saved chats
      /help · /quit keeps running work. Native chat commands live in that terminal.`)

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	_ "modernc.org/sqlite"
 )
@@ -33,6 +34,15 @@ CREATE INDEX IF NOT EXISTS pending_actions ON actions(state,due);
 CREATE TABLE IF NOT EXISTS account_snapshots(account TEXT PRIMARY KEY,data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS manager_decisions(id TEXT PRIMARY KEY,incident TEXT NOT NULL,at INTEGER NOT NULL,data TEXT NOT NULL);
 `
+
+// ReadOnly opens existing manager state without creating or migrating it.
+func ReadOnly(dir string) (*Store, error) {
+	db, err := catalog.OpenReadOnly(filepath.Join(dir, "state.sqlite"))
+	if err != nil {
+		return nil, err
+	}
+	return &Store{db}, nil
+}
 
 func Open(dir string) (*Store, error) {
 	if e := os.MkdirAll(dir, 0700); e != nil {

@@ -8,6 +8,23 @@ target_os=$(uname -s | tr '[:upper:]' '[:lower:]')
 target_arch=$(uname -m)
 case "$target_arch" in aarch64) target_arch=arm64 ;; x86_64) target_arch=amd64 ;; esac
 case "$target_os/$target_arch" in darwin/arm64|darwin/amd64|linux/arm64|linux/amd64) ;; *) echo 'Unsupported platform' >&2; exit 2 ;; esac
+case "${1:-}" in --build|'') ;; *) echo 'Usage: ./install.sh [--build]' >&2; exit 2 ;; esac
+# codexm manages an existing official Codex installation; it never installs or
+# replaces codex. Check before creating directories, building or downloading.
+codex_binary=$(command -v codex 2>/dev/null || true)
+if [ -z "$codex_binary" ]; then
+  codex_binary="${CODEX_HOME:-$HOME/.codex}/packages/app-server-daemon/current/bin/codex"
+fi
+codex_version=$("$codex_binary" --version 2>/dev/null || true)
+case "$codex_version" in
+  'codex-cli '*) ;;
+  *)
+    printf '%s\n' 'Codex CLI is required before installing codexm.' \
+      'Install the official Codex CLI first: https://developers.openai.com/codex/cli/' \
+      'Verify codex --version, then run this installer again.' >&2
+    exit 1
+    ;;
+esac
 install_root="${CODEXM_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/codexm}"
 link_dir="${CODEXM_LINK_DIR:-$HOME/.local/bin}"
 mkdir -p "$install_root/versions" "$install_root/bin" "$link_dir"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	"github.com/codeasy-digix/codexm/internal/policy"
@@ -234,6 +235,36 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	j, _ = s.Store.Job(j.ID)
 	if j.ThreadID == "" || j.State != "idle" || !cr.HasSession(ctx, j.Session) || !cr.WriterBusy(j.Store, j.ThreadID) {
 		t.Fatal(j)
+	}
+	// An ordinary native chat created outside codexm is listed without import,
+	// including while the original managed worker retains its writer lock.
+	p, e := r.Probe(ctx, "account-backup")
+	if e != nil {
+		t.Fatal(e)
+	}
+	var external cr.ResumeResponse
+	e = p.Call(ctx, "thread/start", map[string]any{"cwd": j.Cwd, "persistExtendedHistory": true, "approvalPolicy": "never", "sandbox": "read-only"}, &external)
+	if e == nil {
+		e = p.Call(ctx, "thread/name/set", map[string]any{"threadId": external.Thread.ID, "name": "external native chat"}, nil)
+	}
+	p.Close()
+	if e != nil {
+		t.Fatal(e)
+	}
+	catalogValue, e := s.Handle(ctx, Call{Command: "sessions"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	list := catalogValue.(catalog.List)
+	found := false
+	for _, entry := range list.Sessions {
+		if entry.ThreadID == external.Thread.ID {
+			found = entry.JobID == "" && entry.Account == "" && !entry.Managed
+		}
+	}
+	js, e := s.Store.Jobs()
+	if e != nil || !found || len(js) != 1 || !cr.WriterBusy(j.Store, j.ThreadID) {
+		t.Fatal("native catalog imported a chat or changed the writer", e)
 	}
 	// Goal persistence without any model generation.
 	c := s.client(j.ID)

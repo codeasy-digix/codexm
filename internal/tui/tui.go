@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/activity"
+	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/display"
 	"github.com/codeasy-digix/codexm/internal/jobs"
@@ -30,8 +31,9 @@ type readyMsg struct {
 	Error  error
 }
 type pollMsg struct {
-	Status supervisor.Status
-	Error  error
+	Status  supervisor.Status
+	Error   error
+	Catalog catalog.List
 }
 type replyMsg struct {
 	Command string
@@ -61,7 +63,10 @@ type Model struct {
 	Input            textarea.Model
 	Detail           viewport.Model
 	Threads          []cr.Thread
+	Catalog          catalog.List
+	CatalogReady     bool
 	Cursor           string
+	ThreadSearch     string
 	ThreadSelected   int
 	Wizard           []string
 	WizardIndex      int
@@ -74,6 +79,7 @@ type Model struct {
 	ReadCursor       string
 	WantOpen         bool
 	WantRead         bool
+	WantCommand      string
 	LogsOpen         bool
 	LogsJob          string
 	Panel            string
@@ -152,7 +158,17 @@ func (m Model) poll() tea.Cmd {
 		_ = supervisor.Request(ctx, m.Config, "client", supervisor.JobArgs{ClientID: m.ClientID}, nil)
 		var st supervisor.Status
 		e := supervisor.Request(ctx, m.Config, "status", nil, &st)
-		return pollMsg{st, e}
+		var list catalog.List
+		if e == nil {
+			// Read locally so an upgraded UI can also use an older supervisor.
+			var err error
+			list, err = catalog.Read(ctx, config.Expand(m.Config.Runtime.SharedCodexHome))
+			if err != nil {
+				list.Warning = err.Error()
+			}
+			list = catalog.Merge(list, st.Jobs)
+		}
+		return pollMsg{Status: st, Error: e, Catalog: list}
 	}
 }
 func (m Model) request(command string, args any) tea.Cmd {
@@ -165,20 +181,58 @@ func (m Model) request(command string, args any) tea.Cmd {
 	}
 }
 func (m Model) selected() (jobs.Job, bool) {
-	for _, j := range m.Status.Jobs {
+	for _, j := range m.allJobs() {
 		if j.ID == m.SelectedID {
 			return j, true
 		}
 	}
 	return jobs.Job{}, false
 }
+func (m Model) allJobs() []jobs.Job {
+	if !m.CatalogReady {
+		return m.Status.Jobs
+	}
+	managed := map[string]jobs.Job{}
+	for _, j := range m.Status.Jobs {
+		managed[j.ID] = j
+	}
+	out := make([]jobs.Job, 0, len(m.Catalog.Sessions))
+	for _, e := range m.Catalog.Sessions {
+		if j, ok := managed[e.JobID]; ok {
+			j.Title = e.Title
+			out = append(out, j)
+		} else {
+			out = append(out, e.Job(m.Config.Runtime.SharedCodexHome))
+		}
+	}
+	return out
+}
+func (m Model) registered(j jobs.Job) bool {
+	for _, saved := range m.Status.Jobs {
+		if saved.ID == j.ID {
+			return true
+		}
+	}
+	return false
+}
+func (m *Model) openSelected(j jobs.Job) tea.Cmd {
+	if !m.registered(j) {
+		m.Threads = []cr.Thread{{ID: j.ThreadID, Name: j.Title, Cwd: j.Cwd}}
+		m.ThreadSelected = 0
+		m.Screen = "import-account"
+		m.focusInput(m.Config.DefaultWorker())
+		m.Notice = "기존 대화를 열 계정 · Enter로 같은 대화에 연결"
+		return nil
+	}
+	return m.openID(j.ID)
+}
 func (m Model) filtered() []jobs.Job {
 	out := []jobs.Job{}
-	for _, j := range m.Status.Jobs {
+	for _, j := range m.allJobs() {
 		if m.StateFilter != "" && j.State != m.StateFilter {
 			continue
 		}
-		if m.Filter != "" && !strings.Contains(strings.ToLower(j.Title+" "+j.ID+" "+j.Account+" "+j.Cwd), strings.ToLower(m.Filter)) {
+		if m.Filter != "" && !strings.Contains(strings.ToLower(j.Title+" "+j.ID+" "+j.ThreadID+" "+j.Account+" "+j.Cwd), strings.ToLower(m.Filter)) {
 			continue
 		}
 		out = append(out, j)
@@ -245,6 +299,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		old := m.Status.ManagerDecision
 		m.Status = v.Status
+		if v.Catalog.Sessions != nil {
+			if v.Catalog.Warning != "" && m.CatalogReady {
+				// Keep the last native list during a transient database error.
+				m.Catalog = catalog.Merge(m.Catalog, v.Status.Jobs)
+			} else {
+				m.Catalog, m.CatalogReady = v.Catalog, true
+			}
+			if v.Catalog.Warning != "" {
+				m.Notice = "Codex 목록 조회: " + v.Catalog.Warning
+			}
+		}
 		if d := v.Status.ManagerDecision; d != nil && (old == nil || old.ID != d.ID || old.State != d.State) {
 			if d.Decision != nil {
 				m.Notice = "관리자: " + d.Decision.Summary
@@ -277,6 +342,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Loading = false
 		if v.Error != nil {
 			m.Notice = v.Error.Error()
+			if v.Command == "resume" {
+				m.WantOpen, m.WantRead, m.WantCommand = false, false, ""
+			}
 			if v.Command == "new" {
 				m.WizardIndex = 0
 				m.focusInput(m.New.Cwd)
@@ -301,6 +369,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.WantRead {
 					m.WantRead = false
 					return m, tea.Batch(m.poll(), m.request("read", supervisor.JobArgs{ID: j.ID}))
+				}
+				if m.WantCommand != "" {
+					command := m.WantCommand
+					m.WantCommand = ""
+					return m, tea.Batch(m.poll(), m.request(command, supervisor.JobArgs{ID: j.ID}))
 				}
 			}
 		case "threads":
@@ -434,6 +507,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.LogsOpen = false
 			m.Panel = ""
 			m.DetailText = ""
+			m.WantOpen, m.WantRead, m.WantCommand = false, false, ""
 			if m.Screen == "new" {
 				m.Input.Reset()
 			}
@@ -559,7 +633,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "/":
 				m.focusInput("/chats ")
 			case "n":
-				return m, m.request("threads", supervisor.JobArgs{Cursor: m.Cursor})
+				if m.Cursor == "" {
+					m.Notice = "마지막 대화 페이지입니다."
+					return m, nil
+				}
+				return m, m.request("threads", supervisor.JobArgs{Search: m.ThreadSearch, Cursor: m.Cursor})
 			}
 			return m, nil
 		}
@@ -592,12 +670,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Focus = "detail"
 		case "enter", "a":
 			if j, ok := m.selected(); ok {
-				return m, m.openID(j.ID)
+				return m, m.openSelected(j)
 			}
 		case "v":
 			if j, ok := m.selected(); ok && j.ThreadID != "" {
 				m.Focus = "detail"
-				return m, m.request("read", supervisor.JobArgs{ID: j.ID})
+				return m, m.request("read", supervisor.JobArgs{ID: j.ID, ThreadID: j.ThreadID})
 			}
 		case "/":
 			m.focusInput("/")
@@ -612,6 +690,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.beginNew()
 		case "r":
 			m.ViewEpoch++
+			m.ThreadSearch = ""
 			return m, m.request("threads", supervisor.JobArgs{})
 		case "R":
 			m.Notice = "재연결 중…"
@@ -622,7 +701,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Notice = "관리자에게 지시합니다. 모델 호출이 발생합니다."
 		case "p", "s", "c":
 			j, ok := m.selected()
-			if ok {
+			if ok && m.registered(j) {
 				command := map[string]string{"p": "pause", "s": "resume-job", "c": "complete"}[key]
 				return m, m.request(command, supervisor.JobArgs{ID: j.ID})
 			}
@@ -699,6 +778,11 @@ func (m Model) openID(id string) tea.Cmd {
 func (m *Model) submit(text string) tea.Cmd {
 	text = strings.TrimSpace(text)
 	if text == "" {
+		if m.Target != "manager" {
+			if j, ok := m.selected(); ok {
+				return m.openSelected(j)
+			}
+		}
 		return nil
 	}
 	if strings.HasPrefix(text, "/") {
@@ -706,6 +790,10 @@ func (m *Model) submit(text string) tea.Cmd {
 	}
 	if m.Target == "manager" {
 		j, _ := m.selected()
+		if j.ID != "" && !m.registered(j) {
+			m.Notice = "이 대화는 아직 관리 작업이 아닙니다. /manage로 등록하세요."
+			return nil
+		}
 		m.Panel = ""
 		m.DetailText = ""
 		m.LogsOpen = false
@@ -748,8 +836,11 @@ func (m *Model) slash(text string) tea.Cmd {
 	case "new":
 		m.beginNew()
 	case "chats":
-		m.Loading = true
-		return m.request("threads", supervisor.JobArgs{Search: arg})
+		m.Filter = arg
+		m.Selected, m.SelectedID = 0, ""
+		m.Target = "search"
+		m.returnInput()
+		return m.poll()
 	case "status":
 		m.Panel = "manager-status"
 		return m.poll()
@@ -762,8 +853,12 @@ func (m *Model) slash(text string) tea.Cmd {
 			return nil
 		}
 		m.Notice = "새 터미널에 공식 Codex 화면 연결 중…"
-		return m.openID(j.ID)
+		return m.openSelected(j)
 	case "manager":
+		if j.ID != "" && !m.registered(j) {
+			m.Notice = "이 대화는 아직 관리 작업이 아닙니다. /manage로 등록하세요."
+			return nil
+		}
 		m.Target = "manager"
 		m.Notice = "입력 대상: 관리자 · 모델 호출 · /filter 로 검색 입력 복귀"
 		if arg != "" {
@@ -798,6 +893,12 @@ func (m *Model) slash(text string) tea.Cmd {
 				return nil
 			}
 			m.LogsJob = j.ID
+			if !m.registered(j) {
+				m.LogsOpen = false
+				m.Panel = "logs"
+				m.DetailText = "이 대화는 Codex에 저장되어 있습니다. codexm 계정·시간 로그는 /open 또는 /manage로 등록한 이후부터 기록됩니다.\n전체 작업 로그: /logs all"
+				return nil
+			}
 		}
 		m.Panel = "logs"
 		return m.request("logs", supervisor.JobArgs{ID: m.LogsJob})
@@ -815,7 +916,15 @@ func (m *Model) slash(text string) tea.Cmd {
 		if api == "resume" {
 			api = "resume-job"
 		}
-		return m.request(api, supervisor.JobArgs{ID: j.ID})
+		if !m.registered(j) && api != "read" {
+			if api == "manage" || api == "resume-job" {
+				m.WantCommand = api
+				return m.request("resume", supervisor.JobArgs{ThreadID: j.ThreadID})
+			}
+			m.Notice = "이 대화는 아직 관리 작업이 아닙니다. /open 또는 /manage로 등록하세요."
+			return nil
+		}
+		return m.request(api, supervisor.JobArgs{ID: j.ID, ThreadID: j.ThreadID})
 	case "filter":
 		m.Target = "search"
 		m.Filter = arg
@@ -919,7 +1028,7 @@ func (m Model) View() tea.View {
 			js := m.filtered()
 			listHeight := m.listHeight()
 			start := max(0, m.Selected-listHeight+1)
-			b.WriteString(dim.Render(ansi.Truncate("작업 목록 · Tab 선택 · Enter 새 터미널 · /filter 검색 · /state 상태", w, "…")) + "\n")
+			b.WriteString(dim.Render(ansi.Truncate(fmt.Sprintf("전체 Codex 대화 %d · 관리 작업 %d · Enter 열기 · /filter 검색 · /state 상태", len(m.allJobs()), len(m.Status.Jobs)), w, "…")) + "\n")
 			for i := start; i < len(js) && i < start+listHeight; i++ {
 				j := js[i]
 				prefix := "  "
@@ -931,20 +1040,26 @@ func (m Model) View() tea.View {
 					indent = "  ↳ "
 				}
 				mode := ""
-				if !j.Managed {
+				if !m.registered(j) {
+					mode = " [Codex 저장 대화]"
+				} else if !j.Managed {
 					mode = " [열람]"
 				}
 				if n := m.Status.Terminals[j.ID]; n > 0 {
 					mode += fmt.Sprintf(" [터미널 %d]", n)
 				}
-				line := fmt.Sprintf("%s%s%s  %s · %s%s", prefix, indent, j.Title, display.State(j.State), j.Account, mode)
+				account := j.Account
+				if account == "" {
+					account = "계정 미배정"
+				}
+				line := fmt.Sprintf("%s%s%s  %s · %s%s", prefix, indent, j.Title, display.State(j.State), account, mode)
 				if j.ID == m.SelectedID {
 					line = accent.Render(ansi.Truncate(plain(line), w, "…"))
 				}
 				b.WriteString(ansi.Truncate(line, w, "…") + "\n")
 			}
 			if len(js) == 0 {
-				b.WriteString("등록된 작업 없음 · n으로 새 작업, r로 기존 대화\n")
+				b.WriteString("표시할 대화 없음 · /filter로 검색 해제 · n으로 새 채팅\n")
 			}
 			text := m.content()
 			width := max(10, w-2)
@@ -971,6 +1086,9 @@ func (m Model) content() string {
 	switch m.Panel {
 	case "status":
 		if j, ok := m.selected(); ok {
+			if !m.registered(j) {
+				return fmt.Sprintf("대화 %s\n%s\nCodex 저장 대화 · 계정 미배정 · /open 또는 /manage로 등록", j.ThreadID, j.Cwd)
+			}
 			return display.Session(j, m.Status)
 		}
 	case "manager-status":
@@ -998,6 +1116,9 @@ func (m Model) content() string {
 	j, ok := m.selected()
 	if !ok {
 		return ""
+	}
+	if !m.registered(j) {
+		return fmt.Sprintf("대화 %s\n%s\n상태: Codex 저장 대화 · codexm 계정 미배정\n/open: 계정 선택 후 공식 Codex 연결 · /manage: 관리 목록에 등록 · /read: 미리보기", j.ThreadID, j.Cwd)
 	}
 	text := display.Session(j, m.Status)
 	if j.LastError != "" {

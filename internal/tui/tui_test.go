@@ -3,11 +3,69 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 	"encoding/json"
+	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
+	"github.com/codeasy-digix/codexm/internal/supervisor"
 	"strings"
 	"testing"
 )
+
+func TestAllNativeConversationsRemainUnregisteredUntilOpened(t *testing.T) {
+	c := config.Defaults()
+	c.Manager.Account = "account-backup"
+	m := New(c, "codexm")
+	j := jobs.Job{ID: "job", ThreadID: "native-managed", Title: "previous name", Managed: true, Account: "account-secondary", State: "complete"}
+	list := catalog.List{Sessions: []catalog.Entry{
+		{ID: "native-new", ThreadID: "native-new", Title: "기존 앱 대화", Kind: "chat", State: "saved"},
+		{ID: "native-managed", ThreadID: "native-managed", JobID: "job", Title: "native renamed", State: "complete", Account: "account-secondary", Managed: true},
+	}}
+	next, _ := m.Update(pollMsg{Status: supervisor.Status{Jobs: []jobs.Job{j}}, Catalog: list})
+	m = next.(Model)
+	if len(m.filtered()) != 2 || len(m.Status.Jobs) != 1 || m.SelectedID != "native-new" || m.Focus != "input" {
+		t.Fatal("default list lost existing conversations or focus")
+	}
+	if !strings.Contains(m.View().Content, "전체 Codex 대화 2") {
+		t.Fatal("full list count missing")
+	}
+	if cmd := m.slash("/logs"); cmd != nil || m.LogsOpen || !strings.Contains(m.DetailText, "등록한 이후") {
+		t.Fatal("unmanaged log scope imported a conversation")
+	}
+	m.slash("/pause")
+	if !strings.Contains(m.Notice, "아직 관리 작업") {
+		t.Fatal("unmanaged conversation allowed stop/pause")
+	}
+	m.slash("/chats 기존 앱")
+	if len(m.filtered()) != 1 || m.Focus != "input" {
+		t.Fatal("chats did not search the full list")
+	}
+	m.Filter = ""
+	m.SelectedID = "native-new"
+	if cmd := m.slash("/open"); cmd != nil || m.Screen != "import-account" || m.Threads[0].ID != "native-new" || m.Input.Value() != c.DefaultWorker() {
+		t.Fatal("opening did not retain the native conversation ID and ask for account")
+	}
+}
+
+func TestCatalogRefreshPreservesSelectionAndDraft(t *testing.T) {
+	c := config.Defaults()
+	c.Manager.Account = "account-backup"
+	m := New(c, "codexm")
+	first := catalog.List{Sessions: []catalog.Entry{{ID: "old", ThreadID: "old", Title: "old"}, {ID: "selected", ThreadID: "selected", Title: "selected"}}}
+	next, _ := m.Update(pollMsg{Catalog: first})
+	m = next.(Model)
+	m.SelectedID = "selected"
+	m.focusInput("작성 중인 초안")
+	updated := catalog.List{Sessions: []catalog.Entry{{ID: "new", ThreadID: "new", Title: "new"}, {ID: "selected", ThreadID: "selected", Title: "selected"}, {ID: "old", ThreadID: "old", Title: "old"}}}
+	next, _ = m.Update(pollMsg{Catalog: updated})
+	m = next.(Model)
+	if m.SelectedID != "selected" || m.Selected != 1 || m.Input.Value() != "작성 중인 초안" || m.Focus != "input" {
+		t.Fatal("live list refresh changed selection or draft")
+	}
+	selected, _ := m.selected()
+	if selected.ThreadID != "selected" {
+		t.Fatal("list refresh changed conversation identity")
+	}
+}
 
 func TestInputTargetAndKoreanMultilinePaste(t *testing.T) {
 	c := config.Defaults()
