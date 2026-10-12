@@ -19,6 +19,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/manager"
 	"github.com/codeasy-digix/codexm/internal/policy"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/service"
 	"github.com/codeasy-digix/codexm/internal/store"
 	"golang.org/x/sys/unix"
 )
@@ -42,6 +43,8 @@ type Server struct {
 	managerAccount string
 	wg             sync.WaitGroup
 	previews       map[string]preview
+	Persistent     bool
+	lease          *os.File
 }
 type preview struct{ RunID, Text string }
 type viewer struct {
@@ -72,40 +75,59 @@ type Status struct {
 	CodexVersion         string              `json:"codex_version"`
 	ManagerDecision      *manager.Record     `json:"manager_decision,omitempty"`
 	Terminals            map[string]int      `json:"terminals,omitempty"`
+	ServiceMode          bool                `json:"service_mode"`
 }
 
 func New(ctx context.Context, c config.Config, self string) (*Server, error) {
 	if c.Manager.Account == "" {
 		return nil, errors.New("choose a manager account first: codexm setup")
 	}
+	if e := os.MkdirAll(c.StateDir(), 0700); e != nil {
+		return nil, e
+	}
+	lease, e := os.OpenFile(filepath.Join(c.StateDir(), "supervisor.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if e != nil {
+		return nil, e
+	}
+	if e = unix.Flock(int(lease.Fd()), unix.LOCK_EX|unix.LOCK_NB); e != nil {
+		lease.Close()
+		return nil, errors.New("another supervisor already owns this state directory")
+	}
 	r, e := cr.Resolve(ctx, c)
 	if e != nil {
+		lease.Close()
 		return nil, e
 	}
 	st, e := store.Open(c.StateDir())
 	if e != nil {
+		lease.Close()
 		return nil, e
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Server{Config: c, Resolver: r, Reader: accounts.New(r), Store: st, Self: self, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, viewers: map[string]viewer{}, dispatching: map[string]bool{}, managerAccount: c.Manager.Account, started: time.Now()}
-	if e = st.RecoverActions(); e != nil {
-		st.Close()
-		cancel()
-		return nil, e
-	}
+	s.lease = lease
 	return s, nil
 }
 func Socket(c config.Config) string { return cr.SocketPath(c, "control") }
 func (s *Server) Run() error {
-	lock, e := os.OpenFile(filepath.Join(s.Config.StateDir(), "supervisor.lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return e
+	defer s.cancel()
+	lock := s.lease
+	var e error
+	if lock == nil {
+		lock, e = os.OpenFile(filepath.Join(s.Config.StateDir(), "supervisor.lock"), os.O_CREATE|os.O_RDWR, 0600)
+		if e != nil {
+			return e
+		}
 	}
 	defer lock.Close()
+	defer s.Store.Close()
 	if e = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); e != nil {
 		return errors.New("another supervisor already owns this state directory")
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	if e = s.Store.RecoverActions(); e != nil {
+		return e
+	}
 	socket := Socket(s.Config)
 	if e = cr.PrivateSocketDir(filepath.Dir(socket)); e != nil {
 		return e
@@ -125,19 +147,18 @@ func (s *Server) Run() error {
 	defer l.Close()
 	_ = os.Chmod(socket, 0600)
 	defer os.Remove(socket)
-	defer s.Store.Close()
 	httpServer := &http.Server{Handler: http.HandlerFunc(s.serveHTTP), ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- httpServer.Serve(l) }()
 	s.wg.Add(2)
 	go func() { defer s.wg.Done(); s.actionLoop() }()
 	go func() { defer s.wg.Done(); s.reconcileLoop() }()
-	fmt.Printf("codexm %s · supervisor %s · attach: tmux attach -t %s\n", config.Version, s.Config.Supervisor.TmuxSession, s.Config.Supervisor.TmuxSession)
+	fmt.Printf("codexm %s · manager service · persistent=%t\n", config.Version, s.Persistent)
 	select {
 	case <-s.ctx.Done():
 	case e = <-errc:
-		if !errors.Is(e, http.ErrServerClosed) {
-			return e
+		if errors.Is(e, http.ErrServerClosed) {
+			e = nil
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -151,8 +172,11 @@ func (s *Server) Run() error {
 	}
 	s.clients = map[string]*cr.Client{}
 	s.mu.Unlock()
-	// A graceful supervisor exit must not leave its own runtimes behind even if
-	// an interrupt or RPC timed out. Abrupt process loss is recovered on restart.
+	// Service restarts release observer connections while keeping owned workers
+	// alive. Explicit shutdown parks jobs before cancellation in the API handler.
+	if s.Persistent && !s.isStopping() {
+		return errors.New("manager observer exited; OS recovery will reconnect existing workers")
+	}
 	js, err := s.Store.Jobs()
 	if err != nil {
 		return err
@@ -181,7 +205,7 @@ func (s *Server) Run() error {
 			return err
 		}
 	}
-	return nil
+	return e
 }
 func (s *Server) isStopping() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.stopping }
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +273,11 @@ func (s *Server) status() (Status, error) {
 			decision = &r
 		}
 	}
-	return Status{Jobs: js, Accounts: as, ManagerAccount: account, DefaultWorkerAccount: s.defaultWorker(), ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: "tmux attach -t " + s.Config.Supervisor.TmuxSession, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision, Terminals: terminals}, nil
+	attach := "codexm service logs"
+	if !s.Persistent {
+		attach = "tmux attach -t " + s.Config.Supervisor.TmuxSession
+	}
+	return Status{Jobs: js, Accounts: as, ManagerAccount: account, DefaultWorkerAccount: s.defaultWorker(), ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: attach, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision, Terminals: terminals, ServiceMode: s.Persistent}, nil
 }
 func (s *Server) manager() string { s.mu.Lock(); defer s.mu.Unlock(); return s.managerAccount }
 func (s *Server) persist(j jobs.Job, actions ...jobs.Action) error {
@@ -355,9 +383,18 @@ func (s *Server) handleEvent(jobID, runID, key string, m cr.Message) {
 	}
 }
 func Start(ctx context.Context, c config.Config, self string) error {
-	if _, e := exec.LookPath("tmux"); e != nil {
+	if Ping(ctx, c) == nil {
+		return nil
+	}
+	m := service.Manager{Config: c, Self: self}
+	if e := m.Ensure(ctx); e != nil {
 		return e
 	}
+	return service.WaitReady(ctx, func(ctx context.Context) error { return Ping(ctx, c) })
+}
+
+// StartLegacy exists only for recovery of an earlier installation.
+func StartLegacy(ctx context.Context, c config.Config, self string) error {
 	if Ping(ctx, c) == nil {
 		return nil
 	}

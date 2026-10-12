@@ -25,6 +25,7 @@ var slashCommands = []slashCommand{
 	{Name: "new", Description: "새 채팅을 만들고 새 터미널에서 열기"},
 	{Name: "chats", Args: "[검색어]", Description: "전체 대화 목록 검색"},
 	{Name: "accounts", Description: "모든 계정 한도를 새로 조회 (모델 호출 없음)"},
+	{Name: "account", Args: "[이름]", Description: "선택 세션의 계정 변경 · 이름 생략 시 선택 메뉴"},
 	{Name: "manager-account", Args: "[이름]", Description: "저장된 관리자 계정 조회 또는 변경"},
 	{Name: "pause", Description: "선택 작업 일시 중지"},
 	{Name: "resume", Description: "선택 작업 실행 재개"},
@@ -107,6 +108,7 @@ func (m *Model) chooseCommand(execute bool) tea.Cmd {
 		return nil
 	}
 	m.Input.Reset()
+	m.rememberInput(text)
 	return m.slash(text)
 }
 
@@ -116,6 +118,6 @@ func commandHelp() string {
 	for _, c := range slashCommands {
 		b.WriteString("/" + c.Name + " " + c.Args + " · " + c.Description + "\n")
 	}
-	b.WriteString("\n입력창 기본 포커스 · 일반 텍스트 + Enter: 작업 검색 (모델 호출 없음)\n빈 입력 + Enter: 선택 대화 열기 · ↑↓: 대화 선택\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 미리보기 스크롤\n목록: ↑↓ 선택 · Enter 새 터미널 열기 · v 미리보기 · l 전체 로그\n새 터미널을 닫아도 작업 감시는 계속됩니다. /quit는 관리 화면만 닫습니다.\n")
+	b.WriteString("\n입력창 기본 포커스 · 일반 텍스트 + Enter: 작업 검색 (모델 호출 없음)\n빈 입력 + Enter: 선택 대화 열기 · 입력 ↑↓/Ctrl+P,N: 입력 기록 · Alt+↑↓: 대화 선택\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 미리보기 스크롤\n목록: ↑↓ 선택 · Enter 새 터미널 열기 · v 미리보기 · l 전체 로그\n새 터미널을 닫아도 작업 감시는 계속됩니다. /quit는 관리 화면만 닫습니다.\n")
 	return b.String()
 }

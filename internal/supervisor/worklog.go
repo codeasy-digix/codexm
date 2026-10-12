@@ -37,7 +37,7 @@ func (s *Server) sampleUsage(ctx context.Context, j jobs.Job, c *cr.Client, forc
 		}
 		return
 	}
-	if r.EndedAt != nil || !force && r.UsageLatest != nil && time.Since(r.UsageLatest.At) < time.Duration(s.Config.Logging.UsageSampleSeconds)*time.Second {
+	if r.EndedAt != nil || !force && r.UsageLatest != nil && time.Since(r.UsageLatest.At) < time.Duration(s.workerConfig().Logging.UsageSampleSeconds)*time.Second {
 		return
 	}
 	snapshot := accounts.Snapshot{Account: j.Account, CheckedAt: time.Now(), Authenticated: true}

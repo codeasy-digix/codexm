@@ -88,6 +88,14 @@ type Model struct {
 	PaletteDismissed bool
 	ViewEpoch        uint64
 	AutoFollow       bool
+	AccountJobID     string
+	AccountFrom      string
+	AccountTitle     string
+	AccountNames     []string
+	AccountSelected  int
+	History          []string
+	HistoryIndex     int
+	HistoryDraft     string
 }
 
 func New(c config.Config, self string) Model {
@@ -460,6 +468,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = json.Unmarshal(v.Data, &a)
 			m.Config.Manager.Account = a
 			m.Status.ManagerAccount = a
+		case "switch-account":
+			m.Notice = "세션 계정 변경 접수됨 · /info 상태 · /logs 전환 결과"
 		}
 		return m, m.poll()
 	case openMsg:
@@ -517,6 +527,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.PaletteDismissed = true
 			return m, nil
 		}
+		if m.Screen == "account" {
+			switch key {
+			case "up", "k":
+				m.AccountSelected = max(0, m.AccountSelected-1)
+			case "down", "j":
+				m.AccountSelected = min(len(m.AccountNames)-1, m.AccountSelected+1)
+			case "enter":
+				if len(m.AccountNames) > 0 {
+					a := supervisor.JobArgs{ID: m.AccountJobID, Account: m.AccountNames[m.AccountSelected], ExpectedAccount: m.AccountFrom, OperationID: jobs.ID()}
+					m.Screen = "agents"
+					m.returnInput()
+					m.Notice = "선택한 계정 확인 및 전환 접수 중…"
+					return m, m.request("switch-account", a)
+				}
+			}
+			return m, nil
+		}
 		if m.Screen == "import-account" {
 			if key == "enter" && len(m.Threads) > 0 {
 				account := strings.TrimSpace(m.Input.Value())
@@ -554,6 +581,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 								return m, m.chooseCommand(false)
 							}
 							m.Input.Reset()
+							m.rememberInput("/" + text)
 							return m, m.slash("/" + text)
 						}
 					}
@@ -568,16 +596,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, cmd
 			}
-			if m.Screen == "agents" && (key == "up" || key == "down") {
+			if m.Screen == "agents" && (key == "alt+up" || key == "alt+down") {
 				direction := 1
-				if key == "up" {
+				if key == "alt+up" {
 					direction = -1
 				}
 				m.selectIndex(direction)
 				return m, nil
 			}
+			if key == "ctrl+p" || key == "ctrl+n" || (key == "up" || key == "down") && !strings.Contains(m.Input.Value(), "\n") {
+				m.historyMove(key == "up" || key == "ctrl+p")
+				return m, nil
+			}
 			if key == "enter" || key == "ctrl+enter" {
 				text := m.Input.Value()
+				m.rememberInput(text)
 				m.Input.Reset()
 				return m, m.submit(text)
 			}
@@ -867,6 +900,20 @@ func (m *Model) slash(text string) tea.Cmd {
 	case "accounts":
 		m.Notice = "계정 한도 조회 중… (모델 호출 없음)"
 		return m.request("accounts", nil)
+	case "account":
+		if j.ID == "" || !m.registered(j) || !j.Managed || j.Kind == "group" {
+			m.Notice = "관리 중인 대화를 선택하세요. 기존 대화는 /manage로 등록할 수 있습니다."
+			return nil
+		}
+		if arg != "" {
+			return m.request("switch-account", supervisor.JobArgs{ID: j.ID, Account: arg, ExpectedAccount: j.Account, OperationID: jobs.ID()})
+		}
+		m.AccountJobID, m.AccountFrom, m.AccountTitle = j.ID, j.Account, j.Title
+		m.AccountNames = slices.Clone(m.Config.WorkerAccounts.Priority)
+		m.AccountSelected = max(0, slices.Index(m.AccountNames, j.Account))
+		m.Screen, m.Focus = "account", "list"
+		m.Input.Blur()
+		m.Notice = "이 대화의 계정만 변경합니다. 실행 중이면 안전하게 중단 후 같은 대화에서 이어갑니다."
 	case "manager-account":
 		if arg == "" {
 			m.Notice = "저장된 관리자 계정: " + m.Config.Manager.Account
@@ -1005,7 +1052,25 @@ func (m Model) View() tea.View {
 		}
 		b.WriteString(ansi.Truncate(accent.Render("codexm")+fmt.Sprintf("  관리자 %s  · %s  · 실행 %d/%d", m.Config.Manager.Account, m.Status.Health, running, m.Config.Execution.MaxParallelJobs), w, "…") + "\n")
 		b.WriteString(dim.Render(ansi.Truncate(plain(m.Notice), w, "…")) + "\n")
-		if m.Screen == "new" || m.Screen == "import-account" {
+		if m.Screen == "account" {
+			b.WriteString("\n" + plain(m.AccountTitle) + " · 현재 " + m.AccountFrom + "\n\n")
+			for i, name := range m.AccountNames {
+				prefix, detail := "  ", "한도 미관측"
+				if i == m.AccountSelected {
+					prefix = "› "
+				}
+				for _, snap := range m.Status.Accounts {
+					if snap.Account == name {
+						detail = accounts.Describe(snap)
+					}
+				}
+				if name == m.Config.WorkerAccounts.FallbackAccount {
+					detail += " · 상위 계정이 모두 소진된 경우만"
+				}
+				b.WriteString(ansi.Truncate(prefix+name+" · "+plain(detail), w, "…") + "\n")
+			}
+			b.WriteString("\n↑↓ 선택 · Enter 변경 · Esc 취소\n실제 전환 직전에 한도를 다시 확인합니다.\n")
+		} else if m.Screen == "new" || m.Screen == "import-account" {
 			b.WriteString("\n" + m.Notice + "\n\n" + m.Input.View() + "\n\nEnter 다음 · Alt+Enter 줄바꿈 · Esc 취소\n")
 		} else if m.Screen == "resume" {
 			b.WriteString("기존 대화 · Enter 새 터미널 열기 · v 미리보기 · /chats 검색어 · n 다음 페이지\n")
@@ -1049,6 +1114,9 @@ func (m Model) View() tea.View {
 					mode += fmt.Sprintf(" [터미널 %d]", n)
 				}
 				account := j.Account
+				if j.TargetAccount != "" {
+					account += " → " + j.TargetAccount + " (전환 대기)"
+				}
 				if account == "" {
 					account = "계정 미배정"
 				}

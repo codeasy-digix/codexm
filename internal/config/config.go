@@ -211,6 +211,9 @@ func (c Config) Validate() error {
 	return nil
 }
 func (c Config) Save() error {
+	return withConfigLock(c.Path, c.saveUnlocked)
+}
+func (c Config) saveUnlocked() error {
 	if e := c.Validate(); e != nil {
 		return e
 	}

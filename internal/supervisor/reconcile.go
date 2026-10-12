@@ -15,7 +15,7 @@ import (
 
 func (s *Server) reconcileLoop() {
 	s.reconcile()
-	t := time.NewTicker(s.Config.Interval())
+	t := time.NewTimer(s.workerConfig().Interval())
 	defer t.Stop()
 	for {
 		select {
@@ -23,6 +23,7 @@ func (s *Server) reconcileLoop() {
 			return
 		case <-t.C:
 			s.reconcile()
+			t.Reset(s.workerConfig().Interval())
 		}
 	}
 }
@@ -55,7 +56,7 @@ func (s *Server) reconcile() {
 	}
 	s.reconcileActions()
 	s.aggregateGroups()
-	if s.Config.Supervisor.ExitWhenNoClientsAndNoPendingWork && time.Since(s.started) > 30*time.Second && !s.Store.HasPending() {
+	if !s.Persistent && s.Config.Supervisor.ExitWhenNoClientsAndNoPendingWork && time.Since(s.started) > 30*time.Second && !s.Store.HasPending() {
 		js, e = s.Store.Jobs()
 		if e != nil {
 			s.fail(e)
@@ -92,6 +93,10 @@ func (s *Server) reconcile() {
 	}
 }
 func (s *Server) reconcileJob(j jobs.Job) {
+	if j.TargetAccount != "" {
+		// The durable handoff action owns interruption, restart and continuation.
+		return
+	}
 	ctx, cancel := context.WithTimeout(s.ctx, 40*time.Second)
 	defer cancel()
 	c := s.client(j.ID)
@@ -268,6 +273,17 @@ func (s *Server) reconcileActions() {
 			continue
 		}
 		switch a.Kind {
+		case "change_account":
+			if j.TargetAccount == "" {
+				var p accountChange
+				if json.Unmarshal(a.Payload, &p) == nil && j.Account == p.Account {
+					s.finishAction(a, "done", nil)
+				}
+			} else {
+				a.State = "pending"
+				_ = s.Store.PutAction(a)
+			}
+			continue
 		case "cleanup", "pause_execution":
 			if j.Session == "" || !cr.HasSession(s.ctx, j.Session) {
 				s.finishAction(a, "done", nil)

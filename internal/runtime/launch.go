@@ -150,11 +150,24 @@ func (r Resolver) LaunchWorker(ctx context.Context, self string, spec WorkerSpec
 		return e
 	}
 	p := filepath.Join(r.Config.StateDir(), "workers", spec.Session+".json")
+	if IsProcess(spec.Session) {
+		var err error
+		p, err = processPath(spec.Session)
+		if err != nil {
+			return err
+		}
+		p += ".spec.json"
+	}
 	if e = config.AtomicWrite(p, b, 0600); e != nil {
 		return e
 	}
 	if e = PrivateSocketDir(filepath.Dir(spec.Socket)); e != nil {
 		return e
+	}
+	if IsProcess(spec.Session) {
+		cmd := exec.Command(self, "__worker", p)
+		cmd.Dir = spec.Cwd
+		return launchProcess(ctx, cmd, spec.Session)
 	}
 	cmd := exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", spec.Session, "-c", spec.Cwd, ShellQuote(self)+" __worker "+ShellQuote(p))
 	b, e = cmd.CombinedOutput()
@@ -165,9 +178,16 @@ func (r Resolver) LaunchWorker(ctx context.Context, self string, spec WorkerSpec
 }
 func ShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 func HasSession(ctx context.Context, s string) bool {
+	if IsProcess(s) {
+		_, e := readProcess(s)
+		return e == nil
+	}
 	return s != "" && exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+s).Run() == nil
 }
 func KillSession(ctx context.Context, s string) error {
+	if IsProcess(s) {
+		return killProcess(ctx, s)
+	}
 	if s == "" {
 		return nil
 	}

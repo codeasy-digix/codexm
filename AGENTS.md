@@ -6,9 +6,12 @@
 - Retain existing credentials, thread IDs, goal budgets and settings. Auth/history,
   binaries, sockets and logs stay outside Git. Never print credentials or goal text.
 - Normal supervision is deterministic and makes no model calls. `/manager` is an
-  explicit separate request. Native chat runs in the official TUI.
-- Persistent processes use named tmux sessions. Clean up every temporary test
-  session and worker; do not stop unrelated sessions.
+  explicit separate request. The official engine powers both native TUI and plugin UI.
+- Persistent product services use user launchd/systemd units. Temporary long-running
+  test processes use named tmux sessions. Preserve existing active legacy workers;
+  clean up only owned temporary services, sessions and workers.
+- CLI, service and local ChatGPT plugin are one product in this repository. Do not
+  add a standalone website or patch the ChatGPT application bundle.
 - Run `go test -race ./...`, `go vet ./...`, and relevant isolated native integration
   for runtime changes. Account/library failure must never break official Codex.
 - Distribution is preparation only. Build local archives with `go run ./cmd/package`;

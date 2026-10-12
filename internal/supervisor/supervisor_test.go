@@ -35,6 +35,7 @@ func fixture(t *testing.T) *Server {
 	c.Storage.StateDir = filepath.Join(dir, "state")
 	c.Runtime.AccountsDir = filepath.Join(dir, "accounts")
 	c.Runtime.SharedCodexHome = filepath.Join(dir, "codex")
+	c.Runtime.EnginesDir = filepath.Join(dir, "engines")
 	for _, n := range c.WorkerAccounts.Priority {
 		p := filepath.Join(c.Runtime.AccountsDir, n)
 		os.MkdirAll(p, 0700)
@@ -285,6 +286,17 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	if e != nil || g.Status != "paused" {
 		t.Fatal(g, e)
 	}
+	// Exercise the actual user-facing manual action, including a paused goal.
+	_ = s.update(j.ID, func(j *jobs.Job) { j.Paused = true; j.State = "paused"; j.Goal = g })
+	change, e := s.requestAccountChange(JobArgs{ID: j.ID, Account: "account-secondary", ExpectedAccount: "account-work", OperationID: jobs.ID()})
+	if e != nil {
+		t.Fatal(e)
+	}
+	s.execute(change)
+	afterChange, _ := s.Store.Job(j.ID)
+	if afterChange.Account != "account-secondary" || afterChange.TargetAccount != "" || !afterChange.Paused || afterChange.Goal.Status != "paused" || afterChange.Session != "" {
+		t.Fatal("manual account change resumed a paused goal or did not settle", afterChange.State, afterChange.LastError)
+	}
 	if e = s.park(ctx, j.ID, false); e != nil {
 		t.Fatal(e)
 	}
@@ -292,9 +304,6 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 		t.Fatal("worker not cleaned up")
 	}
 	_ = s.update(j.ID, func(j *jobs.Job) { j.Paused = false; j.State = "queued" })
-	if e = s.changeAccount(j.ID, "account-secondary", "검증용 계정 교체"); e != nil {
-		t.Fatal(e)
-	}
 	if e = s.ensureRuntime(ctx, j.ID, false); e != nil {
 		t.Fatal(e)
 	}

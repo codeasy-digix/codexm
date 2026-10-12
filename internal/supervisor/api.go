@@ -18,6 +18,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	"github.com/codeasy-digix/codexm/internal/policy"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/service"
 )
 
 type NewArgs struct {
@@ -34,26 +35,28 @@ type NewArgs struct {
 	CompletionCommand []string `json:"completion_command"`
 }
 type JobArgs struct {
-	ID        string          `json:"id"`
-	Text      string          `json:"text"`
-	Steer     bool            `json:"steer"`
-	ThreadID  string          `json:"thread_id"`
-	Account   string          `json:"account"`
-	Manage    bool            `json:"manage"`
-	Kind      string          `json:"kind"`
-	Search    string          `json:"search"`
-	Cursor    string          `json:"cursor"`
-	ClientID  string          `json:"client_id"`
-	Limit     int             `json:"limit,omitempty"`
-	From      string          `json:"from,omitempty"`
-	RequestID json.RawMessage `json:"request_id"`
-	Result    json.RawMessage `json:"result"`
+	ID              string          `json:"id"`
+	Text            string          `json:"text"`
+	Steer           bool            `json:"steer"`
+	ThreadID        string          `json:"thread_id"`
+	Account         string          `json:"account"`
+	OperationID     string          `json:"operation_id,omitempty"`
+	ExpectedAccount string          `json:"expected_account,omitempty"`
+	Manage          bool            `json:"manage"`
+	Kind            string          `json:"kind"`
+	Search          string          `json:"search"`
+	Cursor          string          `json:"cursor"`
+	ClientID        string          `json:"client_id"`
+	Limit           int             `json:"limit,omitempty"`
+	From            string          `json:"from,omitempty"`
+	RequestID       json.RawMessage `json:"request_id"`
+	Result          json.RawMessage `json:"result"`
 }
 
 func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	if s.isStopping() {
 		switch call.Command {
-		case "new", "resume", "resume-job", "manage", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "set-worker-account", "resolve-action":
+		case "new", "resume", "resume-job", "manage", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "set-worker-account", "switch-account", "settings-save", "resolve-action":
 			return nil, errors.New("supervisor is shutting down; restart it before submitting work")
 		}
 	}
@@ -118,29 +121,34 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		return change, s.Store.ChangeAccount(j, change)
 	case "accounts":
 		return s.refreshAccounts(ctx)
+	case "switch-account":
+		return s.requestAccountChange(a)
 	case "usage":
 		return s.usage()
 	case "settings":
 		c := s.workerConfig()
 		c.Manager.Account = s.manager()
 		return c, nil
+	case "settings-edit":
+		return s.settingsDocument()
+	case "settings-save":
+		return s.saveSettings(ctx, call.Args)
 	case "set-worker-account":
 		if !config.Nickname.MatchString(a.Account) || a.Account == "default" {
 			return nil, errors.New("invalid worker account")
 		}
-		c, e := config.Load(s.Config.Path)
-		if e != nil {
-			return nil, e
-		}
-		c.WorkerAccounts.DefaultAccount = a.Account
-		if !slices.Contains(c.WorkerAccounts.Priority, a.Account) {
-			position := len(c.WorkerAccounts.Priority)
-			if c.WorkerAccounts.FallbackAccount != "" {
-				position--
+		_, _, e := config.Update(s.Config.Path, "", func(c *config.Config) error {
+			c.WorkerAccounts.DefaultAccount = a.Account
+			if !slices.Contains(c.WorkerAccounts.Priority, a.Account) {
+				position := len(c.WorkerAccounts.Priority)
+				if c.WorkerAccounts.FallbackAccount != "" {
+					position--
+				}
+				c.WorkerAccounts.Priority = slices.Insert(c.WorkerAccounts.Priority, position, a.Account)
 			}
-			c.WorkerAccounts.Priority = slices.Insert(c.WorkerAccounts.Priority, position, a.Account)
-		}
-		return a.Account, c.Save()
+			return nil
+		})
+		return a.Account, e
 	case "set-manager":
 		if !config.Nickname.MatchString(a.Account) {
 			return nil, errors.New("invalid manager account")
@@ -151,12 +159,7 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		next, e := config.Load(s.Config.Path)
-		if e != nil {
-			return nil, e
-		}
-		next.Manager.Account = a.Account
-		if e := next.Save(); e != nil {
+		if _, _, e := config.Update(s.Config.Path, "", func(c *config.Config) error { c.Manager.Account = a.Account; return nil }); e != nil {
 			return nil, e
 		}
 		s.managerAccount = a.Account
@@ -366,6 +369,11 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 		action := policy.Action("manager_command", j, map[string]string{"text": a.Text})
 		return action, s.Store.PutAction(action)
 	case "shutdown":
+		if s.Persistent {
+			if e := (service.Manager{Config: s.Config, Self: s.Self}).Disarm(ctx); e != nil {
+				return nil, e
+			}
+		}
 		go s.shutdown()
 		return true, nil
 	case "resolve-action":

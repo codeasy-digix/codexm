@@ -90,7 +90,12 @@ func (s *Server) execute(a jobs.Action) {
 		s.finishAction(a, "failed", e)
 		return
 	}
-	if j.Paused && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "load_view" && a.Kind != "manager_command" {
+	if j.TargetAccount != "" && a.Kind != "change_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" {
+		a.NotBefore = time.Now().Add(time.Second)
+		_ = s.Store.PutAction(a)
+		return
+	}
+	if j.Paused && a.Kind != "change_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "load_view" && a.Kind != "manager_command" {
 		if jobs.Terminal(j.State) {
 			s.finishAction(a, "cancelled", nil)
 			return
@@ -100,7 +105,7 @@ func (s *Server) execute(a jobs.Action) {
 		return
 	}
 	// A user input may wait across account runs. Lifecycle actions belong to one run.
-	if a.RunID != "" && a.RunID != j.RunID && a.Kind != "send_input" && a.Kind != "start" && a.Kind != "load_view" && a.Kind != "manager_command" {
+	if a.RunID != "" && a.RunID != j.RunID && a.Kind != "change_account" && a.Kind != "send_input" && a.Kind != "start" && a.Kind != "load_view" && a.Kind != "manager_command" {
 		s.finishAction(a, "cancelled", nil)
 		return
 	}
@@ -113,6 +118,8 @@ func (s *Server) execute(a jobs.Action) {
 	ctx, cancel := context.WithTimeout(s.ctx, 90*time.Second)
 	defer cancel()
 	switch a.Kind {
+	case "change_account":
+		e = s.manualAccountChange(ctx, &a)
 	case "load_view":
 		e = s.loadView(ctx, j)
 	case "start":
@@ -192,6 +199,12 @@ func (s *Server) execute(a jobs.Action) {
 		e = fmt.Errorf("unsupported action %s", a.Kind)
 	}
 	var p *postpone
+	if e != nil && s.ctx.Err() != nil && s.Persistent && !s.isStopping() {
+		// A service restart is observation loss, not evidence of command failure.
+		// Keep the durable handoff intent and reconcile it after reconnecting.
+		s.finishAction(a, "outcome_unknown", e)
+		return
+	}
 	if errors.As(e, &p) {
 		a.State = "pending"
 		a.Error = cr.SafeText(p.reason)
@@ -214,6 +227,13 @@ func (s *Server) execute(a jobs.Action) {
 		if a.JobID != "" {
 			_ = s.update(a.JobID, func(j *jobs.Job) {
 				j.LastError = cr.SafeText(e.Error())
+				if a.Kind == "change_account" {
+					j.TargetAccount = ""
+					if j.State == "switching" {
+						j.State = "error"
+					}
+					return
+				}
 				if !j.Paused && !jobs.Terminal(j.State) && j.State != "quota_wait" && j.State != "auth_required" && j.State != "budget_limited" && j.State != "manager_wait" {
 					j.State = "error"
 				}
@@ -268,7 +288,7 @@ func (s *Server) reserveRuntime(id string, viewing bool) error {
 			return later("workspace is reserved by " + x.Title)
 		}
 	}
-	if busy >= s.Config.Execution.MaxParallelJobs {
+	if busy >= s.workerConfig().Execution.MaxParallelJobs {
 		return later("parallel job limit reached")
 	}
 	if j.State != "running" && j.State != "waiting_on_user" && j.State != "waiting_on_approval" {
@@ -290,6 +310,11 @@ func (s *Server) snapshots() (map[string]accounts.Snapshot, map[string]bool, err
 	return m, blocked, e
 }
 func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error) {
+	// A manual selection must either use that exact account or fail visibly.
+	// It must never silently fall through to a different priority account.
+	if j.TargetAccount != "" {
+		return j.TargetAccount, s.checkSelectedAccount(ctx, j, j.TargetAccount)
+	}
 	// Opening a viewer reuses a recently verified quota instead of launching
 	// another authentication server and waiting for the same network response.
 	if snapshots, blocked, e := s.snapshots(); e == nil && j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {
@@ -310,8 +335,15 @@ func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error)
 	if a.Error != "" {
 		return "", later("account availability could not be checked: " + a.Error)
 	}
-	if a.State(j.Model) != "exhausted" && j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {
-		return j.Account, nil
+	if j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {
+		_, blocked, err := s.snapshots()
+		if err != nil {
+			return "", err
+		}
+		state := a.State(j.Model)
+		if state == "available" || state == "candidate" && !blocked[j.Account] {
+			return j.Account, nil
+		}
 	}
 	if _, e := s.refreshAccounts(ctx); e != nil {
 		return "", e
@@ -368,7 +400,7 @@ func (s *Server) ensureRuntimeMode(ctx context.Context, id string, user, viewing
 	if e = s.reserveRuntime(id, viewing); e != nil {
 		return e
 	}
-	// A live tmux server always wins over a local timeout. Reattach instead of launching twice.
+	// A live owned worker wins over a local timeout. Reattach instead of launching twice.
 	if j.Session != "" && cr.HasSession(ctx, j.Session) {
 		return s.connect(ctx, j, user)
 	}
@@ -395,7 +427,7 @@ func (s *Server) ensureRuntimeMode(ctx context.Context, id string, user, viewing
 		return fmt.Errorf("pinned job engine unavailable: %w", e)
 	}
 	j.RunID = jobs.ID()
-	j.Session = s.Config.Supervisor.WorkerSessionPrefix + j.ID[:12] + "-" + j.RunID[:6]
+	j.Session = cr.ProcessSession(s.Config, j.RunID)
 	j.Socket = cr.SocketPath(s.Config, j.RunID[:12])
 	j.State = "starting"
 	j.PendingRequests = nil

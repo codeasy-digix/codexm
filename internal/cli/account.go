@@ -102,16 +102,16 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 }
 
 func saveWorkerAccount(c config.Config, name string) error {
-	if latest, e := config.Load(c.Path); e == nil {
-		c = latest
-	}
-	c.WorkerAccounts.DefaultAccount = name
-	if !slices.Contains(c.WorkerAccounts.Priority, name) {
-		position := len(c.WorkerAccounts.Priority)
-		if c.WorkerAccounts.FallbackAccount != "" {
-			position--
+	_, _, e := config.Update(c.Path, "", func(c *config.Config) error {
+		c.WorkerAccounts.DefaultAccount = name
+		if !slices.Contains(c.WorkerAccounts.Priority, name) {
+			position := len(c.WorkerAccounts.Priority)
+			if c.WorkerAccounts.FallbackAccount != "" {
+				position--
+			}
+			c.WorkerAccounts.Priority = slices.Insert(c.WorkerAccounts.Priority, position, name)
 		}
-		c.WorkerAccounts.Priority = slices.Insert(c.WorkerAccounts.Priority, position, name)
-	}
-	return c.Save()
+		return nil
+	})
+	return e
 }

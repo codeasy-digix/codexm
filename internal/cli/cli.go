@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/display"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/service"
 	"github.com/codeasy-digix/codexm/internal/store"
 	"github.com/codeasy-digix/codexm/internal/supervisor"
 	"github.com/codeasy-digix/codexm/internal/terminal"
@@ -83,19 +83,27 @@ func Main(args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), signals...)
 	defer cancel()
 	if command == "__daemon-watchdog" {
-		return (daemon.Manager{Config: c, Self: self, Out: os.Stdout}).Run(ctx)
+		e := (daemon.Manager{Config: c, Self: self, Out: os.Stdout}).Run(ctx)
+		if e == nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return e
 	}
 	if command == "daemon" {
 		return (daemon.Manager{Config: c, Self: self, Out: os.Stdout}).Command(ctx, args)
 	}
+	if command == "service" {
+		return serviceCommand(ctx, c, self, args)
+	}
 	if command == "account" {
 		return accountCommand(ctx, c, args)
 	}
-	if command == "__supervisor" {
+	if command == "__supervisor" || command == "__service" {
 		s, e := supervisor.New(ctx, c, self)
 		if e != nil {
 			return e
 		}
+		s.Persistent = command == "__service"
 		return s.Run()
 	}
 	if command == "__view" {
@@ -211,6 +219,16 @@ func Main(args []string) error {
 	}
 	var result any
 	switch command {
+	case "switch-account":
+		if len(args) != 2 {
+			return errors.New("usage: codexm switch-account JOB_ID ACCOUNT")
+		}
+		var action jobs.Action
+		if e = supervisor.Request(ctx, c, command, supervisor.JobArgs{ID: args[0], Account: args[1], OperationID: jobs.ID()}, &action); e != nil {
+			return e
+		}
+		fmt.Printf("Session %s: account change to %s %s (operation %s). Check status and logs for its result.\n", args[0], args[1], action.State, action.ID)
+		return nil
 	case "status", "agents":
 		jsonOutput := has(args, "--json")
 		var st supervisor.Status
@@ -224,7 +242,7 @@ func Main(args []string) error {
 		fmt.Println(st.Attach)
 		for _, j := range st.Jobs {
 			fmt.Printf("%s  %-20s %-14s %-10s %s\n", j.ID, j.Title, j.State, j.Account, j.ThreadID)
-			if j.Session != "" {
+			if j.Session != "" && !cr.IsProcess(j.Session) {
 				fmt.Println("  tmux attach -t " + j.Session)
 			}
 		}
@@ -420,8 +438,11 @@ codexm [--config FILE]                  Interactive task list / first-run setup
 codexm account [NAME] [--login]         Named login / saved default for new jobs
 codexm daemon watch|unwatch|status     Token-free official daemon recovery
 codexm daemon start|restart|stop       Official lifecycle, using the shared home
+codexm service install|start|stop       codexm OS user service (separate from Codex daemon)
+codexm service restart|status|logs      Service lifecycle and diagnostics
 codexm setup --manager NAME             Save manager account explicitly
-codexm status --json                    Jobs, health and named tmux sessions
+codexm status --json                    Jobs, health and worker processes
+codexm switch-account JOB ACCOUNT      Change one session's account, preserving the conversation
 codexm session list [--search TEXT]     All Codex conversations, read-only (including archived)
 codexm session list --managed          Only jobs registered with codexm
 codexm session list --active-only      Exclude archived conversations
@@ -463,14 +484,7 @@ func doctor(ctx context.Context, c config.Config, args []string) error {
 	} else {
 		checks["config"] = "ok"
 	}
-	for _, name := range []string{"tmux"} {
-		if p, e := exec.LookPath(name); e != nil {
-			checks[name] = e.Error()
-			failures = append(failures, e.Error())
-		} else {
-			checks[name] = p
-		}
-	}
+	result["service"] = (service.Manager{Config: c}).Status(ctx)
 	r, e := cr.Resolve(ctx, c)
 	if e != nil {
 		checks["engine"] = e.Error()

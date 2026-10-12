@@ -17,6 +17,7 @@ import (
 
 	"github.com/codeasy-digix/codexm/internal/config"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/service"
 )
 
 type Manager struct {
@@ -154,32 +155,36 @@ func (m Manager) Command(ctx context.Context, args []string) error {
 	}
 	switch args[0] {
 	case "watch":
-		if _, e := exec.LookPath("tmux"); e != nil {
-			return e
-		}
 		if m.hasSession() && !m.ownsSession() {
 			return errors.New("watchdog tmux session belongs to another process; it was preserved")
 		}
 		if e := m.enable(ctx, true); e != nil {
 			return e
 		}
-		if !m.hasSession() {
-			argv := []string{m.Self, "--config", m.Config.Path, "__daemon-watchdog"}
-			for i := range argv {
-				argv[i] = cr.ShellQuote(argv[i])
-			}
-			if e := exec.Command("tmux", "new-session", "-d", "-s", m.session(), "exec "+strings.Join(argv, " ")).Run(); e != nil {
-				return e
-			}
-			if e := exec.Command("tmux", "set-option", "-t", m.sessionID(), "@codexm-daemon-watchdog", m.root()).Run(); e != nil {
+		if m.ownsSession() {
+			if e := exec.CommandContext(ctx, "tmux", "kill-session", "-t", "="+m.session()).Run(); e != nil {
 				return e
 			}
 		}
-		fmt.Fprintf(m.Out, "Automatic official daemon recovery enabled; no model calls.\nSession: %s\nAttach: tmux attach -t %s\nLog: %s\n", m.session(), m.session(), filepath.Join(m.root(), "watchdog.log"))
+		svc := service.Manager{Config: m.Config, Self: m.Self, Kind: "watchdog"}
+		if svc.Registered() {
+			if e := svc.Start(ctx); e != nil {
+				return e
+			}
+		} else if e := svc.Install(ctx, true); e != nil {
+			return e
+		}
+		fmt.Fprintf(m.Out, "Automatic official daemon recovery enabled; no model calls.\nUser service: %s\nLog: %s\n", svc.Label(), filepath.Join(m.root(), "watchdog.log"))
 		return nil
 	case "unwatch":
 		if e := m.enable(ctx, false); e != nil {
 			return e
+		}
+		svc := service.Manager{Config: m.Config, Self: m.Self, Kind: "watchdog"}
+		if svc.Registered() {
+			if e := svc.Stop(ctx); e != nil {
+				return e
+			}
 		}
 		if m.hasSession() {
 			if !m.ownsSession() {
@@ -208,14 +213,15 @@ func (m Manager) Command(ctx context.Context, args []string) error {
 			return e
 		}
 		pid, running, e := Process(config.Expand(m.Config.Runtime.SharedCodexHome))
-		state := map[string]any{"enabled": s.Enabled, "watchdog_running": m.hasSession() && m.ownsSession(), "daemon_running": running, "daemon_pid": pid, "session": m.session(), "model_calls": 0}
+		svc := (service.Manager{Config: m.Config, Self: m.Self, Kind: "watchdog"}).Status(ctx)
+		state := map[string]any{"enabled": s.Enabled, "watchdog_running": svc.Running || m.hasSession() && m.ownsSession(), "daemon_running": running, "daemon_pid": pid, "legacy_session": m.session(), "service": svc, "model_calls": 0}
 		if e != nil {
 			state["error"] = e.Error()
 		}
 		if len(args) == 2 {
 			return json.NewEncoder(m.Out).Encode(state)
 		}
-		fmt.Fprintf(m.Out, "Official daemon: running=%t PID=%d · automatic recovery=%t · watchdog=%v\nAttach: tmux attach -t %s\n", running, pid, s.Enabled, state["watchdog_running"], m.session())
+		fmt.Fprintf(m.Out, "Official daemon: running=%t PID=%d · automatic recovery=%t · watchdog=%v\nWatchdog service: %s\n", running, pid, s.Enabled, state["watchdog_running"], svc.Label)
 		return e
 	default:
 		return errors.New("usage: codexm daemon watch|unwatch|status|start|restart|stop")

@@ -97,7 +97,7 @@ func TestInputTargetAndKoreanMultilinePaste(t *testing.T) {
 	}
 }
 
-func TestArrowSelectionKeepsComposerAndDraft(t *testing.T) {
+func TestAltArrowSelectionKeepsComposerAndDraft(t *testing.T) {
 	c := config.Defaults()
 	c.Manager.Account = "account-backup"
 	m := New(c, "codexm")
@@ -106,12 +106,12 @@ func TestArrowSelectionKeepsComposerAndDraft(t *testing.T) {
 	m.SelectedID = "first"
 	m.focusInput("작성 중인 초안\n두 번째 줄")
 	draft := m.Input.Value()
-	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt})
 	m = next.(Model)
 	if m.SelectedID != "second" || m.Focus != "input" || m.Input.Value() != draft {
 		t.Fatal("down did not select a job while preserving the draft")
 	}
-	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModAlt})
 	m = next.(Model)
 	if m.SelectedID != "first" || m.Focus != "input" || m.Input.Value() != draft {
 		t.Fatal("up changed composer focus or input")
