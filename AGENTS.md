@@ -10,9 +10,9 @@
 - Persistent product services use user launchd/systemd units. Temporary long-running
   test processes use named tmux sessions. Preserve existing active legacy workers;
   clean up only owned temporary services, sessions and workers.
-- CLI, native desktop GUI, service and local ChatGPT plugin are one product in
-  this repository. The native GUI opens directly and uses the local management
-  API; do not add a public website or patch the ChatGPT application bundle.
+- CLI, service and local ChatGPT plugin panels are one product in this repository.
+  Use the host sidebar/thread/settings extensions for GUI entrypoints. Do not add
+  a standalone app or website, or patch the ChatGPT application bundle.
 - Run `go test -race ./...`, `go vet ./...`, and relevant isolated native integration
   for runtime changes. Account/library failure must never break official Codex.
 - Distribution is preparation only. Build local archives with `go run ./cmd/package`;
