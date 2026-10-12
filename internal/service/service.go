@@ -89,7 +89,8 @@ func (m Manager) read() (Receipt, error) {
 	}
 	return r, nil
 }
-func (m Manager) Registered() bool { _, e := m.read(); return e == nil }
+func (m Manager) Registered() bool          { _, e := m.read(); return e == nil }
+func (m Manager) ExecutableIsCurrent() bool { r, e := m.read(); return e == nil && r.Binary == m.Self }
 func (m Manager) write(r Receipt) error {
 	b, e := json.MarshalIndent(r, "", "  ")
 	if e != nil {

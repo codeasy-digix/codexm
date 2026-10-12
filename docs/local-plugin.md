@@ -1,4 +1,4 @@
-# codexm 0.3 로컬 플러그인과 계정 관리
+# codexm 0.3.1 로컬 플러그인과 계정 관리
 
 CLI·사용자 서비스·MCP Apps 화면은 같은 Go 실행 파일에 포함된다. 공용 웹 화면과
 TCP 수신 서버는 없다. 공식 Codex 설치가 필요하며 공식 CLI/ChatGPT 앱을 개조하지 않는다.
@@ -94,3 +94,29 @@ ChatGPT 관리 패널 렌더링, 선택 작업 전환·재개, 설정 저장, �
 확인할 대상이다. 이번 작업에서는 호스트 UI 렌더링 성공을 확인했다고 표시하지 않는다.
 격리 모의 호스트 파일 생성기는 `node scripts/plugin-ui-fixture.mjs`이며 실제 계정/작업을
 사용하지 않는다. 로컬 제품 자체가 웹 서버를 실행한다는 뜻은 아니다.
+
+
+## Discord 한도 알림
+
+```sh
+codexm notify five-hour             # 모든 저장 계정, 이후 추가되는 계정도 포함
+codexm notify five-hour account-work account-secondary  # 명시한 계정으로 한정
+codexm notify status
+codexm notify off
+```
+
+설정 화면에도 5시간 한도 알림 켜기/끄기가 있다. 계정의 300분 창이 100% 사용된 것으로
+관측되면 `.home`의 `~/.local/bin/agent_job_done`으로 보낸다. 메시지에는 전체 등록 계정의
+단기/장기 잔여량, 초기화·관측 시각, 관리자·기본 계정과 현재 작업별 계정/상태를 함께 넣는다.
+조회 실패는 미확인으로 표시하고 대화 내용·목표 원문·인증 정보는 보내지 않는다.
+
+worker의 rolling 한도 이벤트와 기존 사용량 조회에서 알림을 영속 큐에 기록한다.
+별도 모델 호출 없이 약 1분 간격으로 계정 메타데이터를 보완하고 대기 알림을 전달한다.
+같은 계정/초기화 구간을 다시 보내지 않으며, 계정 전환이나 서비스 재시작 후에도 대기
+알림을 보존한다. webhook은 전송 idempotency를 제공하지 않으므로 전송 중 종료/실패는
+`delivery_unconfirmed` 또는 `sending`으로 남기고 자동 재전송하지 않는다. 전달 결과는
+서비스 로그와 codexm 전용 `quota_notifications` 테이블에 기록한다.
+
+인증 설정은 `.home/config/agent-notify/discord.zsh`와 ignored private 프로필이 소유한다.
+수신자 URL을 codexm 설정이나 서비스 정의에 복사하지 않는다. 기본값은 알림 비활성이다.
+이번 로컬 설치에서는 사용자가 요청한 전체 계정 알림을 활성화한다.

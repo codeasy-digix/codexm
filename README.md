@@ -15,6 +15,7 @@ codexm account account-work              # 기본 작업 계정 저장
 codexm setup --manager account-backup     # 관리 판단에 사용할 별도 계정 저장
 codexm service install            # 사용자 OS 서비스 설치 및 시작
 codexm plugin install             # 개인 로컬 marketplace 등록
+codexm notify five-hour           # 모든 계정의 5시간 소진을 Discord로 알림
 codexm                            # 작업 목록 TUI
 ```
 

@@ -20,6 +20,7 @@ type EditableSettings struct {
 	ReconcileIntervalSeconds int      `json:"reconcile_interval_seconds"`
 	MaxParallelJobs          int      `json:"max_parallel_jobs"`
 	UsageSampleSeconds       int      `json:"usage_sample_seconds"`
+	FiveHourDiscord          *bool    `json:"five_hour_discord,omitempty"`
 }
 type SettingsDocument struct {
 	Revision    string           `json:"revision"`
@@ -29,7 +30,7 @@ type SettingsDocument struct {
 }
 
 func editable(c config.Config) EditableSettings {
-	return EditableSettings{c.Manager.Account, c.DefaultWorker(), slices.Clone(c.WorkerAccounts.Priority), c.WorkerAccounts.FallbackAccount, c.WorkerAccounts.PreferredRecheckSeconds, c.Supervisor.ReconcileIntervalSeconds, c.Execution.MaxParallelJobs, c.Logging.UsageSampleSeconds}
+	return EditableSettings{c.Manager.Account, c.DefaultWorker(), slices.Clone(c.WorkerAccounts.Priority), c.WorkerAccounts.FallbackAccount, c.WorkerAccounts.PreferredRecheckSeconds, c.Supervisor.ReconcileIntervalSeconds, c.Execution.MaxParallelJobs, c.Logging.UsageSampleSeconds, &c.Notifications.FiveHourDiscord}
 }
 func (s *Server) settingsDocument() (SettingsDocument, error) {
 	c, rev, e := config.Current(s.Config.Path)
@@ -87,6 +88,9 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 		c.Supervisor.ReconcileIntervalSeconds = v.ReconcileIntervalSeconds
 		c.Execution.MaxParallelJobs = v.MaxParallelJobs
 		c.Logging.UsageSampleSeconds = v.UsageSampleSeconds
+		if v.FiveHourDiscord != nil {
+			c.Notifications.FiveHourDiscord = *v.FiveHourDiscord
+		}
 		return c.Validate()
 	})
 	if e != nil {

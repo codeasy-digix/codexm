@@ -174,6 +174,16 @@ func (m Manager) Command(ctx context.Context, args []string) error {
 				return e
 			}
 		}
+		if !svc.ExecutableIsCurrent() {
+			if e := svc.Upgrade(ctx, func(ctx context.Context) error {
+				if !svc.Status(ctx).Running {
+					return errors.New("watchdog service is starting")
+				}
+				return nil
+			}); e != nil {
+				return e
+			}
+		}
 		if e := svc.Start(ctx); e != nil {
 			return e
 		}

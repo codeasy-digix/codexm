@@ -12,7 +12,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 var Nickname = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
@@ -83,6 +83,11 @@ type Config struct {
 	Logging struct {
 		UsageSampleSeconds int `toml:"usage_sample_seconds"`
 	} `toml:"logging"`
+	Notifications struct {
+		FiveHourDiscord bool `toml:"five_hour_discord" json:"five_hour_discord"`
+		// Empty means every saved Codex account, including accounts added later.
+		Accounts []string `toml:"accounts,omitempty" json:"accounts,omitempty"`
+	} `toml:"notifications"`
 	Path string `toml:"-" json:"-"`
 }
 

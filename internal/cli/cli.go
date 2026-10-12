@@ -99,6 +99,9 @@ func Main(args []string) error {
 	if command == "plugin" {
 		return plugin.Command(ctx, c, self, args, os.Stdout)
 	}
+	if command == "notify" {
+		return notifyCommand(ctx, c, args)
+	}
 	if command == "account" {
 		return accountCommand(ctx, c, args)
 	}
@@ -447,6 +450,8 @@ codexm service restart|status|logs      Service lifecycle and diagnostics
 codexm service upgrade                Replace manager binary, preserving running workers
 codexm plugin install|status|doctor    Local ChatGPT plugin registration and diagnostics
 codexm plugin uninstall               Remove only codexm's local marketplace entry
+codexm notify five-hour [ACCOUNT...]  Discord alert on exhausted 5-hour windows
+codexm notify off|status              Disable or inspect quota notifications
 codexm setup --manager NAME             Save manager account explicitly
 codexm status --json                    Jobs, health and worker processes
 codexm switch-account JOB ACCOUNT      Change one session's account, preserving the conversation

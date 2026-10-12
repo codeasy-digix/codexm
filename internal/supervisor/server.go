@@ -150,9 +150,10 @@ func (s *Server) Run() error {
 	httpServer := &http.Server{Handler: http.HandlerFunc(s.serveHTTP), ReadHeaderTimeout: 5 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- httpServer.Serve(l) }()
-	s.wg.Add(2)
+	s.wg.Add(3)
 	go func() { defer s.wg.Done(); s.actionLoop() }()
 	go func() { defer s.wg.Done(); s.reconcileLoop() }()
+	go func() { defer s.wg.Done(); s.quotaNotificationLoop() }()
 	fmt.Printf("codexm %s · manager service · persistent=%t\n", config.Version, s.Persistent)
 	select {
 	case <-s.ctx.Done():
@@ -380,6 +381,8 @@ func (s *Server) handleEvent(jobID, runID, key string, m cr.Message) {
 	next, as := policy.Reduce(j, ev, m)
 	if e = s.Store.Commit(next, &ev, as); e != nil {
 		s.unhealthy = e.Error()
+	} else if m.Method == "account/rateLimits/updated" {
+		s.recordQuotaUpdate(j.Account, m.Params)
 	}
 }
 func Start(ctx context.Context, c config.Config, self string) error {

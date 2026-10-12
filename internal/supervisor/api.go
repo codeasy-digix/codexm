@@ -613,6 +613,7 @@ func (s *Server) refreshAccounts(ctx context.Context) ([]accounts.Snapshot, erro
 		if e = s.Store.Snapshot(name, a); e != nil {
 			return nil, e
 		}
+		s.queueQuotaNotice(a)
 		out = append(out, a)
 	}
 	return out, nil

@@ -24,8 +24,7 @@
   관리자 재시작 후 동일 worker/run/thread와 쓰기 잠금 유지, 명시적 shutdown 시 복구 중지 통과.
 - `TestOfficialNativeWorkerLifecycleAndWriterLock`: 실제 공식 Codex 엔진으로 수동 계정 변경,
   일시중지 목표와 예산/사용량/모델/effort 보존, 기존 native 대화 읽기/외부 writer 보호 통과.
-- 시험용 LaunchAgent와 tmux 세션 정리 완료. 이 기록 시점에 실제 사용 중인 서비스와
-  작업 엔진은 교체하지 않았다. 운영 적용과 `.home` revision 변경은 후속 검증 대상이다.
+- 위 격리 시험용 LaunchAgent와 tmux 세션 정리 완료. 이후 로컬 운영 인계는 아래에 기록한다.
 
 ## 플러그인 구현과 추가 검증 범위
 
@@ -39,5 +38,23 @@
   모의 호스트 파일은 생성했지만 GUI 렌더링 검증은 완료했다고 표시하지 않는다.
 - 설치된 ChatGPT 앱(`com.openai.codex`)은 컴퓨터 제어 도구가 접근을 차단한다.
   공식 manifest와 MCP 협상 검증을 실제 ChatGPT 내 렌더링 성공으로 대신하지 않는다.
-- 로컬 검증 후 관리 중인 worker를 보존하는 운영 인계, `.home` 연계, merge/push를 수행한다.
+- 실제 ChatGPT 렌더링, 추가 알림·upgrade 기능의 실사용 테스트는 사용자가 후속 진행한다.
 - ibs 등 다른 장비 적용은 이번 로컬 전환 검증에 포함하지 않는다.
+
+
+## 로컬 반영 기록 (2026-10-12~13)
+
+- 0.2.1 관리 DB/설정을 `~/.local/state/codexm/handoff-20261012-service/`에 백업했다.
+- 기존 observer의 사용자·실행 파일·PID·시작 시각과 미완료 큐 0개를 확인한 뒤 observer만
+  교체했다. 등록 작업 8개의 thread/account/pause/run/session과 살아 있던 worker 3개의
+  PID가 인계 직후 동일했다. 소유한 tmux supervisor/watchdog는 OS 사용자 서비스로 옮겼다.
+- macOS 사용자 서비스는 `org.codeasy.codexm.supervisor`와 `.watchdog`이다.
+  남은 tmux 3개는 인계한 기존 worker다. 새 실행부터 독립 프로세스 backend를 사용한다.
+- 개인 marketplace에 등록하고 공식 `codex plugin add codexm@local-personal`로 설치했다.
+  실제 ChatGPT 패널 렌더링은 이 설치 결과로 확인된 것이 아니다.
+- 사용자의 추가 요청으로 0.3.1에 전체 등록 계정의 5h Discord 알림, 중복 방지 영속 기록,
+  전체 계정·현재 작업 현황을 포함하는 메시지, 설정 화면의 켜기/끄기를 추가했다.
+- 전체 계정 4개와 작업 8개의 현황 메시지를 실제 Discord로 전달했다. 당시 account-work/account-backup은
+  한도 조회가 됐고 account-secondary/account-main는 로그인 확인이 필요하여 미확인으로 전달했다.
+- 사용자 지시에 따라 후반 추가 기능은 빌드/설치 확인까지만 했으며 추가 테스트는 실행하지 않았다.
+  앞선 테스트 통과를 이 후반 변경의 테스트 통과로 확대하지 않는다.

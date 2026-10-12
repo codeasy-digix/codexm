@@ -370,7 +370,11 @@ func (s *Server) recordAccount(a accounts.Snapshot) error {
 	if a.Ordinary != nil && *a.Ordinary && a.State("") == "available" {
 		a.WasExhausted = false
 	}
-	return s.Store.Snapshot(a.Account, a)
+	if e = s.Store.Snapshot(a.Account, a); e != nil {
+		return e
+	}
+	s.queueQuotaNotice(a)
+	return nil
 }
 func (s *Server) ensureRuntime(ctx context.Context, id string, user bool) error {
 	return s.ensureRuntimeMode(ctx, id, user, false)
