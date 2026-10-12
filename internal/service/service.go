@@ -204,7 +204,7 @@ func (m Manager) Install(ctx context.Context, start bool) error {
 			return e
 		}
 		s := m.Status(ctx)
-		if s.Loaded && r.Digest != digest(b) {
+		if definitionInUse(s) && r.Digest != digest(b) {
 			return errors.New("stop the existing codexm service before replacing its definition")
 		}
 		enabled = r.Enabled
@@ -359,10 +359,38 @@ func (m Manager) Stop(ctx context.Context) error {
 		if m.Status(ctx).Loaded {
 			_, e = m.run(ctx, "bootout", m.target())
 		}
+	} else {
+		_, e = m.run(ctx, "disable", "--now", m.Label()+".service")
+	}
+	if e != nil {
 		return e
 	}
-	_, e = m.run(ctx, "disable", "--now", m.Label()+".service")
-	return e
+	// launchctl bootout can return while the old process is still exiting. Wait
+	// before replacing its definition or bootstrapping the next observer. systemd
+	// retains LoadState=loaded for a stopped unit, so only its active PID matters.
+	wait, cancel := context.WithTimeout(ctx, 40*time.Second)
+	defer cancel()
+	for {
+		s := m.Status(wait)
+		if err := wait.Err(); err != nil {
+			return fmt.Errorf("waiting for codexm service to stop: %w", err)
+		}
+		if s.Problem != "" {
+			return errors.New(s.Problem)
+		}
+		if !definitionInUse(s) {
+			return nil
+		}
+		select {
+		case <-wait.Done():
+			return fmt.Errorf("waiting for codexm service to stop: %w", wait.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func definitionInUse(s Status) bool {
+	return s.Running || s.PID > 0 || s.Platform == "darwin" && s.Loaded
 }
 func (m Manager) Uninstall(ctx context.Context) error {
 	if e := m.Stop(ctx); e != nil {
