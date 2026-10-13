@@ -29,6 +29,25 @@ writer·계정·목표·예산을 유지한다. 오류도 모델로 넘기지 �
 증거는 `~/.local/state/codexm/validation/namespace-skill-20261014/final/`에 보관한다.
 이 격리 시험은 실제 데스크톱 composer에서 새 명령을 제출한 결과를 대신하지 않는다.
 
+### 0.5.5 로컬 설치 결과
+
+구현 `4500076`을 `.home`에 고정하고 CLI·공식 plugin cache를 0.5.5로 갱신했다.
+캐시 launcher와 MCP 정의는 같은 최종 불변 바이너리를 가리킨다. 공식 engine의
+`plugin doctor`에서 설치·활성·캐시 일치, 스킬 3개와 명령 훅 1개·enabled·trusted를
+확인했다. 훅 해시는 설치 전과 같으며 사용자 승인 파일은 수정하지 않았다.
+설치된 MCP의 initialize/ping/tools/list/resource read/snapshot을 실제 호출해
+0.5.5, 도구 11개, 서비스 연결·manager API 2·기존 작업 9개를 확인했다.
+
+설치 전후 작업 9개의 ID·계정·목표·예산, worker PID 3개, 관리 설정, 공식 CLI 경로·해시,
+모든 관측 인증 파일과 `.home` 동시 작업 파일 10개가 일치했다. 서비스 정의도 같고
+실행 중인 0.5.2 supervisor PID 95420을 유지했다. 시험 tmux는 남아 있지 않다.
+`homectl plan` 통과, 전체 doctor의 실패 3개는 기존 markdown2pdf 개발 경로다.
+이번 수정과 관련 없는 설치 항목은 적용하지 않았다. 다른 장비에는 배포하지 않았다.
+
+실제 현재 앱의 composer가 갱신된 훅을 다시 읽고 화면을 표시하는 조작은 미확인이다.
+새로 시작한 공식 엔진의 발견·훅 실행 검증과 현재 GUI 표시를 동일하게 판정하지 않는다.
+private 설치 영수증: `~/.local/state/codexm/validation/namespace-skill-20261014/local-install-receipt.json`.
+
 ## 0.5.3 모델 호출 없는 명령 훅 (2026-10-13)
 
 정확한 `@codexm manage`, `@codexm-manage`, `@codexm accounts` 및 계정 전용 명령을
