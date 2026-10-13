@@ -58,7 +58,9 @@ func Main(args []string) error {
 		if err := f.Parse(args); err != nil {
 			return err
 		}
-		return panelcommand.Serve(context.Background(), os.Stdin, os.Stdout, *marketplace, panelcommand.Open)
+		return panelcommand.Serve(context.Background(), os.Stdin, os.Stdout, *marketplace, panelcommand.Open, func(ctx context.Context, sessionID string) (string, error) {
+			return registerPrompt(ctx, *cfg, sessionID)
+		})
 	}
 	if command == "__worker" {
 		if len(args) != 1 {

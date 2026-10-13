@@ -1,5 +1,34 @@
 # codexm 앱 내 패널·명령 스킬·현재 대화 등록 검증
 
+## 0.5.5 전체 스킬 이름과 직접 등록 명령 (2026-10-14)
+
+운영 0.5.3 훅은 이미 활성·신뢰 상태였지만 실제 앱 입력인
+`[$codexm:codexm-manage](.../skills/codexm-manage/SKILL.md)`를 일반 대화로 통과시켰다.
+명령 파서가 `codexm:` 접두어를 놓치는 것을 재현하고 수정했다. 사용자 신뢰 기록은
+수정하지 않았다. 명령 뒤 추가 지시·다른 플러그인·스킬 경로 불일치는 일반 입력이다.
+
+`@codexm` / `$codexm` 단독 전송과 `@codexm register`는 현재 채팅의 직접 등록 명령이다.
+공식 훅의 `session_id`로 실행 중인 서비스의 register RPC만 호출하고, 기존 대화의
+writer·계정·목표·예산을 유지한다. 오류도 모델로 넘기지 않으며 등록 응답에는 대화 내용이나
+원시 오류를 노출하지 않는다. 서비스 시작·전역 로그인 변경·원래 GUI writer 강제 해제는 없다.
+
+공식 CLI 0.162.1과 앱 번들 0.162.0-alpha.17.2 각각에서 실제 스킬 Markdown,
+전체 스킬 이름, plugin/skill 구조화 입력을 포함해 다음을 확인했다.
+
+- 관리·계정 명령 9종, 현재 채팅 등록 4종, 링크 열기 실패: 모델 HTTP 요청 **0회**.
+- 일반 입력과 스킬 뒤 추가 지시: 로컬 sentinel 모델 서버 요청 **2회**.
+- 임시 HOME·빈 인증·영수증 opener/등록 callback을 사용했다. 운영 계정·GUI 호출 **0회**.
+- 별도 실제 register callback 회귀 시험: 현재 hook ID 사용, 환경 ID로 대체하지 않음,
+  기본/기존 계정 보존, 중복 등록 방지, 외부 writer·목표·예산 보존, 오류와 시간 제한 처리.
+- 실제 공식 CLI의 기존 대화 등록·paused 계정 변경 시험: 같은 대화와 목표·예산 보존.
+
+최종 `go test -race ./...`, `go vet ./...`, UI JS 16개, 스킬 validator 3개,
+두 공식 엔진의 플러그인·명령 통합 검사와 공식 CLI 등록 검사가 모두 통과했다.
+첫 skill 검사에서 시스템 Python의 PyYAML 부재를 확인하고 기존 격리 venv로 재실행했다.
+시험 tmux `codexm-test-skill-command-20261014`는 종료됐고 기존 worker 세션은 유지했다.
+증거는 `~/.local/state/codexm/validation/namespace-skill-20261014/final/`에 보관한다.
+이 격리 시험은 실제 데스크톱 composer에서 새 명령을 제출한 결과를 대신하지 않는다.
+
 ## 0.5.3 모델 호출 없는 명령 훅 (2026-10-13)
 
 정확한 `@codexm manage`, `@codexm-manage`, `@codexm accounts` 및 계정 전용 명령을

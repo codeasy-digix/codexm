@@ -5,14 +5,19 @@ description: Open the installed codexm account and task management panel when th
 
 The exact commands `@codexm-manage`, `$codexm-manage` and `@codexm manage`
 are handled before inference by codexm's synchronous `UserPromptSubmit` hook.
+The desktop picker's namespaced `$codexm:codexm-manage` form and its
+Markdown skill link use the same route.
 The hook opens the official MCP App deep link and blocks prompt submission.
 First installation or a changed hook requires the user's review/trust in the
 official Hooks settings (CLI: `/hooks`). Do not edit hook trust records or bypass
 trust for the user. Native slash command registration is not provided.
 
 If an exact command reaches this model, the no-model route did not run. Explain
-that the codexm hook must be enabled and trusted in a local Codex conversation,
-then stop. Do not disguise a model tool call as a direct command.
+that a local Codex conversation needs the enabled, trusted codexm hook, then stop.
+If those conditions were already verified, report a command-routing failure; do
+not ask the user to approve the same hook again. Do not disguise a model tool
+call as a direct command. Additional instructions after the skill are ordinary
+user requests; follow them rather than treating them as an exact open command.
 
 For a separate natural-language request to open the panel through this chat,
 call `codexm_open` with `{}` once, return its UI result, and end the turn. If the

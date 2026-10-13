@@ -1,5 +1,5 @@
 {
-  "description": "Open the codexm panel for exact manage/accounts commands before model inference. Other prompts pass through unchanged.",
+  "description": "Handle exact codexm registration and manage/accounts panel commands before model inference. Other prompts pass through unchanged.",
   "hooks": {
     "UserPromptSubmit": [
       {

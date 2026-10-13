@@ -1,7 +1,7 @@
 interface:
   display_name: "codexm"
-  short_description: "manage·accounts 명령과 현재 대화의 관리 등록을 지원합니다"
-  default_prompt: "Use $codexm to explain the codexm 관리 and 계정 관리 buttons. Register this chat only if I explicitly request management."
+  short_description: "신뢰한 명령 훅으로 모델 호출 없이 현재 채팅을 관리 등록합니다"
+  default_prompt: "$codexm"
 dependencies:
   tools:
     - type: "mcp"
