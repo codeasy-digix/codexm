@@ -232,3 +232,29 @@ private 증거는 `validation/gui-20261013/{native-ui-v051,native-app-ui-v051}.{
 실제 GUI의 새 명령 호출 동작은 아직 직접 조작하지 못했다. 공식 엔진에서 스킬을 발견한
 검증을 실제 GUI 호출 성공으로 표시하지 않는다. 기존 GUI writer 인계 감사 결과는
 [현재 지원 경계](gui-handoff-boundary.md)에 기록한다.
+
+### 0.5.1 로컬 설치·보존 확인
+
+구현 commit `20f18d20286228473b55832e3f0ea95a840e9ae8`을 `.home` 고정 revision으로
+복구·빌드·설치했다. `service upgrade`와 `daemon watch`로 관리 관찰자만 교체하고
+`plugin install`, 공식 `codex --no-daemon plugin add codexm@local-personal --json`을 수행했다.
+supervisor PID 48932와 watchdog PID 48999의 실제 실행 경로가 같은 0.5.1 불변 바이너리다.
+공식 공용 daemon PID 13383과 기존 tmux worker 3개는 유지됐다.
+
+`plugin doctor`는 버전 0.5.1, 설치·활성·캐시 일치, MCP 11개, 등록 스킬 1개·명령 스킬
+2개와 이름 `codexm`, `codexm-accounts`, `codexm-manage`를 확인했다. 기존 열린 패널의
+마지막 연결은 0.5.0이므로 최신 UI 일치 관측은 false다. 이를 실제 GUI의 새 명령 호출
+실패나 성공으로 단정하지 않는다. 현재 앱 연결을 종료해 강제 갱신하지 않았다.
+
+설치 전후 private SQLite backup·상태·지문 비교에서 작업 9개의 ID·같은 대화·계정·
+실행 의도·목표·예산·설정·실행 ID·엔진·마지막 입력, manager/default/config/알림 정책,
+전역 로그인·공식 CLI·legacy worker PID 3개, `.home` 동시 변경 파일 10개의 보존을 확인했다.
+`account-backup` 인증 파일의 지문은 달라졌고 관측된 계정 ID는 동일했다. 기존 사용량 reader는
+`account/read refreshToken:true`를 사용한다. 인증이 byte 단위로 그대로라고 주장하지 않는다.
+운영 계정의 새 GUI 로그인은 수행하지 않았다.
+
+`codexm doctor --json`은 통과했다. `homectl plan --json`을 저장한 뒤 외부 제품의 독립
+설치기로 codexm만 적용했다. `homectl doctor --json`의 codexm·공식 Codex 검사는 통과했고,
+전체 실패 3개는 동시 개발 중인 markdown2pdf 경로다. 관리 모델의 지난 한 시간 호출 수는
+0이었다. 영수증은 private `validation/gui-20261013/production-v051-after/receipt.json`이다.
+다른 장비 적용, 정식 배포 게시와 기존 GUI writer 강제 해제는 하지 않았다.
