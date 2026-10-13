@@ -74,7 +74,7 @@ export class Bridge {
   }
   request(method,params,timeout=120000){return new Promise((resolve,reject)=>{const id=++this.id;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('연결 응답을 확인하지 못했습니다. 작업 상태를 확인한 후 다시 시도하세요.'));},timeout);this.pending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},'*');});}
   async initialize(){
-    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.5.3'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
+    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.5.4'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
     catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;this.context({displayMode:window.openai.displayMode||'inline'});}
     this.resize=new ResizeObserver(()=>this.queueSize());this.resize.observe(document.body);window.addEventListener('resize',()=>this.queueSize());this.queueSize();
     void this.reportReady();

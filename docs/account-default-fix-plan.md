@@ -1,5 +1,7 @@
 # 기본 계정 CLI 인수 수정 계획
 
+현재 동작은 0.5.4에서 native 기본 로그인 변경으로 정정했다. 아래는 0.5.2의 과거 검증 기록이다. [최종 범위와 검증](native-account-default-plan.md)을 따른다.
+
 2026-10-13. `codexm account account-main default`는 현재 추가 인수를 거부하며
 로그인 방식 오류를 표시한다. 실제 기본 계정 저장이나 서비스 반영 전에 종료한다.
 

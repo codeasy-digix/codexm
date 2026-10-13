@@ -465,7 +465,7 @@ func help() {
 	fmt.Fprintln(os.Stdout, `codexm — persistent Codex job manager
 
 codexm [--config FILE]                  Interactive task list / first-run setup
-codexm account [NAME] [--login]         Named login / saved default for new jobs
+codexm account [NAME] [--login]         Saved named login / explicit native default
 codexm daemon watch|unwatch|status     Token-free official daemon recovery
 codexm daemon start|restart|stop       Official lifecycle, using the shared home
 codexm service install|start|stop       codexm OS user service (separate from Codex daemon)

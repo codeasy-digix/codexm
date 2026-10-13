@@ -23,11 +23,22 @@ func accountFixture(t *testing.T) config.Config {
 	c.Runtime.AccountsDir = filepath.Join(root, "accounts")
 	c.Runtime.EnginesDir = filepath.Join(root, "engines")
 	c.Storage.StateDir = filepath.Join(root, "state")
+	c.WorkerAccounts.DefaultAccount = "account-secondary"
 	if e := c.Save(); e != nil {
 		t.Fatal(e)
 	}
 	if e := os.MkdirAll(c.Runtime.SharedCodexHome, 0700); e != nil {
 		t.Fatal(e)
+	}
+
+	for _, name := range []string{"account-secondary", "account-main"} {
+		if e := cr.EnsureAccountHome(c, name); e != nil {
+			t.Fatal(e)
+		}
+		auth, _ := json.Marshal(map[string]any{"auth_mode": "chatgpt", "tokens": map[string]string{"id_token": "synthetic-id", "access_token": "synthetic-access", "refresh_token": "synthetic-refresh", "account_id": "fixture-" + name}})
+		if e := os.WriteFile(filepath.Join(c.Runtime.AccountsDir, name, "auth.json"), auth, 0600); e != nil {
+			t.Fatal(e)
+		}
 	}
 	original := []byte("native default login must remain here")
 	auth := filepath.Join(c.Runtime.SharedCodexHome, "auth.json")
@@ -73,28 +84,35 @@ func TestAccountSelectionPersistsWithoutChangingNativeLoginOrShell(t *testing.T)
 	}
 }
 
-func TestExplicitAccountDefaultFormsPersistAcrossReloads(t *testing.T) {
+func TestExplicitAccountDefaultFormsChangeNativeOnlyAcrossReloads(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		args []string
 	}{
 		{"positional", []string{"default"}},
 		{"flag", []string{"--set-default"}},
+		{"singleDashFlag", []string{"-set-default"}},
 		{"positionalWithDeviceLogin", []string{"default", "--login", "--device"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := accountFixture(t)
-			if e := saveWorkerAccount(c, "account-secondary"); e != nil {
-				t.Fatal(e)
-			}
+			configBefore, _ := os.ReadFile(c.Path)
 			before, _ := os.ReadFile(filepath.Join(c.Runtime.SharedCodexHome, "auth.json"))
 			command := append([]string{"--config", c.Path, "account", "account-main"}, test.args...)
 			if e := Main(command); e != nil {
 				t.Fatal(e)
 			}
 			loaded, e := config.Load(c.Path)
-			if e != nil || loaded.DefaultWorker() != "account-main" {
-				t.Fatal("explicit default was not saved", e)
+			if e != nil || loaded.DefaultWorker() != "account-secondary" {
+				t.Fatal("native selection changed codexm worker defaults", e)
+			}
+			configAfter, _ := os.ReadFile(c.Path)
+			if !bytes.Equal(configBefore, configAfter) {
+				t.Fatal("native default changed worker policy")
+			}
+			target, e := os.Readlink(filepath.Join(c.Runtime.SharedCodexHome, "auth.json"))
+			if e != nil || target != filepath.Join(c.Runtime.AccountsDir, "account-main", "auth.json") {
+				t.Fatal("native default was not selected", e)
 			}
 			for n := 0; n < 2; n++ {
 				if e := Main([]string{"--config", c.Path, "account", "--list"}); e != nil {
@@ -105,8 +123,8 @@ func TestExplicitAccountDefaultFormsPersistAcrossReloads(t *testing.T) {
 				t.Fatal("default selection changed unrelated settings")
 			}
 			after, _ := os.ReadFile(filepath.Join(c.Runtime.SharedCodexHome, "auth.json"))
-			if !bytes.Equal(before, after) {
-				t.Fatal("default selection changed native login")
+			if bytes.Equal(before, after) || !bytes.Contains(after, []byte("fixture-account-main")) {
+				t.Fatal("native login did not change to the named account")
 			}
 		})
 	}
@@ -126,7 +144,7 @@ func TestInvalidAccountArgumentsFailBeforeLoginOrSettingsChange(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			c := accountFixture(t)
 			before, _ := os.ReadFile(c.Path)
-			command := append([]string{"--config", c.Path, "account", "account-main"}, test.args...)
+			command := append([]string{"--config", c.Path, "account", "not-registered"}, test.args...)
 			if e := Main(command); e == nil || !strings.Contains(e.Error(), test.want) {
 				t.Fatal("incorrect account argument error", e)
 			}
@@ -134,7 +152,7 @@ func TestInvalidAccountArgumentsFailBeforeLoginOrSettingsChange(t *testing.T) {
 			if !bytes.Equal(before, after) {
 				t.Fatal("invalid arguments changed saved settings")
 			}
-			if _, e := os.Stat(filepath.Join(c.Runtime.AccountsDir, "account-main")); !os.IsNotExist(e) {
+			if _, e := os.Stat(filepath.Join(c.Runtime.AccountsDir, "not-registered")); !os.IsNotExist(e) {
 				t.Fatal("invalid arguments reached named account login", e)
 			}
 		})
@@ -144,4 +162,36 @@ func TestInvalidAccountArgumentsFailBeforeLoginOrSettingsChange(t *testing.T) {
 func fmtHash(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
+}
+
+func TestNativeDefaultFailureDoesNotChangeWorkerPolicyOrNativeAuth(t *testing.T) {
+	c := accountFixture(t)
+	if e := os.WriteFile(filepath.Join(c.Runtime.SharedCodexHome, "config.toml"), []byte("cli_auth_credentials_store='keyring'"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	before, _ := os.ReadFile(c.Path)
+	if e := Main([]string{"--config", c.Path, "account", "account-main", "default"}); e == nil || !strings.Contains(e.Error(), "requires cli_auth_credentials_store") {
+		t.Fatal("unsupported auth store accepted", e)
+	}
+	after, _ := os.ReadFile(c.Path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("failed native switch changed worker configuration")
+	}
+	if b, _ := os.ReadFile(filepath.Join(c.Runtime.SharedCodexHome, "auth.json")); string(b) != "native default login must remain here" {
+		t.Fatal("failed switch changed native auth")
+	}
+}
+
+func TestAccountRegistrationPreservesOrderAndAddsBeforeReserve(t *testing.T) {
+	c := accountFixture(t)
+	if e := registerAccount(c, "account-secondary"); e != nil {
+		t.Fatal(e)
+	}
+	if e := registerAccount(c, "extra"); e != nil {
+		t.Fatal(e)
+	}
+	loaded, e := config.Load(c.Path)
+	if e != nil || strings.Join(loaded.WorkerAccounts.Priority, ",") != "account-work,account-secondary,account-main,extra,account-backup" || loaded.WorkerAccounts.DefaultAccount != c.WorkerAccounts.DefaultAccount {
+		t.Fatal("registration changed existing order or defaults", e)
+	}
 }
