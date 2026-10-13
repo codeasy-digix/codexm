@@ -258,3 +258,36 @@ supervisor PID 48932와 watchdog PID 48999의 실제 실행 경로가 같은 0.5
 전체 실패 3개는 동시 개발 중인 markdown2pdf 경로다. 관리 모델의 지난 한 시간 호출 수는
 0이었다. 영수증은 private `validation/gui-20261013/production-v051-after/receipt.json`이다.
 다른 장비 적용, 정식 배포 게시와 기존 GUI writer 강제 해제는 하지 않았다.
+
+### 실제 앱의 기존 MCP Apps 패널 조작
+
+후속 goal 턴에서 현재 대화의 MCP Apps side-panel 탭을 컴퓨터 제어 도구가 노출했다.
+이번 검사는 모의 호스트가 아니라 실제 앱 패널이다. native Codex 앱 접근 차단을 우회하거나
+앱 bundle을 변경하지 않았으며 공식 MCP Apps의 DOM 인터페이스만 사용했다.
+연결 진단의 마지막 UI/resource 버전은 0.5.0이고 관리 서비스·설치 캐시는 0.5.1이다.
+아래 결과를 새 0.5.1 스킬 호출의 증거로 사용하지 않는다.
+
+- 설정에서 복귀 주기 600→660, 기본 작업 계정 account-secondary→account-work를 입력했다. 저장하지 않고
+  저장된 값 다시 불러오기로 600·account-secondary 복원을 확인했다. 관리자·예비 계정과 5h 알림도 표시됐다.
+- 계정 추가 창에서 별칭 입력·browser/device 선택·로그인 시작·닫기 버튼을 확인하고
+  device 방식을 선택한 후 닫았다. 로그인은 시작하지 않았다.
+- 새 작업의 첫 지시는 빈 문자열·줄바꿈 0개였다. 여러 줄 한글 입력·취소·재진입 뒤
+  빈 문자열·줄바꿈 0개를 다시 확인했다. 작업 시작은 누르지 않았다.
+- 전체 로그는 16행, 선택한 기존 작업의 로그는 2행이었다. 세션·계정·기간 필터와
+  실행 구간·잔여 관측·전환 사유를 확인한 뒤 전체 세션 필터로 되돌렸다.
+- 기존 관리 작업을 검색·선택하자 추가 지시 입력은 활성·빈 값·줄바꿈 0개·포커스 true였다.
+  해당 작업의 계정 변경 창과 네 계정·예비 정책을 확인하고 취소했으며 포커스 true가 유지됐다.
+  추가 지시 전송·계정 변경·재개·중지는 실행하지 않았다.
+- 마지막 패널의 viewport/body 높이는 모두 1020px이었다. 계정 화면으로 돌아왔다.
+
+private `live-ui-receipt.json`에 검사와 상태 비교를 저장했다. 설정 파일 지문과 작업 9개의
+ID·대화·계정·실행 의도·목표·예산·실행 ID·엔진·입력은 이전 설치 검증과 동일했다.
+관리 모델의 지난 한 시간 호출 수는 0이다. private 이미지 `live-settings-panel.jpg`,
+`live-account-dialog.jpg`도 저장했다. 별도 서버·시험 tmux는 만들지 않았다.
+
+현재 모델의 도구 목록은 `codexm_open`만 노출하고 `codexm_accounts_open`은 없었다.
+0.5.1 스킬의 발견과 기존 MCP 연결의 새 도구 노출은 같은 검증이 아니다. 공식
+`config/mcpServer/reload`는 디스크 설정을 재조회하고 loaded thread의 갱신을 예약하지만
+params는 null이며 특정 서버·대화 선택 필드가 없다. 이 공식 설명은 GUI writer의 해제나
+대화별 인증 교체를 제공하지 않는다. 운영 연결에 광범위 갱신을 실행하지 않았다.
+[공식 API](https://learn.chatgpt.com/docs/app-server#api-overview)를 참고한다.
