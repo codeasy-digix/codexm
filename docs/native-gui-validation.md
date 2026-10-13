@@ -39,6 +39,21 @@ private 실행 로그: `~/.local/state/codexm/validation/prompt-command-20261013
 계획은 [모델 없는 명령 계획](model-free-entrypoints-plan.md), 사용법은
 [플러그인 안내](local-plugin.md#명령으로-화면-열기)를 따른다.
 
+### 로컬 설치 결과
+
+구현 `5cd57cf`를 `.home`에 고정해 CLI와 공식 plugin cache를 0.5.3으로 설치했다.
+캐시 launcher가 최종 설치한 불변 바이너리를 가리키는지 확인했다. `plugin doctor`는
+설치·활성·캐시 일치, 스킬 3개, 명령 훅 1개·enabled·untrusted를 반환했다. 설치기가
+사용자의 훅 신뢰를 대신 설정하지 않았다. 실제 새 명령의 GUI 표시는 미확인이다.
+
+관리 서비스 정의와 실행 중인 0.5.2 supervisor/watchdog는 그대로 유지했다. 설치 전후
+작업 9개의 ID·대화·계정·목표·예산, worker PID 3개, 관리 설정·정책, 공식 CLI 경로·해시,
+전역 인증 파일과 `.home` 동시 작업 파일 10개가 일치했다. 조회된 계정 ID도 모두 같았다.
+account-backup의 인증 파일 해시는 관측 중 달라졌으므로 모든 인증 바이트가 같다고 기록하지 않는다.
+임시 시험 tmux 세션은 종료됐다. `homectl plan` 통과, 전체 `homectl doctor`의 실패 3개는
+기존 동시 작업인 markdown2pdf 실행 파일·스타일 경로이며 codexm 항목은 통과했다.
+영수증은 위 private 폴더의 `local-install-receipt.json`이다. 다른 장비에는 배포하지 않았다.
+
 2026-10-13, 로컬 macOS ARM64, 공식 Codex CLI/engine 0.162.1.
 계획은 [native-gui-plan.md](native-gui-plan.md)에 먼저 commit했다.
 별도 앱·제품 웹 서버·공개 포트와 앱 bundle 패치는 추가하지 않았다.
