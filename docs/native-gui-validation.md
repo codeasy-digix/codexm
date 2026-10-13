@@ -21,6 +21,8 @@
 단위·회귀 검증: `go test -race ./...`, `go vet ./...`, JS 테스트 16개,
 스킬 3개의 `quick_validate.py` 통과. UI는 초기 deep link와 후속 경로 변경으로
 작업/계정 탭을 선택하고, 관련 없는 theme 갱신이 사용자 탭 선택을 덮어쓰지 않는다.
+같은 명령을 반복해도 다시 탐색하도록 딥링크에 호출별 request 값을 붙이며, UI는
+경로로 탭을 선택하고 전체 앱 상대 URL로 새 탐색과 기존 상태 갱신을 구분한다.
 
 호환성 시험에서 root `plugin.json`을 둔 portable AgentPlugin 형식은 훅을 발견하지
 못했다. 공식 [loader](https://github.com/openai/codex/blob/main/codex-rs/core-plugins/src/loader.rs)도

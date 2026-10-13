@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,12 @@ func TestRecognizedCommandBlocksWithBoundedFixedURL(t *testing.T) {
 		calls := 0
 		err := Serve(context.Background(), strings.NewReader(`{"hook_event_name":"UserPromptSubmit","prompt":"@codexm accounts"}`), &out, "local-personal", func(ctx context.Context, link string) error {
 			calls++
-			if link != "codex://plugins/codexm@local-personal/app/codexm_open?path=%2Faccounts" {
+			outer, err := url.Parse(link)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inner, err := url.Parse(outer.Query().Get("path"))
+			if err != nil || outer.Scheme != "codex" || outer.Host != "plugins" || outer.Path != "/codexm@local-personal/app/codexm_open" || inner.Path != "/accounts" || len(inner.Query().Get("request")) != 16 {
 				t.Fatal(link)
 			}
 			if _, bounded := ctx.Deadline(); !bounded {

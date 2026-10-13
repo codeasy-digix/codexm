@@ -46,7 +46,8 @@ export function panelSize(rect,width) {
 }
 export function deepLinkView(context) {
   const path=context?.['openai/deepLink']?.url;
-  return path==='/'?'tasks':path==='/accounts'?'accounts':null;
+  if(typeof path!=='string'||!path.startsWith('/')||path.startsWith('//'))return null;
+  try{const url=new URL(path,'https://codexm.invalid');if(url.origin!=='https://codexm.invalid'||url.hash)return null;return url.pathname==='/'?'tasks':url.pathname==='/accounts'?'accounts':null;}catch{return null;}
 }
 export class Bridge {
   constructor(){this.pending=new Map();this.id=0;this.compat=false;this.hostContext={};this.sizeFrame=null;this.lastSize='';window.addEventListener('message',event=>this.receive(event));}
@@ -109,7 +110,7 @@ export function startUI(options={}){
   function setTab(tab){if(state.snapshot?.connected===false&&tab!=='accounts'){message('관리 서비스를 시작하면 작업·사용 기록·설정을 사용할 수 있습니다.');return;}state.tab=tab;for(const t of ['tasks','accounts','logs','settings'])$(t).hidden=t!==tab;for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===tab);if(tab==='accounts')renderAccounts();if(tab==='logs')void loadLogs();if(tab==='settings')void loadSettings();}
   function initialView(data){const view=data?.initial_view;if(!state.initialViewApplied&&['tasks','accounts','logs','settings'].includes(view)){state.initialViewApplied=true;setTab(view);}}
   let lastDeepLink;
-  function applyDeepLink(context){const view=deepLinkView(context);if(!view||view===lastDeepLink)return;lastDeepLink=view;state.initialViewApplied=true;setTab(view);}
+  function applyDeepLink(context){const view=deepLinkView(context),path=context?.['openai/deepLink']?.url;if(!view||path===lastDeepLink)return;lastDeepLink=path;state.initialViewApplied=true;setTab(view);}
   async function refresh(){
     if(state.disposed||state.polling)return;state.polling=true;
     try{

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -200,8 +201,12 @@ func TestOfficialPromptCommandsPreventInference(t *testing.T) {
 			t.Fatal("management command reached inference", prompt)
 		}
 		link, err := os.ReadFile(receipt)
-		want, _ := panelcommand.Link("local-personal", panelcommand.Target(prompt, "local-personal"))
-		if err != nil || string(link) != want {
+		outer, parseErr := url.Parse(string(link))
+		if err != nil || parseErr != nil {
+			t.Fatal("invalid OS link", err, parseErr)
+		}
+		inner, parseErr := url.Parse(outer.Query().Get("path"))
+		if parseErr != nil || outer.Scheme != "codex" || outer.Host != "plugins" || outer.Path != "/codexm@local-personal/app/codexm_open" || inner.Path != panelcommand.Target(prompt, "local-personal") || len(inner.Query().Get("request")) != 16 {
 			t.Fatal("wrong OS link request", string(link), err)
 		}
 	}

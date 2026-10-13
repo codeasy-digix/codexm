@@ -71,6 +71,8 @@ test('official deep links select the requested tab without overriding later navi
   assert.equal(f.instance.state.tab,'accounts');
   const tasks=f.doc.querySelectorAll('[data-tab]').find(node=>node.dataset.tab==='tasks');await tasks.click();
   f.bridge.onContext({theme:'light','openai/deepLink':{url:'/accounts'}});assert.equal(f.instance.state.tab,'tasks');
+  f.bridge.onContext({'openai/deepLink':{url:'/accounts?request=second'}});assert.equal(f.instance.state.tab,'accounts');
+  await tasks.click();f.bridge.onContext({'openai/deepLink':{url:'/accounts?request=third'}});assert.equal(f.instance.state.tab,'accounts');
   f.bridge.onContext({'openai/deepLink':{url:'/'}});assert.equal(f.instance.state.tab,'tasks');
   f.bridge.onContext({'openai/deepLink':{url:'/accounts'}});assert.equal(f.instance.state.tab,'accounts');
   f.bridge.onContext({'openai/deepLink':{url:'https://example.invalid'}});assert.equal(f.instance.state.tab,'accounts');

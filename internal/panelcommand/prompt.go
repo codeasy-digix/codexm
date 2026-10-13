@@ -4,6 +4,8 @@ package panelcommand
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -74,6 +76,16 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, marketplace string,
 		return err
 	}
 	link, err := Link(marketplace, target)
+	if err == nil {
+		// A fresh app-relative query causes the host to deliver a new navigation
+		// even when this panel is already open at the same deep-link URL.
+		var nonce [8]byte
+		_, err = rand.Read(nonce[:])
+		if err == nil {
+			base, _, _ := strings.Cut(link, "?")
+			link = base + "?path=" + url.QueryEscape(target+"?request="+hex.EncodeToString(nonce[:]))
+		}
+	}
 	if err == nil {
 		limited, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
