@@ -43,7 +43,7 @@ func TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill(t *testi
 		t.Fatalf("isolated plugin install failed: %v %s", e, cr.SafeText(string(b)))
 	}
 	discovery, e := i.Discovery(ctx)
-	if e != nil || discovery["mcp_server_discovered"] != true || discovery["registration_skills_discovered"] != 1 || discovery["host_cache_current"] != true {
+	if e != nil || discovery["mcp_server_discovered"] != true || discovery["registration_skills_discovered"] != 1 || discovery["command_skills_discovered"] != 2 || discovery["plugin_skills_discovered"] != 3 || discovery["host_cache_current"] != true {
 		t.Fatal("official package discovery", discovery, e)
 	}
 	cmd = exec.CommandContext(ctx, i.Config.Runtime.CodexBinary, "--no-daemon", "app-server", "--listen", "stdio://")
@@ -80,10 +80,13 @@ func TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill(t *testi
 				if !bytes.Contains(capabilities, []byte("openai/settings")) || entry.Tools["codexm_settings_read"] == nil || entry.Tools["codexm_settings_update"] == nil {
 					t.Fatal("native settings extension absent")
 				}
-				for _, name := range []string{"codexm_account", "codexm_accounts_open"} {
+				for _, name := range []string{"codexm_account"} {
 					if !bytes.Contains(entry.Tools[name], []byte(`"visibility":["app"]`)) {
 						t.Fatal("native account UI action absent or model-visible", name)
 					}
+				}
+				if entry.Tools["codexm_accounts_open"] == nil || bytes.Contains(entry.Tools["codexm_accounts_open"], []byte(`"visibility":["app"]`)) {
+					t.Fatal("account command skill has no callable panel opener")
 				}
 				server = entry.Name
 			}

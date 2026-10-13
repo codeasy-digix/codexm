@@ -1,6 +1,7 @@
 # 기존 GUI 대화의 계정 인계: 현재 지원 경계
 
-2026-10-13, 공식 CLI 0.162.1, 설치 앱 26.1007.30912의 읽기 진단.
+2026-10-13, 공식 CLI 0.162.1, 설치 앱 26.1007.30912 / build 20156과
+앱 내장 엔진 0.162.0-alpha.17.2의 읽기 진단.
 기존 GUI 채팅에 `@codexm`을 적용하면 같은 대화에서 한도 후 자동으로 다른 계정이
 계속 실행한다는 요구는 아직 완료되지 않았다. 새 대화를 fork하거나 별도 작업을 생성한
 결과를 이 요구의 완료 증거로 사용하지 않는다.
@@ -13,6 +14,9 @@
 - 설치 엔진으로 stable 요청 105개, experimental 포함 170개의 schema를 생성했다.
   `thread/stop`, `thread/close`, `thread/unload`, `thread/handoff`와 대화별 account switch
   메서드는 목록에 없다. 이는 현재 공개 schema의 범위에 대한 결론이다.
+- 명령 스킬 후속 작업 중 독립 감사에서 두 엔진의 schema를 새로 생성했다. 공식 CLI의
+  주요 schema는 기존 진단과 일치하며 앱 내장 엔진도 experimental 요청 170개와 같은
+  인증·writer 경계를 보였다. 별도 CLI가 오래돼서 생긴 차이로 판정하지 않는다.
 - `thread/start`, `thread/resume`, `turn/start`, experimental settings update에는
   저장 account/auth/profile 선택 필드가 없다. `account/login/start`에는 대화 대상이 없다.
 - `turn/interrupt`는 턴 중단이며 writer 해제를 약속하지 않는다. archive/delete는

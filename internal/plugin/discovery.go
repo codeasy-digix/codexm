@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,7 +49,28 @@ func (i Installer) Discovery(ctx context.Context) (map[string]any, error) {
 	for _, name := range response.Plugin.Servers {
 		found = found || name == "codexm"
 	}
-	return map[string]any{"mcp_server_discovered": found, "registration_skills_discovered": len(response.Plugin.Skills), "host_installed": response.Plugin.Summary.Installed, "host_enabled": response.Plugin.Summary.Enabled, "host_installed_version": response.Plugin.Summary.LocalVersion, "host_cache_current": response.Plugin.Summary.LocalVersion == config.Version}, nil
+	names := []string{}
+	registration, commands := 0, 0
+	for _, raw := range response.Plugin.Skills {
+		var skill struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(raw, &skill) != nil || skill.Name == "" {
+			continue
+		}
+		name := skill.Name
+		if index := strings.LastIndex(name, ":"); index >= 0 {
+			name = name[index+1:]
+		}
+		names = append(names, name)
+		if name == "codexm" {
+			registration++
+		} else if name == "codexm-manage" || name == "codexm-accounts" {
+			commands++
+		}
+	}
+	sort.Strings(names)
+	return map[string]any{"mcp_server_discovered": found, "plugin_skills_discovered": len(response.Plugin.Skills), "registration_skills_discovered": registration, "command_skills_discovered": commands, "skill_names": names, "host_installed": response.Plugin.Summary.Installed, "host_enabled": response.Plugin.Summary.Enabled, "host_installed_version": response.Plugin.Summary.LocalVersion, "host_cache_current": response.Plugin.Summary.LocalVersion == config.Version}, nil
 }
 
 func pluginEnvironment(home, codexHome string) []string {

@@ -1,4 +1,4 @@
-# codexm 0.4.0 앱 내 패널과 현재 대화 등록 검증
+# codexm 앱 내 패널·명령 스킬·현재 대화 등록 검증
 
 2026-10-13, 로컬 macOS ARM64, 공식 Codex CLI/engine 0.162.1.
 계획은 [native-gui-plan.md](native-gui-plan.md)에 먼저 commit했다.
@@ -168,8 +168,9 @@ viewport 높이 되먹임이다. 기존 모의 host는 size-changed 알림을 �
 세션은 모두 정리됐다. 운영 legacy worker의 tmux 3개는 유지했다.
 
 이 결과는 실제 Codex GUI 설정 화면의 버튼 표시·클릭 성공을 대신하지 않는다.
-컴퓨터 제어의 native Codex 접근 제한은 우회하지 않았고 실제 앱 렌더링은 사용자 확인이
-필요하다. 기존 GUI 대화의 투명한 계정 교체도 공개 API 경계로 아직 완료되지 않았다.
+당시 실제 앱 렌더링은 미확인이었으며, 후속 사용자의 사진으로 관리 패널 표시가 확인됐다.
+컴퓨터 제어의 native Codex 접근 제한은 우회하지 않았다. 기존 GUI 대화의 투명한 계정
+교체도 공개 API 경계로 아직 완료되지 않았다.
 
 ### 0.5.0 로컬 설치·서비스 인계
 
@@ -195,3 +196,39 @@ viewport 높이 되먹임이다. 기존 모의 host는 size-changed 알림을 �
 독립 제품 설치기를 통해 codexm만 적용했다. `homectl doctor`의 codexm/공식 Codex 검사 2개는
 통과했으며 전체 doctor의 실패 3개는 동시 개발 중인 `markdown2pdf` 경로다. 그 파일과
 설치에는 개입하지 않았다. 다른 장비 배포나 정식 Release/npm/tap 게시도 수행하지 않았다.
+
+## 0.5.1 명령 스킬과 최신 GUI 증거
+
+사용자가 제공한 실제 Codex 앱 사진에는 `codexm 관리` 탭, 대화 오른쪽의 관리 패널,
+작업·계정·사용 기록·설정, 새 작업 버튼과 관리 서비스 연결 상태가 표시됐다.
+따라서 현재 패널의 실제 앱 표시를 확인했다. 사진의 경로는 자연어 요청이며 새로운 명령
+스킬 호출, 소개 화면의 직접 버튼 노출·클릭 또는 원래 GUI 대화의 계정 교체를 증명하지 않는다.
+위 이전 버전의 미확인 기록은 당시 상태를 설명한다.
+
+0.5.1은 `@codexm manage` / `@codexm accounts` 라우팅과 전용 `codexm-manage` /
+`codexm-accounts` 스킬을 추가했다. 열기 도구를 한 번 호출하고 응답을 끝내도록 한다.
+이는 native slash 등록이 아닌 공식 스킬 호출이다. 계정 열기는 읽기 전용이며 로그인·변경
+도구의 app-only 가시성과 UI-only metadata는 보존한다. 설치 digest는 모든 스킬 자산의
+정렬된 경로·길이·내용을 포함하며 변경된 불변 자산은 설치가 덮어쓰지 않는다.
+
+실행한 검증:
+
+- `go test -race ./...`, `go vet ./...`, `git diff --check`: 통과.
+- `node --test plugin/ui/*.test.mjs`: 14개 통과.
+- `quick_validate.py`: 등록 스킬과 명령 스킬 3개 모두 valid.
+- `TestOfficialPluginDiscoversSettingsEntrypointsAndRegistrationSkill`: 공식 CLI 엔진
+  0.162.1과 실제 앱 내장 엔진 0.162.0-alpha.17.2 양쪽에서 PASS/exit 0. 등록 스킬 1개,
+  명령 스킬 2개, MCP 연결·두 열기 호출·초기 계정 탭·설정·resource를 확인했다.
+  빈 인증·임시 HOME이며 모델 턴과 운영 상태 변경은 없다.
+- 설치 회귀 시험은 세 스킬의 패키징과 변조된 명령 스킬의 덮어쓰기 거부·marketplace
+  보존을 검사했다.
+- 독립 하위 에이전트는 manage/accounts·전용 스킬·명시적 현재 대화 등록의 다섯 요청을
+  읽기 전용으로 검토했다. 호출 도구·인수·종료 동작이 일관됨을 확인했고, 도구 미노출을
+  연결 실패로 단정하지 않으며 JSON 응답만으로 표시 성공을 주장하지 않도록 문구를 보완했다.
+
+공식 엔진 시험은 `codexm-test-command-v051-20261013`과 문구 보완 뒤 최종 확인용
+`codexm-test-command-v051-final-20261013`에서 실행한 후 정리했다.
+private 증거는 `validation/gui-20261013/{native-ui-v051,native-app-ui-v051}.{log,exit}`다.
+실제 GUI의 새 명령 호출 동작은 아직 직접 조작하지 못했다. 공식 엔진에서 스킬을 발견한
+검증을 실제 GUI 호출 성공으로 표시하지 않는다. 기존 GUI writer 인계 감사 결과는
+[현재 지원 경계](gui-handoff-boundary.md)에 기록한다.

@@ -1,7 +1,18 @@
 ---
 name: codexm
-description: Explain codexm's direct management and account buttons, inspect registration status, or register the current local Codex conversation when the user explicitly asks to apply account management.
+description: Handle codexm manage/accounts commands, explain management buttons, inspect registration status, or register the current local conversation when the user explicitly requests management.
 ---
+
+For `@codexm manage`, call `codexm_open` with `{}` once and end the turn.
+For `@codexm accounts`, call `codexm_accounts_open` with `{}` once and end the turn.
+These are skill commands interpreted by a model, not new native slash commands.
+After an open call do not inspect files, list chats, poll usage or investigate
+browser IDs unless the user separately asks. An unavailable tool is a stopping
+condition, not a reason to start another agent or website.
+If only JSON or an acknowledgment is returned, do not claim the screen appeared.
+Explain that result once, point to the corresponding plugin button and end the
+turn. If the tool is not exposed, report that exact condition without inferring
+a connection failure.
 
 An explicit `@codexm` invocation asking to apply management to this chat authorizes
 registration of this existing conversation. Run `~/.local/bin/codexm register --current --json`.
@@ -27,8 +38,10 @@ If explicitly asked to open it through this chat, the available `codexm_open`
 tool requests the panel. Calls nested inside code-mode `exec` are not native
 MCP cards in some hosts. A successful tool result does not prove the UI was
 displayed. Try now on the plugin details is not a managed job start action.
-`@codexm manage` is not an implemented native slash/zero-token command; do not
-present it or `/setting` as one. An open request alone never authorizes chat
+`@codexm manage` and `@codexm accounts` are model-mediated skill commands; do not
+present them or `/setting` as native zero-token commands. The dedicated skills
+`codexm-manage` and `codexm-accounts` provide the same single-call workflows.
+An open request alone never authorizes chat
 registration, account login or starting work. Do not launch a separate app or
 website. If the host has not loaded the local MCP connection, report that exact
 condition; a filesystem link is not a plugin invocation.

@@ -3,5 +3,5 @@ package pluginassets
 
 import "embed"
 
-//go:embed ui/index.html ui/app.css ui/app.mjs plugin.json .codex-plugin/plugin.json skills/codexm/SKILL.md skills/codexm/agents/openai.yaml
+//go:embed ui/index.html ui/app.css ui/app.mjs plugin.json .codex-plugin/plugin.json skills
 var Files embed.FS

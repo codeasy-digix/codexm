@@ -157,7 +157,6 @@ func toolList() []any {
 		if render {
 			meta = map[string]any{"ui": map[string]any{"resourceUri": ResourceURI}, "openai/outputTemplate": ResourceURI, "openai/ui": map[string]any{"entrypoints": []any{map[string]any{"type": "global"}, map[string]any{"type": "thread"}, map[string]any{"type": "settings"}}}}
 			if name == "codexm_accounts_open" {
-				meta["ui"].(map[string]any)["visibility"] = []string{"app"}
 				meta["openai/ui"] = map[string]any{"entrypoints": []any{map[string]any{"type": "settings"}}}
 			}
 		}

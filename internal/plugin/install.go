@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -156,18 +158,35 @@ func (i Installer) Install() (installReceipt, error) {
 	modern := map[string]any{"type": "stdio", "command": "./bin/codexm", "args": []string{"--config", i.Config.Path, "plugin", "mcp"}}
 	mcp := raw(map[string]any{"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json", "mcpServers": map[string]any{"codexm": modern}})
 	files := map[string][]byte{"plugin.json": portable, ".codex-plugin/plugin.json": legacy, "mcp.json": mcp, ".mcp.json": compat, "bin/codexm": launcher}
-	for _, name := range []string{"skills/codexm/SKILL.md", "skills/codexm/agents/openai.yaml"} {
-		files[name], e = assets.Files.ReadFile(name)
-		if e != nil {
-			return installReceipt{}, e
+	e = fs.WalkDir(assets.Files, "skills", func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := assets.Files.ReadFile(name)
+		if err == nil {
+			files[name] = data
+		}
+		return err
+	})
+	if e != nil {
+		return installReceipt{}, e
 	}
-	content := append(append(append([]byte{}, portable...), legacy...), mcp...)
-	content = append(content, files["skills/codexm/SKILL.md"]...)
-	content = append(content, files["skills/codexm/agents/openai.yaml"]...)
-	content = append(content, launcher...)
-	h := sha256.Sum256(content)
-	dest := filepath.Join(i.root(), hex.EncodeToString(h[:12]))
+	// Include every packaged path and payload in a canonical digest, including
+	// all skills, metadata and future supporting resources.
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00", name, len(files[name]))
+		_, _ = h.Write(files[name])
+	}
+	dest := filepath.Join(i.root(), hex.EncodeToString(h.Sum(nil)[:12]))
 	for name, data := range files {
 		p := filepath.Join(dest, name)
 		mode := os.FileMode(0600)

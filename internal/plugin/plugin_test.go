@@ -88,8 +88,12 @@ func TestInstallPreservesPersonalMarketplaceAndUninstallsOnlyOwnedEntry(t *testi
 	if st, e := os.Stat(filepath.Join(r.Root, "bin", "codexm")); e != nil || st.Mode().Perm() != 0700 {
 		t.Fatal("portable launcher is not executable")
 	}
-	if _, e := os.Stat(filepath.Join(r.Root, "skills", "codexm", "SKILL.md")); e != nil {
-		t.Fatal("registration skill not packaged", e)
+	for _, name := range []string{"codexm", "codexm-manage", "codexm-accounts"} {
+		for _, file := range []string{"SKILL.md", "agents/openai.yaml"} {
+			if _, e := os.Stat(filepath.Join(r.Root, "skills", name, file)); e != nil {
+				t.Fatal("plugin skill not packaged", name, file, e)
+			}
+		}
 	}
 	if e = i.Uninstall(); e != nil {
 		t.Fatal(e)
@@ -102,6 +106,31 @@ func TestInstallPreservesPersonalMarketplaceAndUninstallsOnlyOwnedEntry(t *testi
 	}
 	if _, e = os.Stat(r.Root); e != nil {
 		t.Fatal("recoverable assets removed")
+	}
+}
+
+func TestImmutableCommandSkillTamperingPreservesMarketplace(t *testing.T) {
+	i := fixture(t)
+	r, e := i.Install()
+	if e != nil {
+		t.Fatal(e)
+	}
+	before, e := os.ReadFile(i.catalog())
+	if e != nil {
+		t.Fatal(e)
+	}
+	name := filepath.Join(r.Root, "skills", "codexm-manage", "SKILL.md")
+	modified := []byte("user's changed command skill\n")
+	if e = os.WriteFile(name, modified, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = i.Install(); e == nil {
+		t.Fatal("changed immutable command skill was overwritten")
+	}
+	after, _ := os.ReadFile(i.catalog())
+	got, _ := os.ReadFile(name)
+	if !bytes.Equal(before, after) || !bytes.Equal(got, modified) {
+		t.Fatal("failed reinstall changed marketplace or command skill")
 	}
 }
 

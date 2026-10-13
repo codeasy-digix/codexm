@@ -153,10 +153,13 @@ func TestLoginActionsAreAppOnlyAndButtonsHaveConsistentEntrypoints(t *testing.T)
 		}
 		found[name] = true
 		encoded, _ := json.Marshal(entry)
-		if name != "codexm_open" && !bytes.Contains(encoded, []byte(`"visibility":["app"]`)) {
+		if name == "codexm_account" && !bytes.Contains(encoded, []byte(`"visibility":["app"]`)) {
 			t.Fatal("sign-in action became model-visible", name)
 		}
 		if name == "codexm_accounts_open" {
+			if bytes.Contains(encoded, []byte(`"visibility":["app"]`)) {
+				t.Fatal("account command skill cannot call its read-only panel opener")
+			}
 			if entry["title"] != "계정 관리" || !bytes.Contains(encoded, []byte(`"type":"settings"`)) || bytes.Contains(encoded, []byte(`"type":"global"`)) || !bytes.Contains(encoded, []byte(ResourceURI)) {
 				t.Fatal("account settings button does not target the shared panel")
 			}

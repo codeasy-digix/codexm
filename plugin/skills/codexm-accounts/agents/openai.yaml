@@ -1,0 +1,9 @@
+interface:
+  display_name: "codexm-accounts"
+  short_description: "codexm 계정 관리 탭을 한 번 열고 추가 조사 없이 종료합니다"
+  default_prompt: "Use $codexm-accounts to open codexm's account management tab once, then stop."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "codexm"
+      description: "Local codexm account panel"

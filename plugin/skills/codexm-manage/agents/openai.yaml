@@ -1,0 +1,9 @@
+interface:
+  display_name: "codexm-manage"
+  short_description: "codexm 관리 화면을 한 번 열고 추가 조사 없이 종료합니다"
+  default_prompt: "Use $codexm-manage to open the codexm management panel once, then stop."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "codexm"
+      description: "Local codexm management panel"
