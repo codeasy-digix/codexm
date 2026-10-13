@@ -65,6 +65,16 @@ func TestNativeDefaultSharesOneCredentialAndPreservesConfigHistory(t *testing.T)
 	if link, e := os.Readlink(dest); e != nil || link != source {
 		t.Fatal("default did not select the named credential", e)
 	}
+	if e := cr.EnsureAccountHome(c, "same-id-alias"); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(c.Runtime.AccountsDir, "same-id-alias", "auth.json"), syntheticChatGPT("chosen-id"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	c.WorkerAccounts.Priority = append([]string{"same-id-alias"}, c.WorkerAccounts.Priority...)
+	if got := CurrentNickname(c, c.Runtime.SharedCodexHome, ""); got != "chosen" {
+		t.Fatal("GUI default was inferred from worker priority instead of the selected native login", got)
+	}
 	if info, e := os.Lstat(source); e != nil || !info.Mode().IsRegular() {
 		t.Fatal("named credentials were replaced by a link")
 	}

@@ -31,6 +31,20 @@ func CurrentNickname(c config.Config, codexHome, account string) string {
 			return name
 		}
 	}
+	// A native default link identifies the selected nickname even when several
+	// saved aliases hold credentials for the same underlying account.
+	if selected, e := filepath.EvalSymlinks(filepath.Join(codexHome, "auth.json")); e == nil {
+		for _, name := range names {
+			p := filepath.Join(root, name, "auth.json")
+			if info, e := os.Lstat(p); e != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			p, e := filepath.EvalSymlinks(p)
+			if e == nil && selected == p && (account == "" || account == name) {
+				return name
+			}
+		}
+	}
 	id := accountID(filepath.Join(codexHome, "auth.json"))
 	if id == "" {
 		return ""
@@ -43,9 +57,6 @@ func CurrentNickname(c config.Config, codexHome, account string) string {
 	}
 	if slices.Contains(matching, account) {
 		return account
-	}
-	if slices.Contains(matching, c.DefaultWorker()) {
-		return c.DefaultWorker()
 	}
 	for _, name := range c.WorkerAccounts.Priority {
 		if slices.Contains(matching, name) {

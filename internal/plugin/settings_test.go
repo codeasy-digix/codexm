@@ -40,6 +40,12 @@ func TestNativePluginSettingsAdvertisePanelsAndMergeOnlyChangedValues(t *testing
 	}
 	d := result.(map[string]any)
 	values := d["values"].(map[string]any)
+	if _, ok := values["default_worker"]; ok {
+		t.Fatal("independent worker default was advertised")
+	}
+	if _, ok := settingProperties(nil)["default_worker"]; ok {
+		t.Fatal("independent default schema was advertised")
+	}
 	for key := range settingProperties(nil) {
 		if _, ok := values[key]; !ok {
 			t.Fatal("missing effective value", key)
@@ -54,7 +60,7 @@ func TestNativePluginSettingsAdvertisePanelsAndMergeOnlyChangedValues(t *testing
 		t.Fatal(e)
 	}
 	after, _ := config.Load(m.Config.Path)
-	if after.WorkerAccounts.PreferredRecheckSeconds != 900 || !after.Notifications.FiveHourDiscord || after.Runtime != before.Runtime || after.Manager != before.Manager || after.WorkerAccounts.DefaultAccount != before.WorkerAccounts.DefaultAccount || strings.Join(after.WorkerAccounts.Priority, ",") != strings.Join(before.WorkerAccounts.Priority, ",") {
+	if after.WorkerAccounts.PreferredRecheckSeconds != 900 || !after.Notifications.FiveHourDiscord || after.Runtime != before.Runtime || after.Manager != before.Manager || strings.Join(after.WorkerAccounts.Priority, ",") != strings.Join(before.WorkerAccounts.Priority, ",") {
 		t.Fatal("partial update changed unrelated state")
 	}
 	for _, path := range []string{"services", "state.sqlite"} {
@@ -76,7 +82,7 @@ func TestNativePluginSettingsAdvertisePanelsAndMergeOnlyChangedValues(t *testing
 func TestNativeSettingsRejectMalformedUpdatesWithoutChangingFile(t *testing.T) {
 	m := configuredPlugin(t)
 	before, _ := os.ReadFile(m.Config.Path)
-	for _, args := range []string{`{"set":{}}`, `{"set":{"five_hour_discord":null}}`, `{"set":{"five_hour_discord":"true"}}`, `{"set":{"max_parallel_jobs":1.5}}`, `{"set":{"max_parallel_jobs":0}}`, `{"set":{"runtime":"arbitrary"}}`, `{"set":{"priority":"account-work, account-work"}}`, `{"set":{"manager_account":"missing"}}`, `{"set":{"priority":"account-work, account-backup, account-secondary"}}`, `{"set":{"max_parallel_jobs":2},"extra":true}`} {
+	for _, args := range []string{`{"set":{"default_worker":"account-secondary"}}`, `{"set":{}}`, `{"set":{"five_hour_discord":null}}`, `{"set":{"five_hour_discord":"true"}}`, `{"set":{"max_parallel_jobs":1.5}}`, `{"set":{"max_parallel_jobs":0}}`, `{"set":{"runtime":"arbitrary"}}`, `{"set":{"priority":"account-work, account-work"}}`, `{"set":{"manager_account":"missing"}}`, `{"set":{"priority":"account-work, account-backup, account-secondary"}}`, `{"set":{"max_parallel_jobs":2},"extra":true}`} {
 		if _, e := m.updatePluginSettings(context.Background(), json.RawMessage(args)); e == nil {
 			t.Fatal("invalid settings accepted", args)
 		}

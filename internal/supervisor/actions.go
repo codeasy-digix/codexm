@@ -322,6 +322,9 @@ func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error)
 	if j.TargetAccount != "" {
 		return j.TargetAccount, s.checkSelectedAccount(ctx, j, j.TargetAccount)
 	}
+	if j.AutoAccount {
+		return s.automaticAccount(ctx, j)
+	}
 	// Opening a viewer reuses a recently verified quota instead of launching
 	// another authentication server and waiting for the same network response.
 	if snapshots, blocked, e := s.snapshots(); e == nil && j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {

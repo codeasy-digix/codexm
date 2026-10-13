@@ -428,7 +428,7 @@ func (m MCP) snapshot(ctx context.Context) (any, error) {
 	if names == nil {
 		names = []string{}
 	}
-	snapshot := map[string]any{"connected": false, "setup_required": c.Manager.Account == "", "account_names": names, "login_available": m.Logins != nil, "manager_account": c.Manager.Account, "default_worker_account": c.DefaultWorker(), "priority": c.WorkerAccounts.Priority, "fallback_account": c.WorkerAccounts.FallbackAccount, "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "at": time.Now()}
+	snapshot := map[string]any{"connected": false, "setup_required": c.Manager.Account == "", "account_names": names, "login_available": m.Logins != nil, "manager_account": c.Manager.Account, "native_default_account": accounts.CurrentNickname(c, config.Expand(c.Runtime.SharedCodexHome), ""), "priority": c.WorkerAccounts.Priority, "fallback_account": c.WorkerAccounts.FallbackAccount, "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "at": time.Now()}
 	if supervisor.Ping(ctx, c) != nil {
 		snapshot["message"] = "관리 서비스가 연결되지 않았습니다. 계정을 준비한 뒤 시작 버튼으로 연결하세요."
 		return snapshot, nil

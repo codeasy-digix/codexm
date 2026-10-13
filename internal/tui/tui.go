@@ -228,8 +228,8 @@ func (m *Model) openSelected(j jobs.Job) tea.Cmd {
 		m.Threads = []cr.Thread{{ID: j.ThreadID, Name: j.Title, Cwd: j.Cwd}}
 		m.ThreadSelected = 0
 		m.Screen = "import-account"
-		m.focusInput(m.Config.DefaultWorker())
-		m.Notice = "기존 대화를 열 계정 · Enter로 같은 대화에 연결"
+		m.focusInput("")
+		m.Notice = "기존 대화를 열 계정 · 빈 값은 우선순위 자동 선택 · Enter로 연결"
 		return nil
 	}
 	return m.openID(j.ID)
@@ -298,8 +298,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case pollMsg:
-		if v.Status.DefaultWorkerAccount != "" {
-			m.Config.WorkerAccounts.DefaultAccount = v.Status.DefaultWorkerAccount
+		if len(v.Status.WorkerPriority) > 0 {
+			m.Config.WorkerAccounts.Priority = slices.Clone(v.Status.WorkerPriority)
 		}
 		if v.Error != nil {
 			m.Notice = "연결 끊김: " + v.Error.Error() + " · R로 재연결"
@@ -654,8 +654,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.Screen = "import-account"
-					m.focusInput(m.Config.DefaultWorker())
-					m.Notice = "가져올 대화의 작업 계정 · Enter로 새 터미널 열기"
+					m.focusInput("")
+					m.Notice = "가져올 대화의 작업 계정 · 빈 값은 우선순위 자동 선택 · Enter로 새 터미널 열기"
 					return m, nil
 				}
 			case "v":
@@ -774,7 +774,7 @@ func (m *Model) wizardNext() tea.Cmd {
 		}
 		m.New.Cwd = value
 	case "account":
-		if !slices.Contains(m.Config.WorkerAccounts.Priority, value) {
+		if value != "" && !slices.Contains(m.Config.WorkerAccounts.Priority, value) {
 			m.Notice = "작업 계정: " + strings.Join(m.Config.WorkerAccounts.Priority, ", ")
 			return nil
 		}
@@ -791,8 +791,8 @@ func (m *Model) wizardNext() tea.Cmd {
 		return m.request("new", m.New)
 	}
 	next := m.Wizard[m.WizardIndex]
-	defaults := map[string]string{"account": m.Config.DefaultWorker(), "title": filepath.Base(m.New.Cwd)}
-	labels := map[string]string{"account": "최초 작업 계정", "title": "채팅 제목"}
+	defaults := map[string]string{"account": "", "title": filepath.Base(m.New.Cwd)}
+	labels := map[string]string{"account": "작업 계정 (빈 값은 우선순위 자동 선택)", "title": "채팅 제목"}
 	m.Input.SetValue(defaults[next])
 	m.Notice = "새 채팅 · " + labels[next]
 	return nil

@@ -46,7 +46,7 @@ function uiFixture(t,{connected=false,names=[],priority=[],toolInput,hostContext
   for(const tab of ['tasks','accounts','logs','settings']){const node=doc.createElement('button');node.dataset.tab=tab;doc.body.append(node);}
   globalThis.document=doc;
   globalThis.window={addEventListener(key,fn){const handlers=listeners.get(key)||[];handlers.push(fn);listeners.set(key,handlers);},removeEventListener(key,fn){listeners.set(key,(listeners.get(key)||[]).filter(value=>value!==fn));},openai:{toolInput,setWidgetState(value){widgetStates.push(value);}}};
-  const snapshot={connected,manager_api:2,login_available:true,account_names:names.slice(),priority:priority.slice(),manager_account:names[0]||'',setup_required:!names.length,at:new Date().toISOString(),catalog:{sessions:[]},status:{accounts:[],jobs:[],manager_account:names[0]||'',default_worker_account:names[0]||''}};
+  const snapshot={connected,manager_api:2,login_available:true,account_names:names.slice(),priority:priority.slice(),manager_account:names[0]||'',setup_required:!names.length,at:new Date().toISOString(),catalog:{sessions:[]},status:{accounts:[],jobs:[],manager_account:names[0]||''}};
   let current,instance;
   const bridge={compat:false,hostContext,async initialize(){},async request(method,args){requests.push({method,args});return{};},async call(name,args={}){
     calls.push({name,args});
@@ -57,6 +57,9 @@ function uiFixture(t,{connected=false,names=[],priority=[],toolInput,hostContext
       if(args.command==='cancel'){current={...current,status:'canceled'};delete current.auth_url;delete current.verification_url;delete current.user_code;return {...current};}
     }
     if(name==='codexm_read'&&args.command==='accounts')return snapshot.status.accounts;
+    if(name==='codexm_read'&&args.command==='models')return{data:[]};
+    if(name==='codexm_read'&&args.command==='settings-edit')return{revision:'fixture',accounts:names,application:'fixture',values:{manager_account:names[0]||'',priority:priority.slice(),fallback_account:'',preferred_recheck_seconds:600,reconcile_interval_seconds:30,max_parallel_jobs:2,usage_sample_seconds:60,five_hour_discord:false}};
+    if(name==='codexm_control'&&args.command==='new')return{id:'fixture-new',account:'',auto_account:true,state:'queued',...args.args};
     if(name==='codexm_start'){snapshot.connected=true;snapshot.manager_account=args.manager_account;return{started:true};}
     throw Error('Unexpected fixture call '+name);
   }};
@@ -65,6 +68,29 @@ function uiFixture(t,{connected=false,names=[],priority=[],toolInput,hostContext
   return {instance,ids,doc,bridge,snapshot,calls,requests,widgetStates,async emit(key){for(const fn of listeners.get(key)||[])fn();await settle();}};
 }
 function button(root,text){const result=root.querySelectorAll('button').find(node=>node.textContent===text);assert.ok(result,'button not found: '+text);return result;}
+
+test('new work defaults to automatic priority and sends no saved worker default',async t=>{
+  const f=uiFixture(t,{connected:true,names:['account-work','account-secondary'],priority:['account-work','account-secondary']});await f.instance.ready;
+  await f.ids.get('new-button').click();await settle();
+  const account=f.ids.get('dialog-body').querySelector('select');
+  assert.equal(account.value,'');assert.match(account.textContent,/자동 \(우선순위\)/);
+  const form=f.ids.get('dialog-body').querySelector('form');form.querySelector('input').value='/fixture';
+  await form.emit('submit');await settle();
+  const call=f.calls.find(c=>c.name==='codexm_control'&&c.args.command==='new');assert.equal(call.args.args.account,'');
+  assert.equal(f.calls.some(c=>c.args?.command==='manager'),false);
+});
+
+test('settings omit the independent worker default and accounts show GUI login separately',async t=>{
+  const f=uiFixture(t,{connected:true,names:['account-work','account-secondary'],priority:['account-work','account-secondary']});await f.instance.ready;
+  await f.doc.querySelectorAll('[data-tab]').find(b=>b.dataset.tab==='settings').click();await settle();
+  assert.doesNotMatch(f.ids.get('settings').textContent,/새 작업의 기본 계정/);
+  assert.match(f.ids.get('settings').textContent,/별도 기본 작업 계정은 없습니다/);
+  f.snapshot.native_default_account='account-secondary';await f.instance.refresh();
+  await f.doc.querySelectorAll('[data-tab]').find(b=>b.dataset.tab==='accounts').click();await settle();
+  assert.match(f.ids.get('accounts').textContent,/GUI 기본 로그인: account-secondary/);
+  assert.match(f.ids.get('accounts').textContent,/우선순위: account-work → account-secondary/);
+  assert.doesNotMatch(f.ids.get('accounts').textContent,/새 작업 기본/);
+});
 
 test('official deep links select the requested tab without overriding later navigation on unrelated context updates',async t=>{
   const f=uiFixture(t,{connected:true,names:['fixture'],toolInput:{initial_view:'tasks'},hostContext:{'openai/deepLink':{url:'/accounts'}}});await f.instance.ready;

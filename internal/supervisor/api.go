@@ -140,21 +140,7 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	case "settings-save":
 		return s.saveSettings(ctx, call.Args)
 	case "set-worker-account":
-		if !config.Nickname.MatchString(a.Account) || a.Account == "default" {
-			return nil, errors.New("invalid worker account")
-		}
-		_, _, e := config.Update(s.Config.Path, "", func(c *config.Config) error {
-			c.WorkerAccounts.DefaultAccount = a.Account
-			if !slices.Contains(c.WorkerAccounts.Priority, a.Account) {
-				position := len(c.WorkerAccounts.Priority)
-				if c.WorkerAccounts.FallbackAccount != "" {
-					position--
-				}
-				c.WorkerAccounts.Priority = slices.Insert(c.WorkerAccounts.Priority, position, a.Account)
-			}
-			return nil
-		})
-		return a.Account, e
+		return nil, errors.New("codexm has no default worker account; edit account priority in the management panel")
 	case "set-manager":
 		if !config.Nickname.MatchString(a.Account) {
 			return nil, errors.New("invalid manager account")
@@ -462,10 +448,11 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 	if e != nil || !info.IsDir() {
 		return jobs.Job{}, errors.New("workspace directory is unavailable")
 	}
-	if n.Account == "" {
-		n.Account = s.defaultWorker()
+	auto := n.Account == ""
+	if auto {
+		n.Account = s.workerConfig().FirstPriority()
 	}
-	if !slices.Contains(s.workerConfig().WorkerAccounts.Priority, n.Account) && n.Account != s.defaultWorker() {
+	if !slices.Contains(s.workerConfig().WorkerAccounts.Priority, n.Account) {
 		return jobs.Job{}, errors.New("worker account is not in the configured priority list")
 	}
 	if n.Title == "" {
@@ -476,7 +463,7 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 	}
 	host, _ := os.Hostname()
 	now := time.Now()
-	j := jobs.Job{ID: jobs.ID(), ParentID: n.ParentID, Title: n.Title, Kind: n.Kind, Cwd: p, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Account: n.Account, InitialAccount: n.Account, State: "queued", Managed: true, ReadOnly: n.ReadOnly, CompletionCommand: n.CompletionCommand, CreatedAt: now, UpdatedAt: now, LastInput: n.Prompt}
+	j := jobs.Job{ID: jobs.ID(), ParentID: n.ParentID, Title: n.Title, Kind: n.Kind, Cwd: p, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Account: n.Account, AutoAccount: auto, InitialAccount: n.Account, State: "queued", Managed: true, ReadOnly: n.ReadOnly, CompletionCommand: n.CompletionCommand, CreatedAt: now, UpdatedAt: now, LastInput: n.Prompt}
 	j.Model = n.Model
 	j.Effort = n.Effort
 	if n.Effort != "" && !slices.Contains([]string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}, n.Effort) {
@@ -555,8 +542,9 @@ func (s *Server) importThread(ctx context.Context, a JobArgs) (jobs.Job, error) 
 	if a.Kind == "group" {
 		return jobs.Job{}, errors.New("an existing conversation cannot be imported as a group")
 	}
-	if a.Account == "" {
-		a.Account = s.defaultWorker()
+	auto := a.Account == ""
+	if auto {
+		a.Account = s.workerConfig().FirstPriority()
 	}
 	if !slices.Contains(s.workerConfig().WorkerAccounts.Priority, a.Account) {
 		return jobs.Job{}, errors.New("account is not in worker priority")
@@ -573,7 +561,7 @@ func (s *Server) importThread(ctx context.Context, a JobArgs) (jobs.Job, error) 
 	if len([]rune(title)) > 120 {
 		title = string([]rune(title)[:120])
 	}
-	j := jobs.Job{ID: jobs.ID(), ThreadID: t.ID, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Cwd: t.Cwd, Title: title, Kind: a.Kind, Account: a.Account, InitialAccount: a.Account, Managed: a.Manage, State: "observed", Goal: g, LastInput: input, LastOutput: output, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	j := jobs.Job{ID: jobs.ID(), ThreadID: t.ID, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Cwd: t.Cwd, Title: title, Kind: a.Kind, Account: a.Account, AutoAccount: auto, InitialAccount: a.Account, Managed: a.Manage, State: "observed", Goal: g, LastInput: input, LastOutput: output, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if g != nil && g.Status == "complete" {
 		j.State = "complete"
 	}

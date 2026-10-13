@@ -24,7 +24,7 @@ type accountChange struct {
 	PriorState string `json:"prior_state"`
 }
 
-// Selection is a durable, idempotent action for one job. Defaults, other jobs and
+// Selection is a durable, idempotent action for one job. Priority, other jobs and
 // manager credentials are unaffected. Availability is checked before interruption.
 func (s *Server) requestAccountChange(a JobArgs) (jobs.Action, error) {
 	s.mu.Lock()
@@ -73,7 +73,8 @@ func (s *Server) requestAccountChange(a JobArgs) (jobs.Action, error) {
 	if a.OperationID != "" {
 		action.ID = a.OperationID
 	}
-	if j.Account == a.Account {
+	if j.Account == a.Account && !j.AutoAccount {
+		j.AutoAccount = false
 		action.State = "done"
 	} else {
 		j.TargetAccount = a.Account
@@ -214,7 +215,7 @@ func (s *Server) manualAccountChange(ctx context.Context, action *jobs.Action) e
 			}
 		}
 	}
-	return s.update(j.ID, func(cur *jobs.Job) { cur.TargetAccount = "" })
+	return s.update(j.ID, func(cur *jobs.Job) { cur.TargetAccount = ""; cur.AutoAccount = false })
 }
 
 func mayContinueAfterChange(j jobs.Job) bool {

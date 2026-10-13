@@ -78,6 +78,16 @@ func Main(args []string) error {
 	if e != nil {
 		return e
 	}
+	if command == "__migrate-config" {
+		changed, e := config.RemoveLegacyWorkerDefault(c.Path)
+		if e != nil {
+			return e
+		}
+		if changed {
+			fmt.Println("Removed obsolete codexm worker default; account priority and GUI login were preserved.")
+		}
+		return nil
+	}
 	self, e := os.Executable()
 	if e != nil {
 		return e

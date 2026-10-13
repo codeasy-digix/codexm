@@ -23,7 +23,6 @@ func accountFixture(t *testing.T) config.Config {
 	c.Runtime.AccountsDir = filepath.Join(root, "accounts")
 	c.Runtime.EnginesDir = filepath.Join(root, "engines")
 	c.Storage.StateDir = filepath.Join(root, "state")
-	c.WorkerAccounts.DefaultAccount = "account-secondary"
 	if e := c.Save(); e != nil {
 		t.Fatal(e)
 	}
@@ -66,14 +65,14 @@ func TestAccountSelectionPersistsWithoutChangingNativeLoginOrShell(t *testing.T)
 		t.Fatal(e)
 	}
 	loaded, e := config.Load(c.Path)
-	if e != nil || loaded.DefaultWorker() != "account-secondary" || loaded.Manager.Account != "" {
+	if e != nil || loaded.FirstPriority() != "account-work" || loaded.Manager.Account != "" {
 		t.Fatal("saved selection or manager changed", e)
 	}
 	if e := Main([]string{"--config", c.Path, "account", "cancelled", "--login", "--device"}); e == nil {
 		t.Fatal("cancelled login accepted")
 	}
 	loaded, _ = config.Load(c.Path)
-	if loaded.DefaultWorker() != "account-secondary" {
+	if loaded.FirstPriority() != "account-work" {
 		t.Fatal("failed login replaced default")
 	}
 	if got, _ := os.ReadFile(filepath.Join(c.Runtime.SharedCodexHome, "auth.json")); string(got) != "native default login must remain here" {
@@ -103,7 +102,7 @@ func TestExplicitAccountDefaultFormsChangeNativeOnlyAcrossReloads(t *testing.T) 
 				t.Fatal(e)
 			}
 			loaded, e := config.Load(c.Path)
-			if e != nil || loaded.DefaultWorker() != "account-secondary" {
+			if e != nil || loaded.FirstPriority() != "account-work" {
 				t.Fatal("native selection changed codexm worker defaults", e)
 			}
 			configAfter, _ := os.ReadFile(c.Path)
@@ -191,7 +190,7 @@ func TestAccountRegistrationPreservesOrderAndAddsBeforeReserve(t *testing.T) {
 		t.Fatal(e)
 	}
 	loaded, e := config.Load(c.Path)
-	if e != nil || strings.Join(loaded.WorkerAccounts.Priority, ",") != "account-work,account-secondary,account-main,extra,account-backup" || loaded.WorkerAccounts.DefaultAccount != c.WorkerAccounts.DefaultAccount {
+	if e != nil || strings.Join(loaded.WorkerAccounts.Priority, ",") != "account-work,account-secondary,account-main,extra,account-backup" {
 		t.Fatal("registration changed existing order or defaults", e)
 	}
 }

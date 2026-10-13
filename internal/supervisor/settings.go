@@ -13,7 +13,6 @@ import (
 
 type EditableSettings struct {
 	ManagerAccount           string   `json:"manager_account"`
-	DefaultWorker            string   `json:"default_worker"`
 	Priority                 []string `json:"priority"`
 	FallbackAccount          string   `json:"fallback_account"`
 	PreferredRecheckSeconds  int      `json:"preferred_recheck_seconds"`
@@ -30,7 +29,7 @@ type SettingsDocument struct {
 }
 
 func editable(c config.Config) EditableSettings {
-	return EditableSettings{c.Manager.Account, c.DefaultWorker(), slices.Clone(c.WorkerAccounts.Priority), c.WorkerAccounts.FallbackAccount, c.WorkerAccounts.PreferredRecheckSeconds, c.Supervisor.ReconcileIntervalSeconds, c.Execution.MaxParallelJobs, c.Logging.UsageSampleSeconds, &c.Notifications.FiveHourDiscord}
+	return EditableSettings{c.Manager.Account, slices.Clone(c.WorkerAccounts.Priority), c.WorkerAccounts.FallbackAccount, c.WorkerAccounts.PreferredRecheckSeconds, c.Supervisor.ReconcileIntervalSeconds, c.Execution.MaxParallelJobs, c.Logging.UsageSampleSeconds, &c.Notifications.FiveHourDiscord}
 }
 func (s *Server) settingsDocument() (SettingsDocument, error) {
 	c, rev, e := config.Current(s.Config.Path)
@@ -42,9 +41,12 @@ func (s *Server) settingsDocument() (SettingsDocument, error) {
 }
 func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsDocument, error) {
 	var doc struct {
-		Revision string           `json:"revision"`
-		Values   EditableSettings `json:"values"`
-		Changed  []string         `json:"changed,omitempty"`
+		Revision string `json:"revision"`
+		Values   struct {
+			EditableSettings
+			LegacyDefaultWorker *string `json:"default_worker,omitempty"`
+		} `json:"values"`
+		Changed []string `json:"changed,omitempty"`
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
@@ -54,8 +56,20 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 	if doc.Revision == "" {
 		return SettingsDocument{}, errors.New("a settings revision is required")
 	}
-	v := doc.Values
-	validFields := []string{"manager_account", "default_worker", "priority", "fallback_account", "preferred_recheck_seconds", "reconcile_interval_seconds", "max_parallel_jobs", "usage_sample_seconds", "five_hour_discord"}
+	v := doc.Values.EditableSettings
+	legacyOnly := len(doc.Changed) > 0
+	filtered := []string{}
+	for _, name := range doc.Changed {
+		if name != "default_worker" {
+			filtered = append(filtered, name)
+			legacyOnly = false
+		}
+	}
+	if legacyOnly {
+		return SettingsDocument{}, errors.New("the default worker setting was removed; reopen the panel and edit account priority")
+	}
+	doc.Changed = filtered
+	validFields := []string{"manager_account", "priority", "fallback_account", "preferred_recheck_seconds", "reconcile_interval_seconds", "max_parallel_jobs", "usage_sample_seconds", "five_hour_discord"}
 	for _, field := range doc.Changed {
 		if !slices.Contains(validFields, field) {
 			return SettingsDocument{}, errors.New("unsupported changed setting")
@@ -69,8 +83,8 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 	if e != nil {
 		return SettingsDocument{}, e
 	}
-	if !slices.Contains(names, v.ManagerAccount) || !slices.Contains(v.Priority, v.DefaultWorker) {
-		return SettingsDocument{}, errors.New("choose a saved manager and a default worker from the priority list")
+	if !slices.Contains(names, v.ManagerAccount) {
+		return SettingsDocument{}, errors.New("choose a saved manager account")
 	}
 	for _, name := range v.Priority {
 		if !slices.Contains(names, name) {
@@ -88,9 +102,6 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 	_, _, e = config.Update(s.Config.Path, doc.Revision, func(c *config.Config) error {
 		if changed("manager_account") {
 			c.Manager.Account = v.ManagerAccount
-		}
-		if changed("default_worker") {
-			c.WorkerAccounts.DefaultAccount = v.DefaultWorker
 		}
 		if changed("priority") {
 			c.WorkerAccounts.Priority = slices.Clone(v.Priority)
@@ -121,5 +132,9 @@ func (s *Server) saveSettings(ctx context.Context, b json.RawMessage) (SettingsD
 		return SettingsDocument{}, e
 	}
 	s.managerAccount = v.ManagerAccount
-	return s.settingsDocument()
+	result, e := s.settingsDocument()
+	if doc.Values.LegacyDefaultWorker != nil {
+		result.Application += " 이전 화면의 기본 작업 계정 값은 제거된 설정이므로 적용하지 않았습니다. 패널을 다시 여세요."
+	}
+	return result, e
 }

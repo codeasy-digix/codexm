@@ -25,6 +25,7 @@ type Job struct {
 	Store             string          `json:"store"`
 	ThreadID          string          `json:"thread_id,omitempty"`
 	Account           string          `json:"account"`
+	AutoAccount       bool            `json:"auto_account,omitempty"`
 	TargetAccount     string          `json:"target_account,omitempty"`
 	InitialAccount    string          `json:"initial_account"`
 	RunID             string          `json:"run_id,omitempty"`

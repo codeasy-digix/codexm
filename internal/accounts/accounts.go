@@ -168,7 +168,7 @@ func Choose(c config.Config, snapshots map[string]Snapshot, model string, blocke
 			}
 		}
 	}
-	if allExhausted {
+	if allExhausted && (f == "" || snapshots[f].State(model) == "exhausted") {
 		return "", "all worker accounts are exhausted"
 	}
 	return "", "account availability is unknown; refresh is required"

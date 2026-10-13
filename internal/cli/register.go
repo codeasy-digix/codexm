@@ -46,12 +46,6 @@ func registerCommand(ctx context.Context, c config.Config, self string, args []s
 		origin = accounts.CurrentNickname(c, os.Getenv("CODEX_HOME"), os.Getenv("CODEX_ACCOUNT"))
 	}
 	name := *account
-	if name == "" {
-		name = origin
-	}
-	if name == "" {
-		name = c.DefaultWorker()
-	}
 	if e := supervisor.Start(ctx, c, self); e != nil {
 		return e
 	}

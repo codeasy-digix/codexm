@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
@@ -19,8 +20,8 @@ func (s *Server) registerThread(ctx context.Context, a JobArgs) (jobs.Job, error
 	if !config.Nickname.MatchString(a.ThreadID) {
 		return jobs.Job{}, errors.New("valid current thread ID required")
 	}
-	if a.OriginAccount != "" && !slices.Contains(s.workerConfig().WorkerAccounts.Priority, a.OriginAccount) {
-		return jobs.Job{}, errors.New("origin account is not a configured account")
+	if e := s.validateOriginAccount(a.OriginAccount); e != nil {
+		return jobs.Job{}, e
 	}
 	all, e := s.Store.Jobs()
 	if e != nil {
@@ -53,8 +54,8 @@ func (s *Server) registerThread(ctx context.Context, a JobArgs) (jobs.Job, error
 }
 
 func (s *Server) registerObserved(j jobs.Job, origin string) (jobs.Job, error) {
-	if origin != "" && !slices.Contains(s.workerConfig().WorkerAccounts.Priority, origin) {
-		return j, errors.New("origin account is not a configured account")
+	if e := s.validateOriginAccount(origin); e != nil {
+		return j, e
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,6 +93,22 @@ func (s *Server) registerObserved(j jobs.Job, origin string) (jobs.Job, error) {
 	// Registration is metadata only; no start action, account change or goal write.
 	e = s.persist(cur)
 	return cur, e
+}
+
+// The GUI's original login may be a saved account outside worker priority.
+// Recording it is metadata, not permission to select it as a managed worker.
+func (s *Server) validateOriginAccount(origin string) error {
+	if origin == "" {
+		return nil
+	}
+	names, e := accounts.List(s.Config)
+	if e != nil {
+		return e
+	}
+	if !slices.Contains(names, origin) {
+		return errors.New("origin account is not a saved account")
+	}
+	return nil
 }
 
 func (s *Server) unregisterThread(ctx context.Context, id string) (jobs.Job, error) {

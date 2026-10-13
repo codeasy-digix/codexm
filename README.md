@@ -6,7 +6,7 @@
 
 공식 Codex CLI를 먼저 설치해야 합니다. `codex --version`으로 확인하세요.
 설치기는 Codex가 없거나 실행되지 않으면 설치 안내를 표시하고 종료합니다.
-설치기는 공식 Codex 실행 파일·로그인·업데이트를 변경하지 않습니다. 명시적인 `account NAME default`만 native 기본 로그인을 변경합니다.
+설치기는 공식 Codex 실행 파일·로그인·업데이트를 변경하지 않습니다. 명시적인 `account NAME default`만 GUI/native 공용 기본 로그인을 변경합니다.
 
 ```sh
 ./install.sh --build               # Go가 설치된 로컬 개발 환경
@@ -20,7 +20,7 @@ codexm notify five-hour           # 모든 계정의 5시간 소진을 Discord�
 codexm                            # 작업 목록 TUI
 ```
 
-기존 `~/.codex-accounts/<name>` 인증과 `~/.codex` 대화를 유지합니다. `codexm account NAME`은 named 로그인 확인·등록이고, `NAME default` 또는 `NAME --set-default`는 **native Codex의 기본 로그인**을 변경합니다. 이전 인증을 private 백업하고 named 인증 파일을 연결하므로 토큰 복사본이 갈라지지 않습니다. 작업 우선순위·기존 작업·부모 셸은 바뀌지 않습니다. 실행 중인 GUI/데몬은 캐시된 인증을 유지할 수 있어 재시작 후 적용됩니다. 데몬 조회는 이 명령의 전제 조건이 아닙니다.
+기존 `~/.codex-accounts/<name>` 인증과 `~/.codex` 대화를 유지합니다. `codexm account NAME`은 named 로그인 확인·등록이고, `NAME default` 또는 `NAME --set-default`는 **GUI와 native Codex가 사용하는 컴퓨터 공용 기본 로그인**을 변경합니다. 이전 인증을 private 백업하고 named 인증 파일을 연결하므로 토큰 복사본이 갈라지지 않습니다. 작업 우선순위·기존 작업·부모 셸은 바뀌지 않습니다. codexm에는 별도 기본 작업 계정이 없으며, 새 작업은 패널 우선순위에서 사용 가능한 첫 계정을 선택합니다. 예전 `default_account`는 읽을 때 무시하고 설치 중 백업 후 제거합니다. 실행 중인 GUI/데몬은 캐시된 인증을 유지할 수 있어 재시작 후 적용됩니다. 데몬 조회는 이 명령의 전제 조건이 아닙니다.
 
 ## 화면과 명령
 

@@ -19,8 +19,8 @@ const accountHelp = `codexm account — saved logins and the native Codex defaul
 codexm account                         Show saved logins and the native login
 codexm account --list                  List existing local logins
 codexm account NAME                    Check/login and register a saved nickname
-codexm account NAME default            Change the native Codex default login
-codexm account NAME --set-default      Flag form of the native default change
+codexm account NAME default            Change the computer's GUI/native default login
+codexm account NAME --set-default      Flag form of the same GUI/native default change
 codexm account NAME --login --device   Log in with a device code (SSH supported)
 codexm account NAME --login --browser  Log in with the browser
 codexm setup --manager NAME            Choose the separate manager account
@@ -48,11 +48,11 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		if native == "" {
 			native = "unrecognized or not signed in"
 		}
-		fmt.Printf("Native login: %s · Manager: %s\n", native, c.Manager.Account)
+		fmt.Printf("GUI/native default login: %s · Manager: %s\n", native, c.Manager.Account)
 		for _, n := range names {
 			suffix := ""
 			if n == native {
-				suffix = " (native login)"
+				suffix = " (GUI/native default)"
 			}
 			fmt.Println(n + suffix)
 		}
@@ -111,7 +111,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		if e != nil {
 			return e
 		}
-		fmt.Printf("Native Codex default login: %s (saved for %s).\n", name, config.Expand(c.Runtime.SharedCodexHome))
+		fmt.Printf("GUI/native default login: %s (saved for %s).\n", name, config.Expand(c.Runtime.SharedCodexHome))
 		if backup != "" {
 			fmt.Printf("Previous login backup: %s\n", backup)
 		}

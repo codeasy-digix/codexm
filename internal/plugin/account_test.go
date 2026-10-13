@@ -121,7 +121,7 @@ func TestAccountPanelCanBootstrapWithoutManagerOrSupervisor(t *testing.T) {
 		t.Fatal(e)
 	}
 	s := v.(map[string]any)
-	if s["connected"] != false || s["setup_required"] != true || s["login_available"] != true || s["initial_view"] != "accounts" || s["default_worker_account"] != m.Config.DefaultWorker() || !strings.Contains(strings.Join(s["account_names"].([]string), ","), "outside") || b.calls.Load() != 0 {
+	if s["connected"] != false || s["setup_required"] != true || s["login_available"] != true || s["initial_view"] != "accounts" || s["default_worker_account"] != nil || !strings.Contains(strings.Join(s["account_names"].([]string), ","), "outside") || b.calls.Load() != 0 {
 		t.Fatal("offline account setup requires an existing manager")
 	}
 	after, _ := os.ReadFile(m.Config.Path)

@@ -12,14 +12,13 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const Version = "0.5.4"
+const Version = "0.5.5"
 
 var Nickname = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
-func (c Config) DefaultWorker() string {
-	if c.WorkerAccounts.DefaultAccount != "" {
-		return c.WorkerAccounts.DefaultAccount
-	}
+// FirstPriority is a display/queued-job hint, not a saved default account.
+// Actual automatic selection also checks availability before starting work.
+func (c Config) FirstPriority() string {
 	if len(c.WorkerAccounts.Priority) > 0 {
 		return c.WorkerAccounts.Priority[0]
 	}
@@ -41,7 +40,6 @@ type Config struct {
 	} `toml:"manager"`
 	WorkerAccounts struct {
 		Priority                            []string `toml:"priority"`
-		DefaultAccount                      string   `toml:"default_account,omitempty"`
 		FallbackAccount                     string   `toml:"fallback_account"`
 		FallbackRequiresAllPrimaryExhausted bool     `toml:"fallback_requires_all_primary_exhausted"`
 		PreferredRecheckSeconds             int      `toml:"preferred_recheck_seconds"`
@@ -188,9 +186,6 @@ func (c Config) Validate() error {
 	}
 	if len(seen) == 0 {
 		return errors.New("at least one worker account is required")
-	}
-	if a := c.WorkerAccounts.DefaultAccount; a != "" && !Nickname.MatchString(a) {
-		return errors.New("invalid default worker account")
 	}
 	if f := c.WorkerAccounts.FallbackAccount; f != "" && (!slices.Contains(c.WorkerAccounts.Priority, f) || c.WorkerAccounts.Priority[len(c.WorkerAccounts.Priority)-1] != f) {
 		return errors.New("fallback account must be last in priority")

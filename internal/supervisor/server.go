@@ -67,7 +67,8 @@ type Status struct {
 	Jobs                 []jobs.Job          `json:"jobs"`
 	Accounts             []accounts.Snapshot `json:"accounts"`
 	ManagerAccount       string              `json:"manager_account"`
-	DefaultWorkerAccount string              `json:"default_worker_account"`
+	WorkerPriority       []string            `json:"priority"`
+	NativeDefaultAccount string              `json:"native_default_account,omitempty"`
 	ManagerCalls         int                 `json:"manager_calls_last_hour"`
 	Health               string              `json:"health"`
 	Session              string              `json:"session"`
@@ -279,7 +280,7 @@ func (s *Server) status() (Status, error) {
 	if !s.Persistent {
 		attach = "tmux attach -t " + s.Config.Supervisor.TmuxSession
 	}
-	return Status{Jobs: js, Accounts: as, ManagerAccount: account, DefaultWorkerAccount: s.defaultWorker(), ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: attach, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision, Terminals: terminals, ServiceMode: s.Persistent}, nil
+	return Status{Jobs: js, Accounts: as, ManagerAccount: account, WorkerPriority: s.workerConfig().WorkerAccounts.Priority, NativeDefaultAccount: accounts.CurrentNickname(s.Config, config.Expand(s.Config.Runtime.SharedCodexHome), ""), ManagerCalls: count, Health: health, Session: s.Config.Supervisor.TmuxSession, Attach: attach, Version: config.Version, CodexVersion: s.Resolver.Version, ManagerDecision: decision, Terminals: terminals, ServiceMode: s.Persistent}, nil
 }
 func (s *Server) manager() string { s.mu.Lock(); defer s.mu.Unlock(); return s.managerAccount }
 func (s *Server) persist(j jobs.Job, actions ...jobs.Action) error {

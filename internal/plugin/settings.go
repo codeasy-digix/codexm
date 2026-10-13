@@ -16,7 +16,7 @@ import (
 
 func settingProperties(names []string) map[string]any {
 	properties := map[string]any{}
-	for key, title := range map[string]string{"manager_account": "관리자 계정", "default_worker": "새 작업 기본 계정", "fallback_account": "예비 계정"} {
+	for key, title := range map[string]string{"manager_account": "관리자 계정", "fallback_account": "예비 계정"} {
 		p := map[string]any{"type": "string", "title": title}
 		if names != nil {
 			p["enum"] = append([]string{""}, names...)
@@ -40,7 +40,7 @@ func settingProperties(names []string) map[string]any {
 }
 
 func pluginValues(c config.Config) map[string]any {
-	return map[string]any{"manager_account": c.Manager.Account, "default_worker": c.DefaultWorker(), "fallback_account": c.WorkerAccounts.FallbackAccount, "priority": strings.Join(c.WorkerAccounts.Priority, ", "), "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "reconcile_interval_seconds": c.Supervisor.ReconcileIntervalSeconds, "max_parallel_jobs": c.Execution.MaxParallelJobs, "usage_sample_seconds": c.Logging.UsageSampleSeconds, "five_hour_discord": c.Notifications.FiveHourDiscord}
+	return map[string]any{"manager_account": c.Manager.Account, "fallback_account": c.WorkerAccounts.FallbackAccount, "priority": strings.Join(c.WorkerAccounts.Priority, ", "), "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "reconcile_interval_seconds": c.Supervisor.ReconcileIntervalSeconds, "max_parallel_jobs": c.Execution.MaxParallelJobs, "usage_sample_seconds": c.Logging.UsageSampleSeconds, "five_hour_discord": c.Notifications.FiveHourDiscord}
 }
 
 func (m MCP) readPluginSettings() (any, error) {
@@ -70,7 +70,7 @@ func (m MCP) readPluginSettings() (any, error) {
 				map[string]any{"kind": "tool", "tool": "codexm_open", "description": "작업·계정·사용 기록·설정을 패널에서 관리합니다."},
 				map[string]any{"kind": "tool", "tool": "codexm_accounts_open", "description": "계정 추가·로그인과 저장 계정을 관리합니다."},
 			}},
-			group("계정 관리", "manager_account", "default_worker", "priority", "fallback_account"),
+			group("계정 관리", "manager_account", "priority", "fallback_account"),
 			group("감시와 실행", "preferred_recheck_seconds", "reconcile_interval_seconds", "max_parallel_jobs", "usage_sample_seconds"),
 			group("알림", "five_hour_discord"),
 		},
@@ -92,6 +92,9 @@ func (m MCP) updatePluginSettings(ctx context.Context, b json.RawMessage) (any, 
 	values := pluginValues(c)
 	properties := settingProperties(nil)
 	for key, raw := range a.Set {
+		if key == "default_worker" {
+			return nil, errors.New("codexm has no default worker; update account priority instead")
+		}
 		if _, ok := properties[key]; !ok {
 			return nil, errors.New("unsupported plugin setting")
 		}
@@ -136,7 +139,7 @@ func (m MCP) updatePluginSettings(ctx context.Context, b json.RawMessage) (any, 
 		if e != nil {
 			return nil, e
 		}
-		if !slices.Contains(names, v.ManagerAccount) || !slices.Contains(v.Priority, v.DefaultWorker) {
+		if !slices.Contains(names, v.ManagerAccount) {
 			return nil, errors.New("choose saved accounts")
 		}
 		for _, name := range v.Priority {
@@ -157,9 +160,6 @@ func (m MCP) updatePluginSettings(ctx context.Context, b json.RawMessage) (any, 
 		_, _, e = config.Update(c.Path, rev, func(next *config.Config) error {
 			if _, ok := a.Set["manager_account"]; ok {
 				next.Manager.Account = v.ManagerAccount
-			}
-			if _, ok := a.Set["default_worker"]; ok {
-				next.WorkerAccounts.DefaultAccount = v.DefaultWorker
 			}
 			if _, ok := a.Set["priority"]; ok {
 				next.WorkerAccounts.Priority = slices.Clone(v.Priority)

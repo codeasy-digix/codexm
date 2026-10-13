@@ -283,7 +283,7 @@ func (s *Server) notificationStatus() string {
 		}
 		fmt.Fprintf(&out, "• %s: 단기 잔여 %s / 장기 잔여 %s\n  초기화 %s / %s · 관측 %s\n", name, quotaRemaining(b.Primary), quotaRemaining(b.Secondary), quotaReset(b.Primary), quotaReset(b.Secondary), a.CheckedAt.Local().Format("15:04"))
 	}
-	fmt.Fprintf(&out, "관리자 %s · 기본 작업 계정 %s · codexm %s\n", c.Manager.Account, c.DefaultWorker(), config.Version)
+	fmt.Fprintf(&out, "관리자 %s · 작업 계정 우선순위 %s · codexm %s\n", c.Manager.Account, strings.Join(c.WorkerAccounts.Priority, " → "), config.Version)
 	js, e := s.Store.Jobs()
 	if e != nil {
 		return out.String() + "작업 상태 조회 미확인"

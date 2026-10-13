@@ -41,7 +41,7 @@ func TestAllNativeConversationsRemainUnregisteredUntilOpened(t *testing.T) {
 	}
 	m.Filter = ""
 	m.SelectedID = "native-new"
-	if cmd := m.slash("/open"); cmd != nil || m.Screen != "import-account" || m.Threads[0].ID != "native-new" || m.Input.Value() != c.DefaultWorker() {
+	if cmd := m.slash("/open"); cmd != nil || m.Screen != "import-account" || m.Threads[0].ID != "native-new" || m.Input.Value() != "" {
 		t.Fatal("opening did not retain the native conversation ID and ask for account")
 	}
 }

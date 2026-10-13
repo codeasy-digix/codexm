@@ -63,3 +63,4 @@ case "$target_os" in darwin) mv -fh "$install_root/bin/.codexm-$$" "$install_roo
 ln -s "$install_root/bin/codexm" "$link_dir/.codexm-$$"
 case "$target_os" in darwin) mv -fh "$link_dir/.codexm-$$" "$link_dir/codexm" ;; *) mv -fT "$link_dir/.codexm-$$" "$link_dir/codexm" ;; esac
 printf 'Installed codexm %s: %s\n' "$version" "$link_dir/codexm"
+"$link_dir/codexm" __migrate-config

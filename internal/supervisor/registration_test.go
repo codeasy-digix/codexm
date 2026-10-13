@@ -29,6 +29,31 @@ func foreignWriter(t *testing.T, home, thread string) func() {
 	return func() { _ = unix.Flock(int(f.Fd()), unix.LOCK_UN); _ = f.Close() }
 }
 
+func TestGuiOriginOutsideWorkerPriorityDoesNotChangeAutomaticWorkerPolicy(t *testing.T) {
+	s := fixture(t)
+	if e := os.MkdirAll(filepath.Join(s.Config.Runtime.AccountsDir, "gui-only"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(s.Config.Runtime.AccountsDir, "gui-only", "auth.json"), []byte(`{}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	budget := int64(30000)
+	j := jobs.Job{ID: jobs.ID(), ThreadID: jobs.ID(), Kind: "goal", State: "observed", Account: "account-work", AutoAccount: true, Goal: &jobs.Goal{Status: "paused", TokenBudget: &budget, TokensUsed: 123}}
+	if e := s.Store.PutJob(j); e != nil {
+		t.Fatal(e)
+	}
+	got, e := s.registerObserved(j, "gui-only")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if got.Registration == nil || got.Registration.OriginAccount != "gui-only" || !got.AutoAccount || got.Account != "account-work" || !got.Paused || got.Goal.TokensUsed != 123 {
+		t.Fatal("GUI default was used as a worker default")
+	}
+	if e = s.validateOriginAccount("missing"); e == nil {
+		t.Fatal("unknown origin was accepted")
+	}
+}
+
 func TestUnregisterRefusesDispatchBeforeChangingWorkerAndCancelsStaleAction(t *testing.T) {
 	s := fixture(t)
 	j := jobs.Job{ID: jobs.ID(), Managed: true, Kind: "chat", State: "idle", Session: "preserved"}
