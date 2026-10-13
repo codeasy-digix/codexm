@@ -20,6 +20,8 @@ const accountHelp = `codexm account — named accounts for codexm workers
 codexm account                         Show the saved default worker and accounts
 codexm account --list                  List existing local logins
 codexm account NAME                    Save the default for new/imported jobs
+codexm account NAME default            Explicit form of the same saved default
+codexm account NAME --set-default      Flag form of the same saved default
 codexm account NAME --login --device   Log in with a device code (SSH supported)
 codexm account NAME --login --browser  Log in with the browser
 codexm setup --manager NAME            Choose the separate manager account
@@ -27,6 +29,8 @@ codexm setup --manager NAME            Choose the separate manager account
 Existing jobs keep their own account. Native codex, its authentication and shell
 environment are unchanged. View live quotas with codexm accounts or /accounts.
 `
+
+const accountUsage = "usage: codexm account NAME [default|--set-default] [--login] [--browser|--device]"
 
 func accountCommand(ctx context.Context, c config.Config, args []string) error {
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
@@ -50,17 +54,24 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 	}
 	name := args[0]
 	if !config.Nickname.MatchString(name) || name == "default" {
-		return errors.New("usage: codexm account NAME [--login] [--browser|--device]")
+		return errors.New(accountUsage)
+	}
+	options := args[1:]
+	if len(options) > 0 && options[0] == "default" {
+		options = options[1:]
 	}
 	f := flag.NewFlagSet("codexm account", flag.ContinueOnError)
 	login := f.Bool("login", false, "log in again")
 	browser := f.Bool("browser", false, "browser sign-in")
 	device := f.Bool("device", false, "device-code sign-in")
 	_ = f.Bool("set-default", false, "save codexm's default worker (also the default action)")
-	if e := f.Parse(args[1:]); e != nil {
+	if e := f.Parse(options); e != nil {
 		return e
 	}
-	if len(f.Args()) != 0 || *browser && *device {
+	if len(f.Args()) != 0 {
+		return fmt.Errorf("unexpected account argument %q; %s", f.Arg(0), accountUsage)
+	}
+	if *browser && *device {
 		return errors.New("choose one login method: --browser or --device")
 	}
 	lock, e := cr.AccountLoginLock(c, name)
