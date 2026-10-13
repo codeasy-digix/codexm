@@ -32,3 +32,18 @@
 공식 근거: [UserPromptSubmit](https://learn.chatgpt.com/docs/hooks#userpromptsubmit),
 [플러그인 훅](https://learn.chatgpt.com/docs/hooks#plugin-bundled-hooks),
 [MCP App 진입점과 딥링크](https://developers.openai.com/plugins/build/extensions).
+
+## GUI 스킬 이름 수정 (2026-10-14)
+
+앱에서 실제 선택한 스킬은 `[$codexm:codexm-manage](.../SKILL.md)`로 전송된다.
+0.5.3 처리기는 `codexm:` 네임스페이스를 인식하지 않아, 승인된 훅도 이 입력을
+일반 대화로 통과시켰다. 서비스와 MCP 연결 문제와는 구분한다.
+
+1. 정확한 codexm 네임스페이스와 manage/accounts 스킬의 일반 텍스트·Markdown
+   표현을 인식한다. 다른 플러그인, 경로 불일치, 덧붙인 지시는 계속 통과시킨다.
+2. 실제 GUI 입력과 구조화된 skill 항목을 공식 CLI·앱 엔진 회귀 시험에 추가한다.
+   관리/계정 명령은 모델 요청 0회, 추가 지시는 일반 모델 경로를 유지해야 한다.
+3. 0.5.5로 소스와 사용법을 갱신하고 로컬 CLI 및 공식 플러그인 캐시에 반영한다.
+   기존 계정 기본값 변경도 포함하며, hook 정의와 사용자 신뢰 기록은 수정하지 않는다.
+4. `.home`의 복구 revision을 갱신하고 commit/push한다. 기존 관리 서비스와 worker,
+   인증, 대화·목표는 유지한다. 운영 GUI 확인 결과는 격리 시험과 따로 기록한다.
