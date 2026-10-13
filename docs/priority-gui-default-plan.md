@@ -70,3 +70,20 @@ getAuthToken은 내부 getAuthStatus를 사용하고 ChatGPT backend도 그 인�
 병합 후 CLI/명령 parser/plugin/supervisor race, 전체 vet, UI 16개를 재검증했다.
 새 등록 훅의 source account는 origin으로만 남기고 worker 선택은 자동 우선순위로
 보낸다는 회귀 검사도 포함한다. 기존 등록 작업은 계정과 목표를 유지한다.
+
+## 로컬 반영 영수증
+
+구현 3e30eda를 .home에서 고정하여 로컬 CLI·supervisor·watchdog·공식 plugin cache를
+0.5.6으로 갱신했다. CLI와 관리 서비스의 버전이 같으며 실행 중인 observer 바이너리도
+같은 불변 설치물이다. 관리 작업 9개의 대화/계정/목표/예산/설정/실행/입력, legacy worker
+3개의 PID, GUI/native 인증·공식 CLI, .home 동시 변경 10개가 보존됐다. 제거된
+worker default 이외 설정 값은 같고 manager 호출은 0회다. GUI 기본 로그인은 account-main다.
+운영 계정을 바꾸는 default 명령은 설치/검사에서 실행하지 않았다.
+
+제품 doctor와 plugin doctor가 통과했다. plugin 0.5.6 cache, MCP 도구 11개·스킬 3개,
+명령 훅의 enabled/trusted를 확인했고 신뢰 파일은 수정하지 않았다. 현재 열린 UI의
+마지막 관측은 이전 버전이라 실제 최신 패널 표시는 확인하지 않았다. GUI를 강제로
+재시작하지 않았으므로 사용자가 앱/패널을 갱신한 뒤 확인해야 한다.
+전체 homectl doctor 실패 3개는 동시 개발 중인 markdown2pdf 경로다.
+최종 private 영수증은 local-install-receipt.json이다. 임시 시험 tmux는 모두 정리됐고
+다른 장비나 정식 release에는 적용하지 않았다.
