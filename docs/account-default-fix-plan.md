@@ -36,3 +36,20 @@
 
 공식 엔진 시험용 tmux는 `codexm-test-account-default-20261013`이며 종료 후 정리했다.
 private 증거는 `~/.local/state/codexm/validation/account-default-20261013/`이다.
+
+## 로컬 적용 확인
+
+구현 `02c9ac2cfb14cb9bee22358e72ac05517108e6c1`을 main에 병합·push하고 `.home` 고정
+소스로 복구·빌드·설치했다. 설치된 CLI도 빈 인증 fixture에서 원래 명령의 저장과 다음
+실행의 조회를 통과했다. 운영 계정에 default 저장 명령을 실행하지 않았다.
+
+관찰자 upgrade·watchdog·공식 plugin 캐시를 0.5.2로 갱신했다. supervisor PID 95420과
+watchdog PID 95437의 실제 실행 파일이 같은 불변 바이너리이며 공식 daemon PID 13383은
+유지됐다. `plugin doctor`의 버전·캐시 일치와 스킬 3개, `codexm doctor`가 통과했다.
+
+설치 전후 기본값 account-secondary·manager/config/알림 정책·전역 로그인·공식 CLI와 작업 9개의
+대화·계정·실행 의도·목표·예산·설정·run/engine/input, legacy worker PID 3개와
+`.home`의 동시 작업 파일 10개가 같았다. account-backup 인증 파일의 지문은 달라졌으며 관측
+계정 ID는 같았다. 기존 reader는 정상 토큰 갱신을 요청하므로 byte 보존으로 표시하지 않는다.
+`homectl doctor`의 제품·공식 CLI 검사는 통과했고 전체 실패 3개는 기존 markdown2pdf
+동시 개발 경로다. 영수증은 private `production-after/receipt.json`에 있다.
