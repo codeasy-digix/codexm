@@ -70,7 +70,52 @@ func (i Installer) Discovery(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	sort.Strings(names)
-	return map[string]any{"mcp_server_discovered": found, "plugin_skills_discovered": len(response.Plugin.Skills), "registration_skills_discovered": registration, "command_skills_discovered": commands, "skill_names": names, "host_installed": response.Plugin.Summary.Installed, "host_enabled": response.Plugin.Summary.Enabled, "host_installed_version": response.Plugin.Summary.LocalVersion, "host_cache_current": response.Plugin.Summary.LocalVersion == config.Version}, nil
+	result := map[string]any{"mcp_server_discovered": found, "plugin_skills_discovered": len(response.Plugin.Skills), "registration_skills_discovered": registration, "command_skills_discovered": commands, "skill_names": names, "host_installed": response.Plugin.Summary.Installed, "host_enabled": response.Plugin.Summary.Enabled, "host_installed_version": response.Plugin.Summary.LocalVersion, "host_cache_current": response.Plugin.Summary.LocalVersion == config.Version}
+	var hookList struct {
+		Data []struct {
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+			Warnings []string `json:"warnings"`
+			Hooks    []struct {
+				PluginID string `json:"pluginId"`
+				Event    string `json:"eventName"`
+				Command  string `json:"command"`
+				Enabled  bool   `json:"enabled"`
+				Trust    string `json:"trustStatus"`
+				Key      string `json:"key"`
+				Hash     string `json:"currentHash"`
+			} `json:"hooks"`
+		} `json:"data"`
+	}
+	if err := c.Call(ctx, "hooks/list", map[string]any{"cwds": []string{i.home()}}, &hookList); err != nil {
+		result["prompt_command_hook_discovery_problem"] = cr.SafeText(err.Error())
+	} else {
+		count := 0
+		problems := []string{}
+		for _, entry := range hookList.Data {
+			for _, problem := range entry.Errors {
+				problems = append(problems, cr.SafeText(problem.Message))
+			}
+			for _, warning := range entry.Warnings {
+				problems = append(problems, cr.SafeText(warning))
+			}
+			for _, hook := range entry.Hooks {
+				if strings.HasPrefix(hook.PluginID, "codexm@") && hook.Event == "userPromptSubmit" && strings.Contains(hook.Command, "__prompt-command") {
+					count++
+					result["prompt_command_hook_trust"] = hook.Trust
+					result["prompt_command_hook_enabled"] = hook.Enabled
+					result["prompt_command_hook_key"] = hook.Key
+					result["prompt_command_hook_hash"] = hook.Hash
+				}
+			}
+		}
+		result["prompt_command_hooks_discovered"] = count
+		if len(problems) > 0 {
+			result["hook_discovery_problems"] = problems
+		}
+	}
+	return result, nil
 }
 
 func pluginEnvironment(home, codexHome string) []string {

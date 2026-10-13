@@ -44,6 +44,10 @@ export function panelSize(rect,width) {
   if(!Number.isFinite(rect?.height)||rect.height<=0||!Number.isFinite(width)||width<=0)return null;
   return {height:Math.ceil(rect.height),width:Math.ceil(width)};
 }
+export function deepLinkView(context) {
+  const path=context?.['openai/deepLink']?.url;
+  return path==='/'?'tasks':path==='/accounts'?'accounts':null;
+}
 export class Bridge {
   constructor(){this.pending=new Map();this.id=0;this.compat=false;this.hostContext={};this.sizeFrame=null;this.lastSize='';window.addEventListener('message',event=>this.receive(event));}
   receive(event){
@@ -60,7 +64,7 @@ export class Bridge {
     const root=document.documentElement,layout=surfaceLayout(this.hostContext);root.dataset.surfaceLayout=layout.kind;root.dataset.displayMode=layout.displayMode;root.dataset.heightBounded=String(layout.maxHeight!=null);
     for(const [key,value]of [['--codexm-host-height',layout.height],['--codexm-host-max-height',layout.maxHeight]]){if(value!=null)root.style.setProperty(key,`${value}px`);else root.style.removeProperty?.(key);}
     if(ctx?.theme)root.dataset.theme=ctx.theme;for(const [key,value] of Object.entries(ctx?.styles?.variables||{})){if(key.startsWith('--')&&typeof value==='string')root.style.setProperty(key,value);}
-    this.queueSize();
+    this.onContext?.(ctx);this.queueSize();
   }
   queueSize(){
     if(this.sizeFrame!=null||typeof document.body?.getBoundingClientRect!=='function')return;
@@ -69,7 +73,7 @@ export class Bridge {
   }
   request(method,params,timeout=120000){return new Promise((resolve,reject)=>{const id=++this.id;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('연결 응답을 확인하지 못했습니다. 작업 상태를 확인한 후 다시 시도하세요.'));},timeout);this.pending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},'*');});}
   async initialize(){
-    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.5.1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
+    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.5.2'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
     catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;this.context({displayMode:window.openai.displayMode||'inline'});}
     this.resize=new ResizeObserver(()=>this.queueSize());this.resize.observe(document.body);window.addEventListener('resize',()=>this.queueSize());this.queueSize();
     void this.reportReady();
@@ -104,6 +108,8 @@ export function startUI(options={}){
   function dialogEnd(d,submit){const bar=el('div',null,'toolbar');bar.append(button('취소',closeDialog));if(submit)bar.append(submit);d.append(bar);}
   function setTab(tab){if(state.snapshot?.connected===false&&tab!=='accounts'){message('관리 서비스를 시작하면 작업·사용 기록·설정을 사용할 수 있습니다.');return;}state.tab=tab;for(const t of ['tasks','accounts','logs','settings'])$(t).hidden=t!==tab;for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===tab);if(tab==='accounts')renderAccounts();if(tab==='logs')void loadLogs();if(tab==='settings')void loadSettings();}
   function initialView(data){const view=data?.initial_view;if(!state.initialViewApplied&&['tasks','accounts','logs','settings'].includes(view)){state.initialViewApplied=true;setTab(view);}}
+  let lastDeepLink;
+  function applyDeepLink(context){const view=deepLinkView(context);if(!view||view===lastDeepLink)return;lastDeepLink=view;state.initialViewApplied=true;setTab(view);}
   async function refresh(){
     if(state.disposed||state.polling)return;state.polling=true;
     try{
@@ -311,10 +317,11 @@ export function startUI(options={}){
   $('new-button').onclick=newDialog;for(const id of ['search','state-filter','project-filter'])$(id).addEventListener(id==='search'?'input':'change',renderList);
   bridge.onResult=r=>{const data=r?._meta?.codexm_data||r?.structuredContent?.codexm_data;initialView(data);if(data?.connected!=null&&!state.snapshot){state.snapshot=data;void refresh();}};
   bridge.onInput=params=>initialView(params?.arguments||params?.toolInput||params);
+  bridge.onContext=applyDeepLink;
   function dispose(){if(state.disposed)return;state.disposed=true;state.loginSequence++;clearTimeout(state.loopTimer);clearTimeout(state.loginTimer);if(loginPending(state.login))void cancelLogin(true);state.loginView=null;bridge.resize?.disconnect?.();window.removeEventListener?.('pagehide',dispose);}
   $('dialog').addEventListener('cancel',event=>{event.preventDefault();closeDialog();});window.addEventListener('pagehide',dispose);
   savedUI();initialView(window.openai?.toolInput);
-  const ready=(async()=>{try{await bridge.initialize();if(!state.disposed)await refresh();}catch(e){if(!state.disposed){message('이 호스트의 MCP Apps 연결을 확인할 수 없습니다. '+e.message,true);$('connection').textContent='연결 지원 확인 필요';}}async function loop(){if(state.disposed)return;if(!document.hidden)await refresh();if(!state.disposed)state.loopTimer=setTimeout(loop,options.pollInterval??4000);}if(!state.disposed&&options.pollInterval!==0)state.loopTimer=setTimeout(loop,options.pollInterval??4000);})();
+  const ready=(async()=>{try{await bridge.initialize();applyDeepLink(bridge.hostContext);if(!state.disposed)await refresh();}catch(e){if(!state.disposed){message('이 호스트의 MCP Apps 연결을 확인할 수 없습니다. '+e.message,true);$('connection').textContent='연결 지원 확인 필요';}}async function loop(){if(state.disposed)return;if(!document.hidden)await refresh();if(!state.disposed)state.loopTimer=setTimeout(loop,options.pollInterval??4000);}if(!state.disposed&&options.pollInterval!==0)state.loopTimer=setTimeout(loop,options.pollInterval??4000);})();
   return {state,refresh,ready,dispose};
 }
 if(typeof document!=='undefined'&&document.getElementById('app'))startUI();

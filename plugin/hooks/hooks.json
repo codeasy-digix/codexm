@@ -1,0 +1,16 @@
+{
+  "description": "Open the codexm panel for exact manage/accounts commands before model inference. Other prompts pass through unchanged.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/bin/codexm\" __prompt-command --marketplace 'local-personal'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

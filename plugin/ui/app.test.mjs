@@ -40,6 +40,9 @@ test('panel handshake reports the actual bridge without blocking an older host',
   await bridge.initialize();
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(document.documentElement.dataset.theme,'dark');
+  const contexts=[];bridge.onContext=context=>contexts.push(context);
+  listeners.get('message')({source:parent,data:{jsonrpc:'2.0',method:'ui/notifications/host-context-changed',params:{'openai/deepLink':{url:'/accounts'}}}});
+  assert.equal(contexts[0]['openai/deepLink'].url,'/accounts');
   assert.ok(messages.some(m=>m.method==='ui/notifications/initialized'));
   const report=messages.find(m=>m.method==='tools/call'&&m.params.name==='codexm_ui_ready');
   assert.equal(report.params.arguments.bridge,'mcp-app');

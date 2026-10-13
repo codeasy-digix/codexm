@@ -60,7 +60,10 @@ func TestInstallPreservesPersonalMarketplaceAndUninstallsOnlyOwnedEntry(t *testi
 	if len(entries) != 3 || string(doc["custom"]) == "" || string(doc["name"]) != `"my-plugins"` {
 		t.Fatal("other registrations changed")
 	}
-	for _, name := range []string{"mcp.json", ".mcp.json"} {
+	if _, err := os.Stat(filepath.Join(r.Root, "plugin.json")); !os.IsNotExist(err) {
+		t.Fatal("portable manifest would disable official plugin hook loading")
+	}
+	for _, name := range []string{".mcp.json"} {
 		b, e := os.ReadFile(filepath.Join(r.Root, name))
 		if e != nil {
 			t.Fatal(e)
@@ -78,15 +81,16 @@ func TestInstallPreservesPersonalMarketplaceAndUninstallsOnlyOwnedEntry(t *testi
 			t.Fatal(e)
 		}
 		wantCommand := i.Self
-		if name == "mcp.json" {
-			wantCommand = "./bin/codexm"
-		}
 		if v.Servers["codexm"].Command != wantCommand || strings.Join(v.Servers["codexm"].Args, "|") != "--config|"+i.Config.Path+"|plugin|mcp" {
 			t.Fatal("wrong MCP invocation")
 		}
 	}
 	if st, e := os.Stat(filepath.Join(r.Root, "bin", "codexm")); e != nil || st.Mode().Perm() != 0700 {
-		t.Fatal("portable launcher is not executable")
+		t.Fatal("hook launcher is not executable")
+	}
+	hooks, e := os.ReadFile(filepath.Join(r.Root, "hooks", "hooks.json"))
+	if e != nil || !bytes.Contains(hooks, []byte("--marketplace 'my-plugins'")) || bytes.Contains(hooks, []byte(`"async": true`)) {
+		t.Fatal("synchronous prompt command hook did not preserve marketplace", e)
 	}
 	for _, name := range []string{"codexm", "codexm-manage", "codexm-accounts"} {
 		for _, file := range []string{"SKILL.md", "agents/openai.yaml"} {
@@ -162,6 +166,27 @@ func TestInstallRefusesUnownedEntryAndChangedOwnedEntry(t *testing.T) {
 	b, _ = os.ReadFile(i.catalog())
 	if !bytes.Equal(b, original) {
 		t.Fatal("failed uninstall changed catalog")
+	}
+}
+
+func TestImmutableHookTamperingPreservesMarketplace(t *testing.T) {
+	i := fixture(t)
+	r, err := i.Install()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(i.catalog())
+	path := filepath.Join(r.Root, "hooks", "hooks.json")
+	if err = os.WriteFile(path, []byte("user hook"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = i.Install(); err == nil {
+		t.Fatal("modified hook overwritten")
+	}
+	after, _ := os.ReadFile(i.catalog())
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) || string(got) != "user hook" {
+		t.Fatal("failed install changed user files")
 	}
 }
 

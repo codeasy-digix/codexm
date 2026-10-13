@@ -1,12 +1,13 @@
 {
   "name": "codexm",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Local Codex account and task manager",
   "author": {
     "name": "account-main"
   },
   "mcpServers": "./.mcp.json",
   "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "codexm",
     "shortDescription": "계정, 작업, 사용량을 한 곳에서 관리",

@@ -36,7 +36,7 @@ class Node {
   reportValidity(){return [...this.querySelectorAll('input'),...this.querySelectorAll('select')].every(node=>(!node.required||node.value!=='')&&(!node.pattern||new RegExp('^(?:'+node.pattern+')$').test(node.value)));}
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-function uiFixture(t,{connected=false,names=[],priority=[],toolInput,login}={}){
+function uiFixture(t,{connected=false,names=[],priority=[],toolInput,hostContext,login}={}){
   const old=new Map(['window','document'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)])),ids=new Map(),listeners=new Map(),calls=[],requests=[],widgetStates=[];
   const doc={hidden:false,createElement(tag){return new Node(tag,doc);},getElementById(id){return ids.get(id);},querySelectorAll(selector){return doc.body.querySelectorAll(selector);}};
   doc.body=doc.createElement('body');doc.activeElement=doc.body;
@@ -48,7 +48,7 @@ function uiFixture(t,{connected=false,names=[],priority=[],toolInput,login}={}){
   globalThis.window={addEventListener(key,fn){const handlers=listeners.get(key)||[];handlers.push(fn);listeners.set(key,handlers);},removeEventListener(key,fn){listeners.set(key,(listeners.get(key)||[]).filter(value=>value!==fn));},openai:{toolInput,setWidgetState(value){widgetStates.push(value);}}};
   const snapshot={connected,manager_api:2,login_available:true,account_names:names.slice(),priority:priority.slice(),manager_account:names[0]||'',setup_required:!names.length,at:new Date().toISOString(),catalog:{sessions:[]},status:{accounts:[],jobs:[],manager_account:names[0]||'',default_worker_account:names[0]||''}};
   let current,instance;
-  const bridge={compat:false,async initialize(){},async request(method,args){requests.push({method,args});return{};},async call(name,args={}){
+  const bridge={compat:false,hostContext,async initialize(){},async request(method,args){requests.push({method,args});return{};},async call(name,args={}){
     calls.push({name,args});
     if(name==='codexm_snapshot')return structuredClone(snapshot);
     if(name==='codexm_account'){
@@ -65,6 +65,24 @@ function uiFixture(t,{connected=false,names=[],priority=[],toolInput,login}={}){
   return {instance,ids,doc,bridge,snapshot,calls,requests,widgetStates,async emit(key){for(const fn of listeners.get(key)||[])fn();await settle();}};
 }
 function button(root,text){const result=root.querySelectorAll('button').find(node=>node.textContent===text);assert.ok(result,'button not found: '+text);return result;}
+
+test('official deep links select the requested tab without overriding later navigation on unrelated context updates',async t=>{
+  const f=uiFixture(t,{connected:true,names:['fixture'],toolInput:{initial_view:'tasks'},hostContext:{'openai/deepLink':{url:'/accounts'}}});await f.instance.ready;
+  assert.equal(f.instance.state.tab,'accounts');
+  const tasks=f.doc.querySelectorAll('[data-tab]').find(node=>node.dataset.tab==='tasks');await tasks.click();
+  f.bridge.onContext({theme:'light','openai/deepLink':{url:'/accounts'}});assert.equal(f.instance.state.tab,'tasks');
+  f.bridge.onContext({'openai/deepLink':{url:'/'}});assert.equal(f.instance.state.tab,'tasks');
+  f.bridge.onContext({'openai/deepLink':{url:'/accounts'}});assert.equal(f.instance.state.tab,'accounts');
+  f.bridge.onContext({'openai/deepLink':{url:'https://example.invalid'}});assert.equal(f.instance.state.tab,'accounts');
+  assert.deepEqual(f.calls.map(call=>call.name),['codexm_snapshot']);
+});
+
+test('task deep links cannot bypass the stopped-service account setup',async t=>{
+  const f=uiFixture(t,{hostContext:{'openai/deepLink':{url:'/'}}});await f.instance.ready;
+  assert.equal(f.instance.state.tab,'accounts');
+  f.bridge.onContext({'openai/deepLink':{url:'/accounts'}});
+  f.bridge.onContext({'openai/deepLink':{url:'/'}});assert.equal(f.instance.state.tab,'accounts');
+});
 
 test('first account can sign in from the stopped service and only explicit start changes the manager',async t=>{
   t.mock.timers.enable({apis:['setTimeout']});

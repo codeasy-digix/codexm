@@ -18,6 +18,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/daemon"
 	"github.com/codeasy-digix/codexm/internal/display"
 	"github.com/codeasy-digix/codexm/internal/jobs"
+	"github.com/codeasy-digix/codexm/internal/panelcommand"
 	"github.com/codeasy-digix/codexm/internal/plugin"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"github.com/codeasy-digix/codexm/internal/service"
@@ -48,6 +49,16 @@ func Main(args []string) error {
 	if len(args) > 0 {
 		command = args[0]
 		args = args[1:]
+	}
+	// Hooks must keep working even when the manager configuration is missing or
+	// invalid. In particular, ordinary user prompts must never depend on it.
+	if command == "__prompt-command" {
+		f := flag.NewFlagSet(command, flag.ContinueOnError)
+		marketplace := f.String("marketplace", "local-personal", "installed marketplace name")
+		if err := f.Parse(args); err != nil {
+			return err
+		}
+		return panelcommand.Serve(context.Background(), os.Stdin, os.Stdout, *marketplace, panelcommand.Open)
 	}
 	if command == "__worker" {
 		if len(args) != 1 {

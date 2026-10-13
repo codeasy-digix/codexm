@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/panelcommand"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	assets "github.com/codeasy-digix/codexm/plugin"
 )
@@ -141,23 +142,41 @@ func (i Installer) Install() (installReceipt, error) {
 	if _, e := cr.Locate(i.Config); e != nil {
 		return installReceipt{}, e
 	}
-	portable, e := assets.Files.ReadFile("plugin.json")
-	if e != nil {
-		return installReceipt{}, e
-	}
 	legacy, e := assets.Files.ReadFile(".codex-plugin/plugin.json")
 	if e != nil {
 		return installReceipt{}, e
 	}
 	server := map[string]any{"command": i.Self, "args": []string{"--config", i.Config.Path, "plugin", "mcp"}}
+	marketplace := "local-personal"
+	if data, err := os.ReadFile(i.catalog()); err == nil {
+		var catalog struct {
+			Name string `json:"name"`
+		}
+		if err = json.Unmarshal(data, &catalog); err != nil {
+			return installReceipt{}, err
+		}
+		if catalog.Name != "" {
+			marketplace = catalog.Name
+		}
+	} else if !os.IsNotExist(err) {
+		return installReceipt{}, err
+	}
+	if _, e = panelcommand.Link(marketplace, "/"); e != nil {
+		return installReceipt{}, e
+	}
+	hooks, e := assets.Files.ReadFile("hooks/hooks.json")
+	if e != nil {
+		return installReceipt{}, e
+	}
+	hooks = []byte(strings.ReplaceAll(string(hooks), "--marketplace 'local-personal'", "--marketplace '"+marketplace+"'"))
 	compat := raw(map[string]any{"mcpServers": map[string]any{"codexm": server}})
-	// Portable plugins require a bare command or an executable inside the
-	// package. The launcher keeps GUI PATH and app installation paths irrelevant;
-	// it calls our owned, immutable binary without wrapping official Codex.
+	// The official 0.162 engines ignore hooks in portable AgentPlugin packages.
+	// Install the documented .codex-plugin format, without a root plugin.json
+	// that would take precedence and silently disable prompt interception.
+	// The package-local hook launcher calls our immutable binary; it never
+	// wraps official Codex or depends on the desktop application's PATH.
 	launcher := []byte("#!/bin/sh\nexec '" + strings.ReplaceAll(i.Self, "'", "'\"'\"'") + "' \"$@\"\n")
-	modern := map[string]any{"type": "stdio", "command": "./bin/codexm", "args": []string{"--config", i.Config.Path, "plugin", "mcp"}}
-	mcp := raw(map[string]any{"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json", "mcpServers": map[string]any{"codexm": modern}})
-	files := map[string][]byte{"plugin.json": portable, ".codex-plugin/plugin.json": legacy, "mcp.json": mcp, ".mcp.json": compat, "bin/codexm": launcher}
+	files := map[string][]byte{".codex-plugin/plugin.json": legacy, ".mcp.json": compat, "bin/codexm": launcher, "hooks/hooks.json": hooks}
 	e = fs.WalkDir(assets.Files, "skills", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -219,7 +238,12 @@ func (i Installer) Install() (installReceipt, error) {
 	}
 	r := installReceipt{dest, i.catalog(), "./" + filepath.ToSlash(rel), config.Version}
 	old, oldErr := i.load()
-	e = i.mutateCatalog(func(_ map[string]json.RawMessage, entries []json.RawMessage) ([]json.RawMessage, error) {
+	e = i.mutateCatalog(func(doc map[string]json.RawMessage, entries []json.RawMessage) ([]json.RawMessage, error) {
+		var currentName string
+		_ = json.Unmarshal(doc["name"], &currentName)
+		if currentName != "" && currentName != marketplace {
+			return nil, errors.New("marketplace changed during installation; existing entry preserved")
+		}
 		out := []json.RawMessage{}
 		for _, b := range entries {
 			name, source, e := entryIdentity(b)
@@ -292,7 +316,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		if e != nil {
 			return e
 		}
-		fmt.Fprintf(out, "codexm plugin registered in %s\nOpen ChatGPT Plugins → Personal plugins → codexm and install/refresh it.\nLocal MCP tools and the MCP Apps UI are separate host capabilities; verify the manager panel in the app.\n", r.Marketplace)
+		fmt.Fprintf(out, "codexm plugin registered in %s\nOpen ChatGPT Plugins → Personal plugins → codexm and install/refresh it.\nReview and trust codexm's UserPromptSubmit hook in Codex Hooks before using @codexm manage without a model.\nLocal MCP tools and the MCP Apps UI are separate host capabilities; verify the manager panel in the app.\n", r.Marketplace)
 		return nil
 	case "uninstall":
 		if e := i.Uninstall(); e != nil {

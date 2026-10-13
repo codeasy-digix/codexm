@@ -1,4 +1,4 @@
-# codexm 0.5.1 앱 내 플러그인과 계정 관리
+# codexm 0.5.2 앱 내 플러그인과 계정 관리
 
 CLI·사용자 서비스·MCP Apps 화면은 같은 Go 실행 파일에 포함된다. 공용 웹 화면과
 TCP 수신 서버는 없다. 공식 Codex 설치가 필요하며 공식 CLI/ChatGPT 앱을 개조하지 않는다.
@@ -48,22 +48,35 @@ codexm 작업 실행 명령이 아니며, 그것을 누르거나 플러그인을
 
 ## 명령으로 화면 열기
 
-0.5.1에서는 자연어 요청 대신 다음 스킬 명령을 사용할 수 있다. GUI 입력창의 `@` 목록에서
-`codexm`을 선택한 뒤 `manage` 또는 `accounts`를 입력한다. 전용 스킬 이름을 바로 선택해도 된다.
+0.5.2는 정확한 명령을 **모델에 제출하기 전** 동기 `UserPromptSubmit` 훅에서 처리한다.
+공식 플러그인 딥링크로 관리 화면을 요청하고 프롬프트 제출을 차단한다. 별도 모델 호출이나
+자연어 해석은 하지 않는다. 로컬 GUI 채팅 입력창에 아래 명령 하나만 입력하고 전송한다.
 
 | 화면 | GUI 호출 | GUI 전용 스킬 선택 | CLI/IDE 호출 |
 |---|---|---|---|
 | 작업 관리 | `@codexm manage` | `@codexm-manage` | `$codexm-manage` |
 | 계정 관리 | `@codexm accounts` | `@codexm-accounts` | `$codexm-accounts` |
 
-관리 열기는 `codexm_open {}`, 계정 열기는 `codexm_accounts_open {}`을 한 번 호출하고
-응답을 끝낸다. 목록 조사·사용량 조회·브라우저 ID 찾기를 이어서 실행하지 않는다.
+최초 한 번 **Settings → Hooks**에서 codexm의 `UserPromptSubmit` 명령 훅을 검토하고
+신뢰한다. 같은 Codex 홈을 쓰는 공식 CLI에서는 `/hooks`로 검토할 수 있다. 설치만으로
+자동 신뢰되지 않으며 정의가 바뀌면 다시 검토한다. codexm 설치기는 신뢰 기록을 수정하거나
+신뢰 우회 옵션을 설정하지 않는다. `codexm plugin doctor`의
+`prompt_command_hook_trust: trusted`와 `prompt_command_hook_enabled: true`를 확인한다.
+다른 프로젝트에서는 훅 사용 여부가 달라질 수 있으므로 해당 대화의 Hooks 설정도 확인한다.
+
+목록 조사·사용량 조회·브라우저 ID 찾기를 이어서 실행하지 않는다.
 화면을 여는 명령은 현재 대화 등록, 새 작업 시작, 로그인 또는 계정 변경을 포함하지 않는다.
 
-이 호출은 모델이 스킬을 처리하는 한 번의 턴이다. native `/setting`·`/codexm` 명령을
-새로 등록한 것은 아니며, 이후 패널의 버튼 조작과 자동 감시는 관리자 모델을 호출하지 않는다.
-호스트에 직접 버튼이 노출되면 버튼으로 화면을 여는 데도 모델 턴이 필요 없다.
-공식 호출 형태는 [스킬 안내](https://learn.chatgpt.com/docs/build-skills)를 따른다.
+훅이 설치·활성·신뢰되어 있어야 모델 호출을 차단한다. 이 조건이 충족되지 않은 호스트나
+클라우드 대화에서는 같은 텍스트가 모델에 전달될 수 있다. 그 경우 스킬은 설정이 필요함을
+알리고 멈추며, 모델 호출을 직접 명령 실행으로 위장하지 않는다. 일반 대화와 명령에 추가
+지시를 붙인 문장은 그대로 통과한다. 링크 열기 실패도 인식된 명령의 모델 제출을 차단한다.
+
+native `/manage`·`/setting` 등록은 하지 않는다. GUI가 slash 입력을 먼저 처리할 수 있어
+`/manage`는 지원 명령으로 보장하지 않는다. 공식 훅과 딥링크 API만 사용하며 앱 파일과
+공식 `codex`를 수정하지 않는다. 근거는 [공식 플러그인 훅](https://developers.openai.com/plugins/build/plugins#configure-installed-server-policy),
+[UserPromptSubmit](https://learn.chatgpt.com/docs/hooks#userpromptsubmit)을 따른다.
+운영체제의 링크 열기 성공은 실제 패널 표시의 증거와 구분한다.
 
 도구의 성공 응답은 화면 표시와 구분한다. 연결 도구가 없으면 한 번 안내하고 종료하며
 재시도 루프나 별도 웹 화면을 만들지 않는다. 관리 메뉴가 나타나기 전에는 **+ 새 작업**을

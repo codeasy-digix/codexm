@@ -1,13 +1,14 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codexm",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Local Codex account and task management. Uses your installed codexm service.",
   "author": {
     "name": "account-main"
   },
   "extensions": {
     "com.openai": {
+      "hooks": "./hooks/hooks.json",
       "interface": {
         "displayName": "codexm",
         "shortDescription": "계정, 작업, 사용량을 한 곳에서 관리",

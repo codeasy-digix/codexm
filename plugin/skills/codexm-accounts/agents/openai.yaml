@@ -1,7 +1,7 @@
 interface:
   display_name: "codexm-accounts"
-  short_description: "codexm 계정 관리 탭을 한 번 열고 추가 조사 없이 종료합니다"
-  default_prompt: "Use $codexm-accounts to open codexm's account management tab once, then stop."
+  short_description: "신뢰한 명령 훅으로 모델 호출 없이 codexm 계정 화면을 엽니다"
+  default_prompt: "$codexm-accounts"
 dependencies:
   tools:
     - type: "mcp"
