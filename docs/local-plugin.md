@@ -101,6 +101,7 @@ device 방식은 공식 페이지에 이 창에 표시된 코드를 입력한다
 
 ```sh
 codexm account NAME --login
+codexm account NAME default         # 새 작업·처음 등록하는 대화의 기본 계정 저장
 codexm setup --manager account-backup
 codexm service install
 ```
@@ -152,6 +153,10 @@ codexm unregister JOB_ID
 | `codexm account account-secondary` / 설정의 기본 작업 계정 | 새 작업과 처음 등록하는 대화 |
 | 선택 작업의 계정 버튼 / TUI `/account account-secondary` | 그 작업 하나 |
 | 설정의 관리자 계정 | 명시적인 관리자 판단 호출 |
+
+`codexm account NAME`, `codexm account NAME default`, `codexm account NAME --set-default`는
+같은 저장 동작이다. 계정 선택 후 `codexm account`로 저장값을 확인한다. `default`는 계정
+별칭이 아닌 동작 이름이며 계정 이름 바로 뒤에 둔다. 기존 작업 계정은 그대로 유지한다.
 
 CLI의 수동 전환은 `codexm switch-account JOB_ID ACCOUNT`이다. 활성 작업의 실행 의도,
 동일 thread ID, 목표 예산과 사용량, 일시중지 상태를 보존한다. 전환은 영속 큐로 처리되어
@@ -228,7 +233,7 @@ MCP Apps 브리지로만 연결하고, 패널은 필요한 호스트 기능을 �
 
 플러그인은 digest별 불변 자산과 패키지 내부 실행 경로를 사용한다. GUI의 PATH나 앱 설치
 위치에 의존하지 않고 codexm의 고정 바이너리를 실행한다. UI는 버전별 resource URI를
-사용하고 이전 resource URI도 읽을 수 있게 유지한다. 0.5.1은 `manager-v4.html`을 제공하며
+사용하고 이전 resource URI도 읽을 수 있게 유지한다. 0.5.2는 `manager-v4.html`을 제공하며
 v1/v2/v3 URI도 계속 읽을 수 있다. 도구와 관리 API를 확장할 때
 이전 계약을 유지하고 API 버전에 따라 새 기능을 표시한다.
 

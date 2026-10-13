@@ -12,6 +12,7 @@ codexm은 공식 Codex 실행 파일·로그인·업데이트를 설치하거나
 ./install.sh --build               # Go가 설치된 로컬 개발 환경
 ./install.sh                       # 정식 Release 이후 사용 (private 저장소: gh 로그인 필요)
 codexm account account-work              # 기본 작업 계정 저장
+codexm account account-main default    # 같은 저장 동작의 명시적 형식
 codexm setup --manager account-backup     # 관리 판단에 사용할 별도 계정 저장
 codexm service install            # 사용자 OS 서비스 설치 및 시작
 codexm plugin install             # 개인 로컬 marketplace 등록
