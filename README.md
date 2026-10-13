@@ -74,7 +74,7 @@ codexm daemon unwatch     # 복구 감시 서비스 중지, 공식 데몬 유지
 공식 플러그인 확장으로 **Plugins → codexm → codexm 관리 / 계정 관리** 버튼을
 선언합니다. 같은 패널의 메뉴는 **작업·계정·사용 기록·설정**이며 버튼으로 조작합니다.
 사이드바·대화 패널에도 **codexm 관리** 진입점을 선언하며 실제 노출은 호스트에 따릅니다.
-0.5.2의 명령 진입은 로컬 GUI 채팅 입력창에서 `@codexm manage` / `@codexm accounts`입니다.
+0.5.3의 명령 진입은 로컬 GUI 채팅 입력창에서 `@codexm manage` / `@codexm accounts`입니다.
 `@codexm-manage` / `@codexm-accounts`도 같은 명령이며 CLI는 `$` 표기를 사용합니다.
 최초 설치 후 **Settings → Hooks** 또는 공식 CLI의 `/hooks`에서 codexm의
 `UserPromptSubmit` 훅을 검토·신뢰해야 합니다. 신뢰된 훅이 명령을 가로채 공식 플러그인

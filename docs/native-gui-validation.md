@@ -1,5 +1,42 @@
 # codexm 앱 내 패널·명령 스킬·현재 대화 등록 검증
 
+## 0.5.3 모델 호출 없는 명령 훅 (2026-10-13)
+
+정확한 `@codexm manage`, `@codexm-manage`, `@codexm accounts` 및 계정 전용 명령을
+동기 `UserPromptSubmit`에서 처리한다. 공식 `codex://plugins/.../app/codexm_open`
+딥링크로 화면을 요청하고, 성공·실패 모두 `decision: block`으로 모델 제출을 차단한다.
+일반 입력은 `{}`로 통과한다. 이 핸들러는 관리 설정·계정·대화 DB를 읽지 않는다.
+
+공식 CLI 0.162.1과 앱 번들 0.162.0-alpha.17.2 양쪽에서 다음을 확인했다.
+
+- 플러그인 설치, MCP 연결, 설정 진입점·두 열기 도구·UI resource와 스킬 3개 발견.
+- 설치 직후 명령 훅 1개가 `untrusted`로 발견됨. 테스트 전용 임시 HOME에서 해당
+  fixture 해시만 신뢰한 뒤 실행했다. 운영 신뢰 설정은 수정하지 않았다.
+- 일반 텍스트·Markdown 플러그인 멘션·구조화된 plugin/skill 입력을 포함한 명령 5개와
+  링크 열기 실패: 모델 HTTP 요청 **0회**. 일반 입력은 로컬 가짜 모델 서버로 **1회**.
+- 망가진 관리 설정에서도 설치 실행 파일의 일반 입력 훅은 정상 통과.
+- 운영 계정 사용·운영 대화 턴 생성·실제 OS 링크 열기는 **0회**. 훅의 OS opener만
+  시험 영수증 함수로 대체하고 나머지 공식 engine → command → block 흐름을 사용했다.
+
+단위·회귀 검증: `go test -race ./...`, `go vet ./...`, JS 테스트 16개,
+스킬 3개의 `quick_validate.py` 통과. UI는 초기 deep link와 후속 경로 변경으로
+작업/계정 탭을 선택하고, 관련 없는 theme 갱신이 사용자 탭 선택을 덮어쓰지 않는다.
+
+호환성 시험에서 root `plugin.json`을 둔 portable AgentPlugin 형식은 훅을 발견하지
+못했다. 공식 [loader](https://github.com/openai/codex/blob/main/codex-rs/core-plugins/src/loader.rs)도
+해당 형식의 훅 로드를 건너뛴다. 현재 설치는 공식 `.codex-plugin/plugin.json` 형식을
+사용하며 root portable manifest를 설치하지 않는다. 기존 MCP Apps 기능은 두 엔진에서
+다시 검증했다. 0.5.2의 동시 계정 기본값 수정도 병합해 유지했다.
+
+운영 사용의 남은 단계: 사용자가 Settings → Hooks 또는 공식 CLI `/hooks`에서 현재
+codexm 명령 훅을 검토·신뢰해야 한다. 새 명령 입력으로 실제 데스크톱 패널이 열린
+화면은 직접 검증하지 못했다. 기존 패널 조작 기록과 이 새 명령 시험을 혼동하지 않는다.
+`/manage`의 GUI slash 라우팅은 지원으로 보장하지 않는다.
+
+private 실행 로그: `~/.local/state/codexm/validation/prompt-command-20261013/`.
+계획은 [모델 없는 명령 계획](model-free-entrypoints-plan.md), 사용법은
+[플러그인 안내](local-plugin.md#명령으로-화면-열기)를 따른다.
+
 2026-10-13, 로컬 macOS ARM64, 공식 Codex CLI/engine 0.162.1.
 계획은 [native-gui-plan.md](native-gui-plan.md)에 먼저 commit했다.
 별도 앱·제품 웹 서버·공개 포트와 앱 bundle 패치는 추가하지 않았다.
