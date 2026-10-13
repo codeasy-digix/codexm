@@ -36,6 +36,11 @@ func TestPromptHookProcess(t *testing.T) {
 			return errors.New("fixture opener unavailable")
 		}
 		return nil
+	}, func(_ context.Context, sessionID string) (string, error) {
+		if err := os.WriteFile(receipt+".registered", []byte(sessionID), 0600); err != nil {
+			return "", err
+		}
+		return "codexm 관리 등록 완료", nil
 	})
 	if err != nil {
 		os.Exit(1)
@@ -192,6 +197,16 @@ func TestOfficialPromptCommandsPreventInference(t *testing.T) {
 		{"$codexm-accounts", nil},
 		{"$codexm-manage", map[string]any{"type": "skill", "name": "codexm-manage", "path": filepath.Join(i.Config.Runtime.SharedCodexHome, "plugins", "cache", "local-personal", "codexm", config.Version, "skills", "codexm-manage", "SKILL.md")}},
 	}
+	for _, skill := range []string{"codexm-manage", "codexm-accounts"} {
+		path := filepath.Join(i.Config.Runtime.SharedCodexHome, "plugins", "cache", "local-personal", "codexm", config.Version, "skills", skill, "SKILL.md")
+		qualified := "codexm:" + skill
+		for _, prompt := range []string{"$" + qualified, "[$" + qualified + "](" + path + ")"} {
+			cases = append(cases, struct {
+				prompt string
+				extra  map[string]any
+			}{prompt, map[string]any{"type": "skill", "name": qualified, "path": path}})
+		}
+	}
 	for _, tc := range cases {
 		prompt := tc.prompt
 		if !run(prompt, tc.extra) {
@@ -216,8 +231,28 @@ func TestOfficialPromptCommandsPreventInference(t *testing.T) {
 	if !run("@codexm manage", nil) || inference.Load() != 0 {
 		t.Fatal("failed opener fell through to inference")
 	}
+	registrationPath := filepath.Join(i.Config.Runtime.SharedCodexHome, "plugins", "cache", "local-personal", "codexm", config.Version, "skills", "codexm", "SKILL.md")
+	for _, prompt := range []string{"@codexm", "[@codexm](plugin://codexm@local-personal)", "@codexm register", "[$codexm:codexm](" + registrationPath + ")"} {
+		if !run(prompt, map[string]any{"type": "skill", "name": "codexm:codexm", "path": registrationPath}) || inference.Load() != 0 {
+			t.Fatal("registration command reached inference", prompt, inference.Load())
+		}
+		registered, err := os.ReadFile(receipt + ".registered")
+		if err != nil || string(registered) != thread.Thread.ID {
+			t.Fatal("hook did not register its own session", err, string(registered))
+		}
+	}
 	if !run("normal prompt for the local inference sentinel", nil) || inference.Load() != 1 {
 		t.Fatal("ordinary prompt did not reach the local sentinel", inference.Load())
 	}
-	t.Log("five command forms including structured plugin/skill input and opener failure: 0 inference requests; ordinary prompt: 1 local sentinel request; live account and GUI calls: 0")
+	if err = os.Remove(receipt); err != nil {
+		t.Fatal(err)
+	}
+	managePath := filepath.Join(i.Config.Runtime.SharedCodexHome, "plugins", "cache", "local-personal", "codexm", config.Version, "skills", "codexm-manage", "SKILL.md")
+	if !run("[$codexm:codexm-manage]("+managePath+") 이 채팅에 적용되었는지 확인", map[string]any{"type": "skill", "name": "codexm:codexm-manage", "path": managePath}) || inference.Load() != 2 {
+		t.Fatal("additional instructions were intercepted", inference.Load())
+	}
+	if _, err = os.Stat(receipt); !os.IsNotExist(err) {
+		t.Fatal("additional instructions opened the panel", err)
+	}
+	t.Logf("%d panel command forms, 4 current-session registration forms and opener failure: 0 inference requests; ordinary and follow-up prompts: 2 local sentinel requests; live account and GUI calls: 0", len(cases))
 }

@@ -32,3 +32,28 @@
 공식 근거: [UserPromptSubmit](https://learn.chatgpt.com/docs/hooks#userpromptsubmit),
 [플러그인 훅](https://learn.chatgpt.com/docs/hooks#plugin-bundled-hooks),
 [MCP App 진입점과 딥링크](https://developers.openai.com/plugins/build/extensions).
+
+## GUI 스킬 이름 수정 (2026-10-14)
+
+앱에서 실제 선택한 스킬은 `[$codexm:codexm-manage](.../SKILL.md)`로 전송된다.
+0.5.3 처리기는 `codexm:` 네임스페이스를 인식하지 않아, 승인된 훅도 이 입력을
+일반 대화로 통과시켰다. 서비스와 MCP 연결 문제와는 구분한다.
+
+1. 정확한 codexm 네임스페이스와 manage/accounts 스킬의 일반 텍스트·Markdown
+   표현을 인식한다. 다른 플러그인, 경로 불일치, 덧붙인 지시는 계속 통과시킨다.
+2. 실제 GUI 입력과 구조화된 skill 항목을 공식 CLI·앱 엔진 회귀 시험에 추가한다.
+   관리/계정 명령은 모델 요청 0회, 추가 지시는 일반 모델 경로를 유지해야 한다.
+3. 0.5.5로 소스와 사용법을 갱신하고 로컬 CLI 및 공식 플러그인 캐시에 반영한다.
+   기존 계정 기본값 변경도 포함하며, hook 실행 명령과 사용자 신뢰 기록은 수정하지 않는다.
+4. `.home`의 복구 revision을 갱신하고 commit/push한다. 기존 관리 서비스와 worker,
+   인증, 대화·목표는 유지한다. 운영 GUI 확인 결과는 격리 시험과 따로 기록한다.
+
+### 모델 없는 현재 채팅 등록 추가
+
+같은 날 사용자는 관리 적용도 LLM을 거치지 않도록 요청했다. `@codexm` 단독 멘션과
+`$codexm`(앱의 `$codexm:codexm` 포함), 명시적 `@codexm register`는 현재 대화를
+코드로 등록하는 명령으로 처리한다. 관리 화면은 manage, 계정 화면은 accounts로 구분한다.
+등록은 공식 훅의 `session_id`만 사용하고 최신 대화나 임의의 다른 대화를 추측하지 않는다.
+기존 등록의 idempotency, 원래 GUI writer·계정·goal 보존 규칙을 재사용하며, 호출이
+성공하거나 실패해도 이 단독 명령은 모델에 보내지 않는다. 지시가 더 붙은 입력은
+일반 대화로 통과한다. 누락된 세션 ID·설정·서비스 오류와 등록의 무모델 실행을 시험한다.

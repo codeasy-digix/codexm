@@ -74,14 +74,17 @@ codexm daemon unwatch     # 복구 감시 서비스 중지, 공식 데몬 유지
 공식 플러그인 확장으로 **Plugins → codexm → codexm 관리 / 계정 관리** 버튼을
 선언합니다. 같은 패널의 메뉴는 **작업·계정·사용 기록·설정**이며 버튼으로 조작합니다.
 사이드바·대화 패널에도 **codexm 관리** 진입점을 선언하며 실제 노출은 호스트에 따릅니다.
-0.5.3의 명령 진입은 로컬 GUI 채팅 입력창에서 `@codexm manage` / `@codexm accounts`입니다.
-`@codexm-manage` / `@codexm-accounts`도 같은 명령이며 CLI는 `$` 표기를 사용합니다.
+로컬 Codex 입력창에서 `$codexm-manage` / `$codexm-accounts` 스킬을 사용합니다.
+0.5.5는 GUI가 붙이는 `$codexm:codexm-manage` / `$codexm:codexm-accounts`와
+Markdown 스킬 링크도 처리합니다. `@codexm manage` / `@codexm accounts` 텍스트도
+지원하지만 `@` 목록의 파일 참조 선택과는 구분합니다.
 최초 설치 후 **Settings → Hooks** 또는 공식 CLI의 `/hooks`에서 codexm의
 `UserPromptSubmit` 훅을 검토·신뢰해야 합니다. 신뢰된 훅이 명령을 가로채 공식 플러그인
 딥링크를 열고 모델 제출을 차단합니다. 훅이 꺼졌거나 신뢰되지 않은 환경에는 이 보장이 없습니다.
 `/manage`를 새 native slash 명령으로 등록하는 방식은 아닙니다. 화면 열기는 대화 등록·작업 실행·계정 변경을 하지 않습니다.
-로컬 채팅에 관리 적용을 명시하면 bundled skill이 그 대화를 등록합니다. 플러그인 선택이나
-화면 열기만으로 등록하지 않습니다. 원래 앱/CLI가 쓰기 권한을 보유하면 계정 인계는
+`@codexm` 또는 `$codexm`만 전송하면 같은 훅이 현재 채팅을 모델 호출 없이 등록합니다.
+명시적인 `@codexm register`도 같습니다. 플러그인을 선택만 하거나 관리 화면만 열면
+등록하지 않습니다. 추가 지시가 붙은 문장은 일반 대화입니다. 원래 앱/CLI가 쓰기 권한을 보유하면 계정 인계는
 해제 후 실행되며, 현재 GUI의 대화 하나만 투명하게 계정을 바꾸는 공식 API는 미지원입니다.
 앱 파일을 수정하지 않으며 GUI 업데이트/종료와 독립적으로 관리 서비스가 유지됩니다.
 `codexm plugin doctor`는 공식 엔진의 MCP/skill/hook 발견, 훅 신뢰 상태와 설치 캐시 버전을 검사합니다.

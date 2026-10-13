@@ -1,20 +1,31 @@
 ---
 name: codexm
-description: Handle codexm manage/accounts commands, explain management buttons, inspect registration status, or register the current local conversation when the user explicitly requests management.
+description: Register the current local chat through the codexm command hook, or inspect management status and handle explicit management requests.
 ---
 
-Exact `@codexm manage` / `@codexm accounts` commands are intercepted before
+Exact `@codexm` / `$codexm` / `$codexm:codexm` mentions and `@codexm register`
+register the current local chat before inference. The hook passes its own
+`session_id` to the running manager; it never guesses another conversation.
+Registration is idempotent, preserves the original writer, account and goal,
+and does not start a model turn. Account handoff still requires writer release.
+Additional task instructions after the mention are ordinary prompts, not this
+standalone registration command.
+
+Exact `@codexm manage` / `@codexm accounts` commands are also intercepted before
 inference by the plugin's synchronous `UserPromptSubmit` hook, which opens the
 official MCP App deep link and blocks prompt submission. The dedicated commands
 `@codexm-manage` / `@codexm-accounts` (CLI: `$codexm-manage` /
-`$codexm-accounts`) use the same route. Hook execution requires the user's
+`$codexm-accounts`) use the same route, including the desktop picker's `$codexm:codexm-manage` and
+`$codexm:codexm-accounts` skill links. Hook execution requires the user's
 review/trust in official Hooks settings (CLI: `/hooks`) in a local Codex
 conversation. A changed hook requires review again. Never forge trust files or
 enable a production trust bypass. No native slash command is registered.
 
 If an exact command reaches this model, the no-model route did not run. Explain
 that the hook must be enabled and trusted, then stop without opening it through
-a model tool call. For a separate natural-language open request, call `codexm_open`
+a model tool call. If already verified, report a command-routing failure instead
+of asking for repeated trust. A skill followed by additional instructions is an
+ordinary request, not an exact command. For a separate natural-language open request, call `codexm_open`
 or `codexm_accounts_open` once as appropriate and end the turn.
 After an open call do not inspect files, list chats, poll usage or investigate
 browser IDs unless the user separately asks. An unavailable tool is a stopping
@@ -24,8 +35,9 @@ Explain that result once, point to the official Hooks setup and end the
 turn. If the tool is not exposed, report that exact condition without inferring
 a connection failure.
 
-An explicit `@codexm` invocation asking to apply management to this chat authorizes
-registration of this existing conversation. Run `~/.local/bin/codexm register --current --json`.
+For a separate natural-language request explicitly asking to apply management to
+this chat, run `~/.local/bin/codexm register --current --json`. This is a model-assisted
+fallback requested by the user, not the normal standalone command route.
 Use `--account NAME` only if the user names a worker account. The CLI resolves the
 current `CODEX_THREAD_ID`; do not substitute the newest thread or create a chat.
 
@@ -53,7 +65,8 @@ The command hook requires local plugin hook support. Cloud conversations and
 hosts that have not enabled/trusted it cannot promise a model-free command.
 Do not describe `/setting` or `/manage` as a newly registered native slash command.
 An open request alone never authorizes chat
-registration, account login or starting work. Do not launch a separate app or
+registration, account login or starting work. The standalone `@codexm` command
+specifically requests registration. Do not launch a separate app or
 website. If the host has not loaded the local MCP connection, report that exact
 condition; a filesystem link is not a plugin invocation.
 
