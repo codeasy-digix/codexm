@@ -294,7 +294,7 @@ func TestPlainInputSearchesInsteadOfSubmittingWork(t *testing.T) {
 		t.Fatal("list Enter did not launch a separate terminal")
 	}
 	for _, c := range slashCommands {
-		if strings.HasPrefix(c.Name, "codexm_") || c.Name == "model" || c.Name == "goal" || c.Name == "permissions" {
+		if strings.HasPrefix(c.Name, "codexm_") || c.Name == "model" || c.Name == "permissions" {
 			t.Fatal("native command emulation remains", c.Name)
 		}
 	}

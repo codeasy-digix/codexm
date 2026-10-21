@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/activity"
+	"github.com/codeasy-digix/codexm/internal/application"
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/display"
@@ -36,10 +37,11 @@ type pollMsg struct {
 	Catalog catalog.List
 }
 type replyMsg struct {
-	Command string
-	Data    json.RawMessage
-	Error   error
-	Epoch   uint64
+	Command     string
+	Data        json.RawMessage
+	Error       error
+	Epoch       uint64
+	OperationID string
 }
 type tickMsg time.Time
 type openMsg struct {
@@ -48,6 +50,20 @@ type openMsg struct {
 }
 
 type Model struct {
+	App              *application.App
+	Context          context.Context
+	Management       managementState
+	Tab              string
+	MouseDisabled    bool
+	ListOffset       int
+	TaskForm         taskFormState
+	LogReport        jobs.WorkLog
+	LogFilter        logFilter
+	ProjectFilter    string
+	AccountFilter    string
+	ManagedOnly      bool
+	ActiveOnly       bool
+	Stars            map[string]bool
 	Config           config.Config
 	Self             string
 	ClientID         string
@@ -60,6 +76,7 @@ type Model struct {
 	Filter           string
 	StateFilter      string
 	Target           string
+	ManagerAll       bool
 	Input            textarea.Model
 	Detail           viewport.Model
 	Threads          []cr.Thread
@@ -90,6 +107,7 @@ type Model struct {
 	AutoFollow       bool
 	AccountJobID     string
 	AccountFrom      string
+	AccountRunID     string
 	AccountTitle     string
 	AccountNames     []string
 	AccountSelected  int
@@ -105,7 +123,7 @@ func New(c config.Config, self string) Model {
 	in.SetHeight(3)
 	in.ShowLineNumbers = false
 	in.Focus()
-	m := Model{Config: c, Self: self, ClientID: jobs.ID(), Input: in, Detail: viewport.New(), Width: 100, Height: 30, Focus: "input", Screen: "agents", Target: "search", AutoFollow: true, Notice: "감시 프로그램 연결 중…"}
+	m := Model{Config: c, Self: self, ClientID: jobs.ID(), Input: in, Detail: viewport.New(), Width: 100, Height: 30, Focus: "input", Screen: "agents", Tab: "tasks", Target: "search", AutoFollow: true, Notice: "감시 프로그램 연결 중…", Stars: map[string]bool{}}
 	if c.Manager.Account == "" {
 		m.Screen = "setup"
 		m.Focus = "list"
@@ -116,7 +134,13 @@ func New(c config.Config, self string) Model {
 	return m
 }
 func Run(c config.Config, self string) error {
-	p := tea.NewProgram(New(c, self))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(c, self)
+	m.Context = ctx
+	m.App = application.New(ctx, c, self)
+	defer m.App.Close()
+	p := tea.NewProgram(m)
 	result, e := p.Run()
 	if m, ok := result.(Model); ok {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -180,6 +204,23 @@ func (m Model) poll() tea.Cmd {
 	}
 }
 func (m Model) request(command string, args any) tea.Cmd {
+	if method, ok := applicationMethods[command]; ok && m.App != nil {
+		if command == "switch-account" {
+			if a, ok := args.(supervisor.JobArgs); ok {
+				var fields map[string]any
+				raw, _ := json.Marshal(a)
+				_ = json.Unmarshal(raw, &fields)
+				fields["run_id"] = a.RunID
+				args = fields
+			}
+		}
+		call := m.appCall(method, args)
+		return func() tea.Msg {
+			msg := call().(replyMsg)
+			msg.Command = command
+			return msg
+		}
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 		defer cancel()
@@ -237,6 +278,9 @@ func (m *Model) openSelected(j jobs.Job) tea.Cmd {
 func (m Model) filtered() []jobs.Job {
 	out := []jobs.Job{}
 	for _, j := range m.allJobs() {
+		if m.ProjectFilter != "" && j.Cwd != m.ProjectFilter || m.AccountFilter != "" && j.Account != m.AccountFilter || m.ManagedOnly && !j.Managed || m.ActiveOnly && jobs.Terminal(j.State) {
+			continue
+		}
 		if m.StateFilter != "" && j.State != m.StateFilter {
 			continue
 		}
@@ -245,6 +289,15 @@ func (m Model) filtered() []jobs.Job {
 		}
 		out = append(out, j)
 	}
+	slices.SortStableFunc(out, func(a, b jobs.Job) int {
+		if m.Stars[a.ID] == m.Stars[b.ID] {
+			return 0
+		}
+		if m.Stars[a.ID] {
+			return -1
+		}
+		return 1
+	})
 	return out
 }
 func (m *Model) selectIndex(delta int) {
@@ -270,6 +323,26 @@ func (m *Model) focusInput(value string) {
 }
 func (m *Model) returnInput() { m.Focus = "input"; m.Input.Focus() }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		if key.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		if key.String() == "ctrl+g" {
+			m.MouseDisabled = !m.MouseDisabled
+			m.Notice = "마우스 " + map[bool]string{true: "끔 · 터미널 기본 선택/복사 · Ctrl+G로 켜기", false: "켬 · 탭/목록/버튼 클릭 · Ctrl+G로 끄기"}[m.MouseDisabled]
+			return m, nil
+		}
+	}
+	m.preparePanelForms()
+	if cmd, handled := m.managementUpdate(msg); handled {
+		return m, cmd
+	}
+	if cmd, handled := m.taskFormUpdate(msg); handled {
+		return m, cmd
+	}
+	if cmd, handled := m.dashboardUpdate(msg); handled {
+		return m, cmd
+	}
 	m.prepareDetail()
 	var cmd tea.Cmd
 	switch v := msg.(type) {
@@ -284,10 +357,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Screen = "agents"
 		m.Focus = "input"
 		m.Input.Focus()
-		m.Notice = "연결됨 · " + m.Config.Supervisor.TmuxSession + " · tmux attach -t " + m.Config.Supervisor.TmuxSession
+		m.Notice = "관리 서비스 연결됨 · 작업은 화면 종료 후에도 유지됩니다."
 		return m, tea.Batch(m.poll(), tick())
 	case tickMsg:
 		if m.Ready {
+			if m.Management.Mode == "accounts" || m.Management.Mode == "account" {
+				return m, tea.Batch(m.poll(), m.appCall("snapshot", nil), tick())
+			}
 			if m.LogsOpen {
 				return m, tea.Batch(m.poll(), m.request("logs", supervisor.JobArgs{ID: m.LogsJob}), tick())
 			}
@@ -361,10 +437,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.Notice = v.Command + " 처리됨"
 		switch v.Command {
-		case "new", "resume":
+		case "new", "resume", "register":
 			var j jobs.Job
 			if json.Unmarshal(v.Data, &j) == nil {
 				m.SelectedID = j.ID
+				m.TaskForm = taskFormState{}
 				m.Screen = "agents"
 				m.Focus = "input"
 				m.Input.Focus()
@@ -413,7 +490,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = json.Unmarshal(v.Data, &as)
 			m.Status.Accounts = as
 			m.DetailText = ""
-			m.Panel = "accounts"
+			if m.Tab != "usage" || m.Panel != "usage" {
+				m.Panel = "accounts"
+			}
 			m.Screen = "agents"
 		case "logs":
 			if !m.LogsOpen {
@@ -424,11 +503,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Notice = err.Error()
 				return m, nil
 			}
+			m.LogReport = report
 			scope := "전체 세션"
 			if m.LogsJob != "" {
 				scope = "선택한 작업 " + m.LogsJob
 			}
-			m.DetailText = "작업로그 · " + scope + "\n전체: /logs all · 선택 작업: /logs\n\n" + activity.Format(report)
+			m.DetailText = "작업로그 · " + scope + "\n전체: /logs all · 선택 작업: /logs\n\n" + activity.Format(m.filteredLogs())
 			m.Panel = "logs"
 			m.Screen = "agents"
 		case "usage":
@@ -535,7 +615,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.AccountSelected = min(len(m.AccountNames)-1, m.AccountSelected+1)
 			case "enter":
 				if len(m.AccountNames) > 0 {
-					a := supervisor.JobArgs{ID: m.AccountJobID, Account: m.AccountNames[m.AccountSelected], ExpectedAccount: m.AccountFrom, OperationID: jobs.ID()}
+					a := supervisor.JobArgs{ID: m.AccountJobID, Account: m.AccountNames[m.AccountSelected], RunID: m.AccountRunID, ExpectedAccount: m.AccountFrom, OperationID: jobs.ID()}
 					m.Screen = "agents"
 					m.returnInput()
 					m.Notice = "선택한 계정 확인 및 전환 접수 중…"
@@ -755,6 +835,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 func (m *Model) beginNew() {
+	m.Target = "search"
+	m.beginTaskForm("new")
+}
+
+// Kept for compatibility with saved wizard state; new sessions use an editable form.
+func (m *Model) beginLegacyNew() {
 	m.Screen = "new"
 	m.Target = "search"
 	m.Wizard = []string{"cwd", "account", "title"}
@@ -823,6 +909,9 @@ func (m *Model) submit(text string) tea.Cmd {
 	}
 	if m.Target == "manager" {
 		j, _ := m.selected()
+		if m.ManagerAll {
+			j = jobs.Job{}
+		}
 		if j.ID != "" && !m.registered(j) {
 			m.Notice = "이 대화는 아직 관리 작업이 아닙니다. /manage로 등록하세요."
 			return nil
@@ -863,6 +952,7 @@ func (m *Model) slash(text string) tea.Cmd {
 	case "quit", "exit":
 		return tea.Quit
 	case "agents":
+		m.Tab = "tasks"
 		m.Target = "search"
 		m.Focus = "list"
 		m.Input.Blur()
@@ -888,27 +978,31 @@ func (m *Model) slash(text string) tea.Cmd {
 		m.Notice = "새 터미널에 공식 Codex 화면 연결 중…"
 		return m.openSelected(j)
 	case "manager":
+		if m.ManagerAll {
+			j = jobs.Job{}
+		}
 		if j.ID != "" && !m.registered(j) {
 			m.Notice = "이 대화는 아직 관리 작업이 아닙니다. /manage로 등록하세요."
 			return nil
 		}
 		m.Target = "manager"
+		m.Tab = "manager"
 		m.Notice = "입력 대상: 관리자 · 모델 호출 · /filter 로 검색 입력 복귀"
 		if arg != "" {
 			return m.request("manager", supervisor.JobArgs{ID: j.ID, Text: arg})
 		}
 	case "accounts":
-		m.Notice = "계정 한도 조회 중… (모델 호출 없음)"
-		return m.request("accounts", nil)
+		return m.openAccountManagement()
 	case "account":
 		if j.ID == "" || !m.registered(j) || !j.Managed || j.Kind == "group" {
 			m.Notice = "관리 중인 대화를 선택하세요. 기존 대화는 /manage로 등록할 수 있습니다."
 			return nil
 		}
 		if arg != "" {
-			return m.request("switch-account", supervisor.JobArgs{ID: j.ID, Account: arg, ExpectedAccount: j.Account, OperationID: jobs.ID()})
+			return m.request("switch-account", supervisor.JobArgs{ID: j.ID, Account: arg, RunID: j.RunID, ExpectedAccount: j.Account, OperationID: jobs.ID()})
 		}
 		m.AccountJobID, m.AccountFrom, m.AccountTitle = j.ID, j.Account, j.Title
+		m.AccountRunID = j.RunID
 		m.AccountNames = slices.Clone(m.Config.WorkerAccounts.Priority)
 		m.AccountSelected = max(0, slices.Index(m.AccountNames, j.Account))
 		m.Screen, m.Focus = "account", "list"
@@ -922,16 +1016,19 @@ func (m *Model) slash(text string) tea.Cmd {
 		}
 		return m.request("set-manager", supervisor.JobArgs{Account: arg})
 	case "settings":
-		return m.request("settings", nil)
+		return m.openSettingsEditor()
 	case "usage":
+		m.Tab = "usage"
 		m.Panel = "usage"
 		return tea.Batch(m.poll(), m.request("usage", nil))
 	case "logs":
+		m.Tab = "logs"
 		if arg != "" && arg != "all" {
 			m.Notice = "/logs 또는 /logs all"
 			return nil
 		}
 		m.LogsJob = ""
+		m.LogReport = jobs.WorkLog{}
 		m.LogsOpen = true
 		if arg != "all" {
 			if j.ID == "" {
@@ -955,6 +1052,9 @@ func (m *Model) slash(text string) tea.Cmd {
 		}
 		m.Notice = "이전 대화 페이지가 없습니다."
 	case "pause", "resume", "resume-job", "manage", "stop", "complete", "events", "read":
+		if command == "read" || command == "events" {
+			m.Tab = "tasks"
+		}
 		if j.ID == "" {
 			m.Notice = "작업을 선택하세요."
 			return nil
@@ -964,12 +1064,18 @@ func (m *Model) slash(text string) tea.Cmd {
 			api = "resume-job"
 		}
 		if !m.registered(j) && api != "read" {
-			if api == "manage" || api == "resume-job" {
+			if api == "manage" {
+				return m.request("register", supervisor.JobArgs{ThreadID: j.ThreadID})
+			}
+			if api == "resume-job" {
 				m.WantCommand = api
 				return m.request("resume", supervisor.JobArgs{ThreadID: j.ThreadID})
 			}
 			m.Notice = "이 대화는 아직 관리 작업이 아닙니다. /open 또는 /manage로 등록하세요."
 			return nil
+		}
+		if !m.registered(j) && api == "read" {
+			return m.request("read", supervisor.JobArgs{ThreadID: j.ThreadID})
 		}
 		return m.request(api, supervisor.JobArgs{ID: j.ID, ThreadID: j.ThreadID})
 	case "filter":
@@ -985,7 +1091,12 @@ func (m *Model) slash(text string) tea.Cmd {
 		m.SelectedID = ""
 		return m.poll()
 	case "shutdown":
-		return m.request("shutdown", nil)
+		m.beginTaskForm("shutdown")
+	case "send", "goal", "requests", "unmanage", "log-filter", "filters", "resolve-action", "actions":
+		m.beginTaskForm(command)
+	case "mouse":
+		m.MouseDisabled = !m.MouseDisabled
+		m.Notice = "마우스 사용 전환 · Ctrl+G로도 변경할 수 있습니다."
 	case "help":
 		m.DetailText = commandHelp()
 	default:
@@ -1027,7 +1138,7 @@ func plain(s string) string {
 		return -1
 	}, ansi.Strip(s))
 }
-func (m Model) View() tea.View {
+func (m Model) legacyView() tea.View {
 	w := max(20, m.Width)
 	var b strings.Builder
 	if m.Screen == "setup" {
@@ -1201,9 +1312,22 @@ func (m Model) content() string {
 func (m *Model) prepareDetail() {
 	width := max(10, m.Width-2)
 	height := m.detailHeight()
+	if m.Screen == "agents" && !m.managementVisible() && m.TaskForm.Kind == "" {
+		_, hits := m.dashboard()
+		for _, hit := range hits {
+			if hit.Action == "area:detail" {
+				width, height = hit.W, max(1, hit.H)
+				break
+			}
+		}
+	}
 	m.Detail.SetWidth(width)
 	m.Detail.SetHeight(height)
-	m.Detail.SetContent(ansi.Wrap(plain(m.content()), width, ""))
+	content := m.content()
+	if m.Tab == "logs" {
+		content = m.logsText()
+	}
+	m.Detail.SetContent(ansi.Wrap(plain(content), width, ""))
 	if m.AutoFollow && m.Focus != "detail" && m.Panel == "" && m.DetailText == "" {
 		m.Detail.GotoBottom()
 	}

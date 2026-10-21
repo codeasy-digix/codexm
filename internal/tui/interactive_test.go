@@ -1,0 +1,98 @@
+package tui
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/application"
+	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/jobs"
+	"github.com/codeasy-digix/codexm/internal/settings"
+	"github.com/codeasy-digix/codexm/internal/supervisor"
+)
+
+// This opt-in PTY fixture uses private temporary config/history/account paths and
+// a recording RPC endpoint. It cannot start an engine or contact an LLM.
+type interactiveFixtureModel struct{ Model }
+
+func (m interactiveFixtureModel) Init() tea.Cmd { return tea.Batch(m.poll(), tick()) }
+
+type interactiveAccountReader struct{}
+
+func (interactiveAccountReader) Read(_ context.Context, name string) accounts.Snapshot {
+	return accounts.Snapshot{Account: name, Authenticated: true}
+}
+
+func TestInteractiveDashboardFixture(t *testing.T) {
+	if os.Getenv("CODEXM_TUI_FIXTURE") != "1" {
+		t.Skip("opt-in private PTY fixture")
+	}
+	f, m := startTUIFixture(t)
+	for _, name := range m.Config.WorkerAccounts.Priority {
+		dir := filepath.Join(m.Config.Runtime.AccountsDir, name)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	st := supervisor.Status{Version: "fixture", ManagerAccount: "account-backup", WorkerPriority: m.Config.WorkerAccounts.Priority, NativeDefaultAccount: "account-work", Health: "격리 테스트", ServiceMode: true}
+	for _, name := range m.Config.WorkerAccounts.Priority {
+		st.Accounts = append(st.Accounts, accounts.Snapshot{Account: name, Authenticated: true, CheckedAt: now, Single: accounts.Bucket{Primary: &accounts.Window{UsedPercent: 25}, Secondary: &accounts.Window{UsedPercent: 40}}})
+	}
+	for i := 0; i < 35; i++ {
+		st.Jobs = append(st.Jobs, jobs.Job{ID: fmt.Sprintf("fixture-job-%02d", i), ThreadID: fmt.Sprintf("fixture-thread-%02d", i), RunID: fmt.Sprintf("fixture-run-%02d", i), Title: fmt.Sprintf("격리 작업 %02d", i), Kind: "chat", Managed: true, State: "idle", Account: "account-work", Cwd: m.Config.Runtime.SharedCodexHome})
+	}
+	log := jobs.WorkLog{At: now, Note: "격리된 모의 기록", Runs: []jobs.Run{{ID: "fixture-run-00", JobID: st.Jobs[0].ID, Account: "account-work", StartedAt: now.Add(-10 * time.Minute), UsageStart: &jobs.AccountUsage{Primary: &jobs.UsageWindow{UsedPercent: 10}}, UsageLatest: &jobs.AccountUsage{Primary: &jobs.UsageWindow{UsedPercent: 25}}}}, Changes: []jobs.WorkChange{{ID: "change", JobID: st.Jobs[0].ID, From: "account-secondary", To: "account-work", At: now.Add(-20 * time.Minute), Reason: "격리 테스트 전환"}}}
+	f.Handler = func(call supervisor.Call) (any, error) {
+		switch call.Command {
+		case "status":
+			return st, nil
+		case "snapshot":
+			return map[string]any{"jobs": st.Jobs, "accounts": st.Accounts}, nil
+		case "logs":
+			return log, nil
+		case "accounts":
+			return st.Accounts, nil
+		case "usage":
+			return map[string]any{"manager": []any{}, "workers": []any{}}, nil
+		case "models":
+			return map[string]any{"data": []any{map[string]any{"id": "fixture-model", "model": "fixture-model", "displayName": "격리 모의 모델"}}}, nil
+		case "settings-save":
+			return settings.Save(context.Background(), m.Config, interactiveAccountReader{}, call.Args)
+		case "read":
+			return map[string]any{"thread": map[string]any{"id": "fixture-thread-00", "name": "격리 미리보기"}}, nil
+		}
+		return true, nil
+	}
+	m.Ready = true
+	m.Width = 120
+	m.Height = 40
+	m.Status = st
+	m.SelectedID = st.Jobs[0].ID
+	fake := &managementFakeLogin{}
+	m.App.NewLogins = func(_ context.Context, _ config.Config) application.LoginBroker { return fake }
+	program := tea.NewProgram(interactiveFixtureModel{m})
+	if _, err := program.Run(); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	count := len(f.Operations)
+	f.mu.Unlock()
+	evidence := map[string]any{"operations": count, "fake_login_starts": fake.Starts, "fake_login_cancels": fake.Cancels, "model_calls": 0, "private_config": true}
+	if file := os.Getenv("CODEXM_TUI_FIXTURE_REPORT"); file != "" {
+		raw, _ := json.MarshalIndent(evidence, "", "  ")
+		if err := os.WriteFile(file, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

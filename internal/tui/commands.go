@@ -24,7 +24,7 @@ var slashCommands = []slashCommand{
 	{Name: "open", Description: "선택한 작업을 새 터미널의 공식 Codex로 열기"},
 	{Name: "new", Description: "새 채팅을 만들고 새 터미널에서 열기"},
 	{Name: "chats", Args: "[검색어]", Description: "전체 대화 목록 검색"},
-	{Name: "accounts", Description: "모든 계정 한도를 새로 조회 (모델 호출 없음)"},
+	{Name: "accounts", Description: "계정 추가·로그인·등록 삭제·기본 로그인 관리"},
 	{Name: "account", Args: "[이름]", Description: "선택 세션의 계정 변경 · 이름 생략 시 선택 메뉴"},
 	{Name: "manager-account", Args: "[이름]", Description: "저장된 관리자 계정 조회 또는 변경"},
 	{Name: "pause", Description: "선택 작업 일시 중지"},
@@ -32,13 +32,22 @@ var slashCommands = []slashCommand{
 	{Name: "stop", Description: "선택 작업 실행 종료"},
 	{Name: "complete", Description: "선택 작업 완료 처리"},
 	{Name: "manage", Description: "기존 대화를 관리 목록에 보관"},
+	{Name: "unmanage", Description: "선택 대화의 관리 등록 해제 · 대화 보존"},
+	{Name: "send", Description: "선택 작업에 추가 지시 작성 · 전송 전 확인"},
+	{Name: "goal", Description: "선택 작업의 목표·예산 편집"},
+	{Name: "requests", Description: "선택 작업의 질문·승인 요청에 응답"},
 	{Name: "read", Description: "선택 작업의 대화 미리보기"},
 	{Name: "older", Description: "이전 대화 미리보기 페이지"},
 	{Name: "events", Description: "선택 작업의 사건 기록"},
 	{Name: "filter", Args: "[검색어]", Description: "작업 목록 검색 · 빈 값은 해제"},
 	{Name: "state", Args: "[상태]", Description: "작업 상태 필터 · 빈 값은 해제"},
+	{Name: "filters", Description: "프로젝트·계정·상태·관리 여부 필터"},
+	{Name: "log-filter", Description: "기록의 계정·기간·변경 사유 필터"},
 	{Name: "manager", Args: "[지시]", Description: "관리자 모델에게 관리 지시 (모델 호출)"},
 	{Name: "settings", Description: "계정 정책·저장 위치·감시 설정"},
+	{Name: "resolve-action", Description: "대화에서 결과를 확인한 작업 복구"},
+	{Name: "mouse", Description: "마우스 클릭·휠 사용 전환 · Ctrl+G"},
+	{Name: "actions", Description: "선택 작업의 모든 관리 동작 메뉴 · F9"},
 	{Name: "shutdown", Description: "관리 작업과 감시 서비스 종료"},
 	{Name: "help", Description: "관리 명령과 키보드 도움말"},
 	{Name: "quit", Description: "관리 화면 접속 종료 (작업 유지)"},
@@ -118,6 +127,6 @@ func commandHelp() string {
 	for _, c := range slashCommands {
 		b.WriteString("/" + c.Name + " " + c.Args + " · " + c.Description + "\n")
 	}
-	b.WriteString("\n입력창 기본 포커스 · 일반 텍스트 + Enter: 작업 검색 (모델 호출 없음)\n빈 입력 + Enter: 선택 대화 열기 · 입력 ↑↓/Ctrl+P,N: 입력 기록 · Alt+↑↓: 대화 선택\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 미리보기 스크롤\n목록: ↑↓ 선택 · Enter 새 터미널 열기 · v 미리보기 · l 전체 로그\n새 터미널을 닫아도 작업 감시는 계속됩니다. /quit는 관리 화면만 닫습니다.\n")
+	b.WriteString("\n입력창 기본 포커스 · 일반 텍스트 + Enter: 작업 검색 (모델 호출 없음)\n빈 입력 + Enter: 선택 대화 열기 · 입력 ↑↓/Ctrl+P,N: 입력 기록 · Alt+↑↓: 대화 선택\nF1 작업 · F2 계정 · F3 사용량 · F4 기록 · F5 설정 · F6 관리자 · F7 새 작업 · F8 필터 · F9 작업 동작\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 미리보기 스크롤\n마우스: 탭·목록·버튼 클릭, 휠 스크롤 · Ctrl+G 또는 /mouse: 보고 해제 후 터미널 기본 선택/복사\n폼: Tab 이동 · Enter 편집/선택 · ←→ 옵션 변경 · Ctrl+S 저장 · Esc 취소\n목록: ↑↓ 선택 · Enter 새 터미널 열기 · v 미리보기 · l 전체 로그\n새 터미널을 닫아도 작업 감시는 계속됩니다. /quit는 관리 화면만 닫습니다.\n")
 	return b.String()
 }
