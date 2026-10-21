@@ -59,41 +59,11 @@ func SetNativeDefault(c config.Config, name string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	var native struct {
-		Store       string `toml:"cli_auth_credentials_store"`
-		ForcedLogin string `toml:"forced_login_method"`
-		Workspace   string `toml:"forced_chatgpt_workspace_id"`
-	}
-	if toml.Unmarshal(beforeConfig, &native) != nil {
-		return "", errors.New("native configuration could not be read safely")
-	}
-	if native.Store != "" && native.Store != "file" {
-		return "", errors.New("native default switching requires cli_auth_credentials_store = \"file\"; the native login was preserved")
-	}
-	if native.ForcedLogin != "" && native.ForcedLogin != "chatgpt" {
-		return "", errors.New("native login policy does not allow ChatGPT authentication; native login was preserved")
-	}
 	source := filepath.Join(root, name, "auth.json")
-	chosen, e := nativePrivateRead(source, false)
-	if e != nil {
+	if e = validateNativeFileLogin(beforeConfig, source); e != nil {
 		return "", e
 	}
-	var auth struct {
-		Mode   string  `json:"auth_mode"`
-		Key    *string `json:"OPENAI_API_KEY"`
-		Tokens struct {
-			ID      string `json:"id_token"`
-			Access  string `json:"access_token"`
-			Refresh string `json:"refresh_token"`
-			Account string `json:"account_id"`
-		} `json:"tokens"`
-	}
-	if json.Unmarshal(chosen, &auth) != nil || auth.Key != nil && *auth.Key != "" || auth.Mode != "" && auth.Mode != "chatgpt" || auth.Tokens.ID == "" || auth.Tokens.Access == "" || auth.Tokens.Refresh == "" || auth.Tokens.Account == "" {
-		return "", errors.New("a saved ChatGPT file login is required; native login was preserved")
-	}
-	if native.Workspace != "" && native.Workspace != auth.Tokens.Account {
-		return "", errors.New("selected login does not match native workspace policy; native login was preserved")
-	}
+
 	dest := filepath.Join(shared, "auth.json")
 	previousName, e := managedNativeLink(dest, root)
 	if e != nil {
@@ -163,6 +133,57 @@ func SetNativeDefault(c config.Config, name string) (string, error) {
 		_ = d.Close()
 	}
 	return backup, nil
+}
+
+// ValidateNativeAccount checks the shared native policy and named file login
+// before a shell selects CODEX_HOME. It does not mutate auth, config or registry.
+func ValidateNativeAccount(c config.Config, name string) error {
+	if !config.Nickname.MatchString(name) || name == "default" {
+		return errors.New("invalid native account")
+	}
+	b, err := nativePrivateRead(filepath.Join(config.Expand(c.Runtime.SharedCodexHome), "config.toml"), true)
+	if err != nil {
+		return err
+	}
+	return validateNativeFileLogin(b, filepath.Join(config.Expand(c.Runtime.AccountsDir), name, "auth.json"))
+}
+
+func validateNativeFileLogin(beforeConfig []byte, source string) error {
+	var native struct {
+		Store       string `toml:"cli_auth_credentials_store"`
+		ForcedLogin string `toml:"forced_login_method"`
+		Workspace   string `toml:"forced_chatgpt_workspace_id"`
+	}
+	if toml.Unmarshal(beforeConfig, &native) != nil {
+		return errors.New("native configuration could not be read safely")
+	}
+	if native.Store != "" && native.Store != "file" {
+		return errors.New("native account selection requires cli_auth_credentials_store = \"file\"; the native login was preserved")
+	}
+	if native.ForcedLogin != "" && native.ForcedLogin != "chatgpt" {
+		return errors.New("native login policy does not allow ChatGPT authentication; native login was preserved")
+	}
+	chosen, e := nativePrivateRead(source, false)
+	if e != nil {
+		return e
+	}
+	var auth struct {
+		Mode   string  `json:"auth_mode"`
+		Key    *string `json:"OPENAI_API_KEY"`
+		Tokens struct {
+			ID      string `json:"id_token"`
+			Access  string `json:"access_token"`
+			Refresh string `json:"refresh_token"`
+			Account string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(chosen, &auth) != nil || auth.Key != nil && *auth.Key != "" || auth.Mode != "" && auth.Mode != "chatgpt" || auth.Tokens.ID == "" || auth.Tokens.Access == "" || auth.Tokens.Refresh == "" || auth.Tokens.Account == "" {
+		return errors.New("a saved ChatGPT file login is required; native login was preserved")
+	}
+	if native.Workspace != "" && native.Workspace != auth.Tokens.Account {
+		return errors.New("selected login does not match native workspace policy; native login was preserved")
+	}
+	return nil
 }
 
 func nativePrivateRead(path string, optional bool) ([]byte, error) {

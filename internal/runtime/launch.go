@@ -71,7 +71,7 @@ func (r Resolver) Refresh(ctx context.Context) (Resolver, error) {
 	return r, nil
 }
 func Env(c config.Config, account, pinned string) []string {
-	remove := map[string]bool{"CODEX_ACCOUNT": true, "CODEX_HOME": true, "CODEX_SQLITE_HOME": true, "CODEX_SHARED_HOME": true, "CODEX_ACCOUNTS_DIR": true, "CODEX_ACCOUNTS_RUNTIME": true, "OPENAI_API_KEY": true, "CODEX_API_KEY": true, "CODEX_ACCESS_TOKEN": true}
+	remove := map[string]bool{"CODEX_ACCOUNT": true, "CODEX_HOME": true, "CODEX_SQLITE_HOME": true, "CODEX_SHARED_HOME": true, "CODEX_ACCOUNTS_DIR": true, "CODEX_ACCOUNTS_RUNTIME": true, "CODEXM_SHELL_RESULT": true, "OPENAI_API_KEY": true, "CODEX_API_KEY": true, "CODEX_ACCESS_TOKEN": true}
 	env := []string{}
 	for _, s := range os.Environ() {
 		k, _, _ := strings.Cut(s, "=")

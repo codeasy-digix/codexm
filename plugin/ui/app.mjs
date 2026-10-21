@@ -77,7 +77,7 @@ export class Bridge {
   }
   request(method,params,timeout=120000){return new Promise((resolve,reject)=>{const id=++this.id;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('연결 응답을 확인하지 못했습니다. 작업 상태를 확인한 후 다시 시도하세요.'));},timeout);this.pending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},'*');});}
   async initialize(){
-    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.6.1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
+    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.6.2'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
     catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;this.context({displayMode:window.openai.displayMode||'inline'});}
     this.resize=new ResizeObserver(()=>this.queueSize());this.resize.observe(document.body);window.addEventListener('resize',()=>this.queueSize());this.queueSize();
     void this.reportReady();
@@ -229,10 +229,10 @@ export function startUI(options={}){
       state.accountsView={summary,cards};
     }
     const view=state.accountsView,status=snap.status||{},manager=status.manager_account||snap.manager_account,native=snap.native_default_account||status.native_default_account;
-    view.summary.textContent=`우선순위: ${(snap.priority||[]).join(' → ')||'미설정'} · 관리자: ${manager||'미설정'} · GUI 기본 로그인: ${native||'미확인'}`;
+    view.summary.textContent=`우선순위: ${(snap.priority||[]).join(' → ')||'미설정'} · 관리자: ${manager||'미설정'} · native 기본 계정: ${native||'미확인'}`;
     for(const [name,refs]of view.cards){
       const fresh=accountCard(name);refs.metrics.replaceChildren(...fresh.children);refs.card.dataset.fallback=String(name===snap.fallback_account);
-      const index=(snap.priority||[]).indexOf(name),roles=[index>=0?`우선순위 ${index+1}`:'자동 선택에서 제외',name===manager?'관리자':'',name===native?'GUI 기본 로그인':'',name===snap.fallback_account?'예비 계정':''];refs.roles.textContent=roles.filter(Boolean).join(' · ');
+      const index=(snap.priority||[]).indexOf(name),roles=[index>=0?`우선순위 ${index+1}`:'자동 선택에서 제외',name===manager?'관리자':'',name===native?'native 기본 계정':'',name===snap.fallback_account?'예비 계정':''];refs.roles.textContent=roles.filter(Boolean).join(' · ');
       const jobs=(status.jobs||[]).filter(j=>j.account===name);refs.sessions.textContent=`관리 세션 ${jobs.length}개 · 실행 중 ${jobs.filter(j=>j.state==='running').length}개`;
     }
   }
@@ -252,7 +252,7 @@ export function startUI(options={}){
       const deadline=login.deadline?date(login.deadline):'시작 후 최대 15분';view.status.append(el('p',`이 창의 로그인 요청 종료: ${deadline}. codexm의 관리 제한이며 공식 인증 코드의 만료 시각과는 다를 수 있습니다.`,'hint'));
       if(link.disabled)view.status.append(el('p','공식 로그인 페이지 주소를 확인하지 못했습니다. 로그인 요청을 취소하고 다시 시작하세요.','bad'));
     }else{
-      if(login.status==='succeeded')view.status.append(el('p',`${login.account} 계정을 저장했습니다. 계정 순서와 관리자·기본 계정은 설정에서 별도로 선택하세요.`,'hint'));
+      if(login.status==='succeeded')view.status.append(el('p',`${login.account} 계정을 저장했습니다. 작업 우선순위·관리자·예비 계정은 설정에서 선택하세요. native 기본값은 codexm account NAME --set-default로 바꿉니다.`,'hint'));
       else if(login.error)view.status.append(el('p',login.error,'bad'));
       view.actions.append(button('닫기',closeDialog));if(['failed','expired','canceled'].includes(login.status))view.actions.append(button('다시 시도',()=>loginDialog(login.account)));
     }
@@ -306,7 +306,7 @@ export function startUI(options={}){
   async function loadSettings(){if(!canManage())return;try{const doc=await read('settings-edit');if(state.tab!=='settings')return;state.settings=doc;renderSettings(doc);}catch(e){message(e.message,true);}}
   function renderSettings(doc){
     const d=$('settings');d.replaceChildren(el('h2','관리 설정'),el('p',doc.application,'hint'));const form=el('form'),values=structuredClone(doc.values),names=doc.accounts||[],manager=field(form,'관리자 계정 (명시적으로 관리자 호출할 때 사용)',select(names,values.manager_account)),fallback=field(form,'예비 계정 (항상 마지막 우선순위)',select([['','사용하지 않음'],...names.map(n=>[n,n])],values.fallback_account));
-    form.append(el('p','별도 기본 작업 계정은 없습니다. 자동 작업은 아래 순서에서 사용 가능한 계정을 선택합니다. GUI 기본 로그인은 이 순서와 별개입니다.','hint'),el('h3','작업 계정 우선순위'));const order=el('div');form.append(order);function orderView(){order.replaceChildren();values.priority.forEach((name,index)=>{const row=el('div',null,'priority-row');row.append(el('span',`${index+1}. ${name}`));for(const [delta,text]of [[-1,'위'],[1,'아래']]){const b=button(text,()=>{const next=index+delta;if(next<0||next>=values.priority.length)return;[values.priority[index],values.priority[next]]=[values.priority[next],values.priority[index]];orderView();});b.disabled=index+delta<0||index+delta>=values.priority.length;row.append(b);}row.append(button('제외',()=>{values.priority.splice(index,1);orderView();}));order.append(row);});}orderView();const add=select([['','계정 추가'],...names.map(n=>[n,n])],'');add.onchange=()=>{if(add.value&&!values.priority.includes(add.value)){values.priority.push(add.value);orderView();}add.value='';};form.append(add);
+    form.append(el('p','별도 기본 작업 계정은 없습니다. 자동 작업은 아래 순서에서 사용 가능한 계정을 선택합니다. native 기본 계정은 이 순서와 별개입니다.','hint'),el('h3','작업 계정 우선순위'));const order=el('div');form.append(order);function orderView(){order.replaceChildren();values.priority.forEach((name,index)=>{const row=el('div',null,'priority-row');row.append(el('span',`${index+1}. ${name}`));for(const [delta,text]of [[-1,'위'],[1,'아래']]){const b=button(text,()=>{const next=index+delta;if(next<0||next>=values.priority.length)return;[values.priority[index],values.priority[next]]=[values.priority[next],values.priority[index]];orderView();});b.disabled=index+delta<0||index+delta>=values.priority.length;row.append(b);}row.append(button('제외',()=>{values.priority.splice(index,1);orderView();}));order.append(row);});}orderView();const add=select([['','계정 추가'],...names.map(n=>[n,n])],'');add.onchange=()=>{if(add.value&&!values.priority.includes(add.value)){values.priority.push(add.value);orderView();}add.value='';};form.append(add);
     const grid=el('div',null,'grid'),fields={};for(const [key,text,min,max]of [['preferred_recheck_seconds','예비 계정에서 복귀 확인 (초)',60,86400],['reconcile_interval_seconds','실행 상태 대조 주기 (초)',1,300],['max_parallel_jobs','동시 실행 작업 수',1,32],['usage_sample_seconds','사용량 관측 간격 (초)',10,3600]]){const i=input(values[key],'number');i.min=min;i.max=max;i.required=true;fields[key]=field(grid,text,i);}form.append(grid,el('p','예비 계정은 상위 계정이 모두 소진된 경우에만 사용합니다. 조회 실패를 소진으로 취급하지 않습니다.','hint'));const alerts=input('','checkbox');alerts.checked=!!values.five_hour_discord;field(form,'5시간 한도 소진 시 Discord 알림 (전체 계정과 현재 작업 현황 포함)',alerts);const save=el('button','설정 저장','primary');save.type='submit';const actions=el('div',null,'toolbar');actions.append(save,button('저장된 값 다시 불러오기',loadSettings));form.append(actions);form.onsubmit=ev=>{ev.preventDefault();if(!form.reportValidity())return;void action(async()=>{const next={...values,manager_account:manager.value,fallback_account:fallback.value,five_hour_discord:alerts.checked};for(const [key,i]of Object.entries(fields))next[key]=Number(i.value);const saved=await bridge.call('codexm_settings_save',{revision:doc.revision,values:next});state.settings=saved;renderSettings(saved);message('설정을 저장했습니다. 기존 세션 계정은 유지됩니다.');});};d.append(form);
   }
   async function newDialog(){

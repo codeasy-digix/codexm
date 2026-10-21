@@ -82,14 +82,14 @@ test('new work defaults to automatic priority and sends no saved worker default'
   assert.equal(f.calls.some(c=>c.args?.command==='manager'),false);
 });
 
-test('settings omit the independent worker default and accounts show GUI login separately',async t=>{
+test('settings omit the independent worker default and accounts show native login separately',async t=>{
   const f=uiFixture(t,{connected:true,names:['account-work','account-secondary'],priority:['account-work','account-secondary']});await f.instance.ready;
   await f.doc.querySelectorAll('[data-tab]').find(b=>b.dataset.tab==='settings').click();await settle();
   assert.doesNotMatch(f.ids.get('settings').textContent,/새 작업의 기본 계정/);
   assert.match(f.ids.get('settings').textContent,/별도 기본 작업 계정은 없습니다/);
   f.snapshot.native_default_account='account-secondary';await f.instance.refresh();
   await f.doc.querySelectorAll('[data-tab]').find(b=>b.dataset.tab==='accounts').click();await settle();
-  assert.match(f.ids.get('accounts').textContent,/GUI 기본 로그인: account-secondary/);
+  assert.match(f.ids.get('accounts').textContent,/native 기본 계정: account-secondary/);
   assert.match(f.ids.get('accounts').textContent,/우선순위: account-work → account-secondary/);
   assert.doesNotMatch(f.ids.get('accounts').textContent,/새 작업 기본/);
 });

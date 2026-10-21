@@ -31,6 +31,7 @@ func TestNamedRuntimeDoesNotDependOnAccountControllerOrSharedDaemon(t *testing.T
 	t.Setenv("PATH", dir)
 	t.Setenv("CODEX_ACCOUNT", "unrelated")
 	t.Setenv("CODEX_HOME", "/unrelated")
+	t.Setenv("CODEXM_SHELL_RESULT", filepath.Join(dir, "parent-shell-receipt"))
 	r, e := Resolve(context.Background(), c)
 	if e != nil {
 		t.Fatal("pinned runtime required an external account controller", e)
@@ -38,6 +39,11 @@ func TestNamedRuntimeDoesNotDependOnAccountControllerOrSharedDaemon(t *testing.T
 	cmd := r.Command(context.Background(), "account-secondary", "--version")
 	if cmd.Err != nil || cmd.Path != r.Binary || strings.Contains(strings.Join(cmd.Args, " "), "__native") {
 		t.Fatal("wrapper was used", cmd.Args, cmd.Err)
+	}
+	for _, value := range cmd.Env {
+		if strings.HasPrefix(value, "CODEXM_SHELL_RESULT=") {
+			t.Fatal("native engine inherited the parent-shell receipt path")
+		}
 	}
 	if _, e := cmd.Output(); e != nil {
 		t.Fatal("direct official runtime failed", e)

@@ -168,17 +168,20 @@ codexm unregister JOB_ID
 찾지 못했다. 화면 이동·답변 중단이 즉시 해제를 보장하지 않는다.
 [GUI 인계의 현재 경계](gui-handoff-boundary.md)를 참고한다.
 
-## 계정 선택의 세 가지 범위
+## 계정 선택 범위
 
 | 조작 | 적용 범위 |
 |---|---|
-| `codexm account account-secondary` / 설정의 기본 작업 계정 | 새 작업과 처음 등록하는 대화 |
-| 선택 작업의 계정 버튼 / TUI `/account account-secondary` | 그 작업 하나 |
+| `codexm account NAME` | 현재 zsh 터미널에서 이후 실행할 native Codex |
+| `codexm account NAME --set-default` 또는 `NAME default` | 새 독립 터미널·이후 GUI의 native 기본 로그인 |
+| 설정의 계정 우선순위·예비 계정 | 새 codexm 작업과 자동 전환 정책 |
+| 선택 작업의 계정 버튼 / TUI `/account NAME` | 그 작업 하나 |
 | 설정의 관리자 계정 | 명시적인 관리자 판단 호출 |
 
-`codexm account NAME`, `codexm account NAME default`, `codexm account NAME --set-default`는
-같은 저장 동작이다. 계정 선택 후 `codexm account`로 저장값을 확인한다. `default`는 계정
-별칭이 아닌 동작 이름이며 계정 이름 바로 뒤에 둔다. 기존 작업 계정은 그대로 유지한다.
+`codexm account`는 native 계정 관리다. 현재 터미널 선택은 `codexm shell-init zsh`의
+셸 통합을 사용하며, `--set-default`는 현재 명시적 선택을 유지한다. 자식 셸은 부모의
+선택을 상속한다. 두 명령은 codexm의 등록·작업 정책을 바꾸지 않는다. 별도 기본 작업
+계정은 없다. `codexm account`로 터미널 선택과 native 기본값을 구분해서 확인한다.
 
 CLI의 수동 전환은 `codexm switch-account JOB_ID ACCOUNT`이다. 활성 작업의 실행 의도,
 동일 thread ID, 목표 예산과 사용량, 일시중지 상태를 보존한다. 전환은 영속 큐로 처리되어

@@ -23,6 +23,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/plugin"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"github.com/codeasy-digix/codexm/internal/service"
+	"github.com/codeasy-digix/codexm/internal/shellinit"
 	"github.com/codeasy-digix/codexm/internal/store"
 	"github.com/codeasy-digix/codexm/internal/supervisor"
 	"github.com/codeasy-digix/codexm/internal/terminal"
@@ -52,6 +53,14 @@ func Main(args []string) error {
 	if len(args) > 0 {
 		command = args[0]
 		args = args[1:]
+	}
+	// Shell startup must not depend on a valid manager config or any daemon.
+	if command == "shell-init" {
+		if len(args) != 1 || args[0] != "zsh" {
+			return errors.New("usage: codexm shell-init zsh")
+		}
+		fmt.Print(shellinit.Zsh)
+		return nil
 	}
 	// Hooks must keep working even when the manager configuration is missing or
 	// invalid. In particular, ordinary user prompts must never depend on it.
@@ -507,7 +516,8 @@ func help() {
 codexm [--config FILE]                  Interactive task list / first-run setup
 codexm web [status|stop|logs]            Local browser management (loopback only)
 codexm bridge --stdio                  Versioned local web connection
-codexm account [NAME] [--login]         Saved named login / explicit native default
+codexm account [NAME] [--login]         Native terminal account / new-terminal default
+codexm shell-init zsh                  Parent-shell adapter (source its output)
 codexm daemon watch|unwatch|status     Token-free official daemon recovery
 codexm daemon start|restart|stop       Official lifecycle, using the shared home
 codexm service install|start|stop       codexm OS user service (separate from Codex daemon)

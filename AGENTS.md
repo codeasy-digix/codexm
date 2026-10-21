@@ -1,8 +1,9 @@
 # codexm
 
 - codexm owns management, accounts, logs and recovery. Keep the official `codex`
-  command unmodified; no shell interception, alternate codex binary, or daemon RPC
-  prerequisite for native help, version, login, or execution.
+  command unmodified. A thin `codexm` zsh function may select the current terminal's
+  native account; never wrap `codex`, replace its binary, or require daemon RPC for
+  native help, version, login, or execution. Native selection leaves worker policy alone.
 - Retain existing credentials, thread IDs, goal budgets and settings. Auth/history,
   binaries, sockets and logs stay outside Git. Never print credentials or goal text.
 - Normal supervision is deterministic and makes no model calls. `/manager` is an

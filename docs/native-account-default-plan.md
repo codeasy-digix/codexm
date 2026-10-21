@@ -1,3 +1,5 @@
+> 이전 구현 기록입니다. 현재 명령 의미는 [native 계정·터미널 선택](native-account-shell-20261022.md)과 [README](../README.md)를 따릅니다.
+
 # Native Codex 기본 로그인 복구
 
 2026-10-13. 사용자의 최종 범위는 `codexm account NAME default` 및

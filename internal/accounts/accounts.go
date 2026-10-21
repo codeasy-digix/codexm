@@ -48,6 +48,11 @@ type Reader struct {
 }
 
 func New(r cr.Resolver) *Reader { return &Reader{Resolver: r, locks: map[string]*sync.Mutex{}} }
+
+// SavedLogins includes native logins even when their codexm worker registration
+// has been removed. Native account selection never restores worker policy.
+func SavedLogins(c config.Config) ([]string, error) { return storedNames(c) }
+
 func List(c config.Config) ([]string, error) {
 	names, err := storedNames(c)
 	if err != nil {

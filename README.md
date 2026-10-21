@@ -6,13 +6,14 @@
 
 공식 Codex CLI를 먼저 설치해야 합니다. `codex --version`으로 확인하세요.
 설치기는 Codex가 없거나 실행되지 않으면 설치 안내를 표시하고 종료합니다.
-설치기는 공식 Codex 실행 파일·로그인·업데이트를 변경하지 않습니다. 명시적인 `account NAME default`만 GUI/native 공용 기본 로그인을 변경합니다.
+설치기는 공식 Codex 실행 파일·로그인·업데이트를 변경하지 않습니다. 명시적인 `account NAME --set-default`만 GUI/native 공용 기본 로그인을 변경합니다.
 
 ```sh
 ./install.sh --build               # Go가 설치된 로컬 개발 환경
 ./install.sh                       # 정식 Release 이후 사용 (private 저장소: gh 로그인 필요)
-codexm account account-work              # 저장 로그인 확인/등록
-codexm account account-main default    # native Codex 기본 로그인 변경
+source <(command codexm shell-init zsh) # zsh 시작 파일에 등록 (.home은 자동 로드)
+codexm account account-work              # 현재 터미널의 native Codex 계정 변경
+codexm account account-main --set-default # 새 터미널의 native 기본 계정 저장
 codexm account account-secondary --remove        # 등록 삭제 (로그인 파일·대화 보존)
 codexm setup --manager account-backup     # 관리 판단에 사용할 별도 계정 저장
 codexm service install            # 사용자 OS 서비스 설치 및 시작
@@ -21,7 +22,37 @@ codexm notify five-hour           # 모든 계정의 5시간 소진을 Discord�
 codexm                            # 작업 목록 TUI
 ```
 
-기존 `~/.codex-accounts/<name>` 인증과 `~/.codex` 대화를 유지합니다. `codexm account NAME`은 named 로그인 확인·등록이고, `NAME default` 또는 `NAME --set-default`는 **GUI와 native Codex가 사용하는 컴퓨터 공용 기본 로그인**을 변경합니다. 이전 인증을 private 백업하고 named 인증 파일을 연결하므로 토큰 복사본이 갈라지지 않습니다. 작업 우선순위·기존 작업·부모 셸은 바뀌지 않습니다. codexm에는 별도 기본 작업 계정이 없으며, 새 작업은 패널 우선순위에서 사용 가능한 첫 계정을 선택합니다. 예전 `default_account`는 읽을 때 무시하고 설치 중 백업 후 제거합니다. 실행 중인 GUI/데몬은 캐시된 인증을 유지할 수 있어 재시작 후 적용됩니다. 데몬 조회는 이 명령의 전제 조건이 아닙니다.
+기존 `~/.codex-accounts/<name>` 인증과 `~/.codex` 대화를 유지합니다.
+
+| 명령 | 적용 범위 |
+|---|---|
+| `codexm account NAME` | 현재 터미널에서 이후 실행할 native `codex`의 계정 |
+| `codexm account NAME --set-default` | 새 독립 터미널과 이후 시작할 GUI의 native 기본 로그인 |
+| `codexm account NAME default` | `--set-default`의 이전 호환 표기 |
+| codexm 설정의 우선순위·관리자·예비 계정 | codexm이 관리하는 작업의 계정 정책 |
+
+현재 터미널의 선택은 `CODEX_HOME`으로 named 인증을 가리키고, 공용 config·대화 파일과
+`CODEX_SQLITE_HOME`으로 같은 대화 DB를 사용합니다. 자식 셸은 부모 선택을 상속합니다.
+`--set-default`는 공용 `~/.codex/auth.json`을 named 인증에 원자적으로 연결하고 이전
+인증을 private 백업합니다. 이미 명시적으로 선택한 터미널의 환경은 유지합니다.
+`codexm account`는 현재 터미널과 native 기본값을 구분해서 표시합니다.
+
+두 native 선택 명령은 codexm 등록·우선순위·관리자·예비 계정과 기존 작업을 바꾸지
+않습니다. 관리 화면에서 로그인 등록과 작업 정책을 설정하세요. codexm에는 별도 기본
+작업 계정이 없으며, 새 작업은 우선순위에서 사용 가능한 첫 계정을 선택합니다.
+예전 `default_account`는 무시하고 설치 중 백업 후 제거합니다.
+
+부모 환경은 Go 자식만으로 바꿀 수 없으므로 얇은 **codexm** zsh 함수가 필요합니다.
+공식 **codex** 실행 파일·인수·출력·종료 코드는 그대로 사용합니다. `.home` 설치에서는
+새 터미널에 자동 로드되며, 이미 열린 터미널은 `source ~/.codex_rc` 한 번이면 됩니다.
+일반 설치에서는 위 `source <(...)`를 `.zshrc`에 넣으세요. 셸 통합이 없으면 성공한
+전환처럼 표시하지 않고 로드 방법을 안내합니다. 현재 지원하는 셸은 zsh입니다.
+
+파일 인증만 지원하며 keyring이나 강제 workspace 정책과 충돌하면 기존 선택을 보존하고
+실패합니다. native 홈별 캐시·기기 연결 상태는 공식 Codex가 관리합니다. 실행 중인
+Codex/GUI/daemon의 인증은 메모리에 남을 수 있어 새 실행부터 선택을 적용하며 강제
+재시작하지 않습니다. 기본값 변경은 GUI의 다음 실행에도 영향을 줍니다. daemon 조회는
+계정 선택의 전제 조건이 아닙니다.
 
 ## 화면과 명령
 

@@ -97,7 +97,7 @@ native subagent는 부모 실행 관계를 추적해 함께 표시하며, 부모
 
 최초 `codexm` 실행은 다음 순서로 동작한다.
 
-1. 기존 `~/.codex-accounts`에서 닉네임을 읽는다. 새 로그인은 `codexm account NAME`으로 등록한다.
+1. 기존 `~/.codex-accounts`에서 닉네임을 읽는다. 새 작업 계정은 관리 화면의 로그인으로 등록한다. `codexm account NAME`은 native 터미널 선택이다.
 2. 관리 에이전트용 계정을 반드시 선택하게 한다. 현재 요청에서는 `account-backup`을
    추천 표시할 수 있지만 사용자 선택 없이 확정하지 않는다.
 3. 선택한 계정의 인증을 확인하고, 사용할 모델과 설정을 확인한다.

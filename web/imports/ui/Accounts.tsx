@@ -111,7 +111,7 @@ export function Accounts({
       </dialog>
       <p>
         작업 우선순위: {(snapshot.priority || []).join(" → ")} · 관리자:{" "}
-        {snapshot.manager_account || "미설정"} · 공용 기본 로그인:{" "}
+        {snapshot.manager_account || "미설정"} · native Codex 기본 계정:{" "}
         {snapshot.native_default_account || "미확인"}
       </p>
       <form
@@ -242,7 +242,7 @@ export function Accounts({
                 {name === snapshot.manager_account ? "관리자 · " : ""}
                 {name === snapshot.fallback_account ? "예비 계정 · " : ""}
                 {name === snapshot.native_default_account
-                  ? "공용 기본 로그인"
+                  ? "native Codex 기본 계정"
                   : ""}
               </p>
               <p>
@@ -264,7 +264,7 @@ export function Accounts({
                     )
                   }
                 >
-                  공용 기본 로그인으로 선택
+                  새 터미널의 native 기본 계정으로 저장
                 </button>
                 <button
                   aria-label={`${name} 등록 삭제`}
@@ -283,8 +283,10 @@ export function Accounts({
         <p>저장된 계정이 없습니다. 계정 별칭을 입력하고 로그인하세요.</p>
       )}
       <p className="muted">
-        한도 비율은 계정 전체 사용량입니다. 공용 기본 로그인 변경은 이후 공식
-        CLI·GUI 실행에 적용됩니다. 현재 실행 중인 작업의 계정은 작업 상세에서
+        한도 비율은 계정 전체 사용량입니다. native 기본 계정 변경은 이후 공식
+        CLI·GUI 실행에 적용됩니다. 터미널에서 명시적으로 선택한 계정은 유지합니다.
+        터미널 선택은 codexm account NAME, 새 터미널 기본값은 --set-default입니다.
+        작업 우선순위·관리자·예비 계정은 설정에서 관리합니다. 현재 작업의 계정은 상세에서
         바꿀 수 있습니다.
       </p>
     </div>

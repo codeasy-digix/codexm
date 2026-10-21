@@ -1,3 +1,5 @@
+> 이전 구현 기록입니다. 현재 명령 의미는 [native 계정·터미널 선택](native-account-shell-20261022.md)과 [README](../README.md)를 따릅니다.
+
 # 작업 우선순위와 GUI 공용 default
 
 2026-10-14. 사용자가 정의한 default는 GUI 앱이 사용하는 컴퓨터 공용 로그인이다.

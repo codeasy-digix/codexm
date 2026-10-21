@@ -248,7 +248,9 @@ func TestLoginBrokerCancelFailureAndExpirationPreserveOldCredentials(t *testing.
 				t.Fatal(e)
 			}
 			if outcome == "expiry" {
-				b.timeout = 20 * time.Millisecond
+				// Leave time for private file setup under race/build load before
+				// testing expiry of an already pending login.
+				b.timeout = time.Second
 			}
 			login, e := b.Start(context.Background(), "account-secondary", "device")
 			if e != nil || login.UserCode == "" || login.AuthURL != "" {

@@ -15,7 +15,7 @@ import (
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
-func TestAccountRemoveWorksWithoutAnEngineAndExplicitRegistrationRestoresIt(t *testing.T) {
+func TestAccountRemoveWorksWithoutAnEngineAndNativeSelectionKeepsItRemoved(t *testing.T) {
 	c := accountFixture(t)
 	before, _ := os.ReadFile(filepath.Join(c.Runtime.AccountsDir, "account-secondary", "auth.json"))
 	if err := os.Rename(filepath.Join(c.StateDir(), "engine.json"), filepath.Join(c.StateDir(), "saved-engine.json")); err != nil {
@@ -35,12 +35,13 @@ func TestAccountRemoveWorksWithoutAnEngineAndExplicitRegistrationRestoresIt(t *t
 	if err := os.Rename(filepath.Join(c.StateDir(), "saved-engine.json"), filepath.Join(c.StateDir(), "engine.json")); err != nil {
 		t.Fatal(err)
 	}
+	prepareShellResult(t)
 	if err := Main([]string{"--config", c.Path, "account", "account-secondary"}); err != nil {
 		t.Fatal(err)
 	}
 	loaded, _ = config.Load(c.Path)
-	if slices.Contains(loaded.AccountRegistry.Removed, "account-secondary") || !slices.Contains(loaded.WorkerAccounts.Priority, "account-secondary") {
-		t.Fatal("CLI did not restore registration")
+	if !slices.Contains(loaded.AccountRegistry.Removed, "account-secondary") || slices.Contains(loaded.WorkerAccounts.Priority, "account-secondary") {
+		t.Fatal("native selection restored codexm worker registration")
 	}
 }
 
@@ -87,17 +88,28 @@ func accountFixture(t *testing.T) config.Config {
 	return c
 }
 
-func TestAccountSelectionPersistsWithoutChangingNativeLoginOrShell(t *testing.T) {
+func TestAccountSelectionPublishesShellResultWithoutChangingPolicyOrGlobalLogin(t *testing.T) {
 	c := accountFixture(t)
 	t.Setenv("CODEX_ACCOUNT", "parent")
 	t.Setenv("CODEX_HOME", "/parent/native-home")
+	result := prepareShellResult(t)
+	configBefore, _ := os.ReadFile(c.Path)
 	if e := Main([]string{"--config", c.Path, "account", "account-secondary"}); e != nil {
 		t.Fatal(e)
+	}
+	b, err := os.ReadFile(result)
+	if err != nil || string(b) != "codexm-native-account-v1\x00account-secondary\x00"+filepath.Join(c.Runtime.AccountsDir, "account-secondary")+"\x00"+c.Runtime.SharedCodexHome+"\x00" {
+		t.Fatal("incorrect shell selection result", err)
+	}
+	configAfter, _ := os.ReadFile(c.Path)
+	if !bytes.Equal(configBefore, configAfter) {
+		t.Fatal("native selection changed worker settings")
 	}
 	loaded, e := config.Load(c.Path)
 	if e != nil || loaded.FirstPriority() != "account-work" || loaded.Manager.Account != "" {
 		t.Fatal("saved selection or manager changed", e)
 	}
+	prepareShellResult(t)
 	if e := Main([]string{"--config", c.Path, "account", "cancelled", "--login", "--device"}); e == nil {
 		t.Fatal("cancelled login accepted")
 	}
@@ -211,16 +223,24 @@ func TestNativeDefaultFailureDoesNotChangeWorkerPolicyOrNativeAuth(t *testing.T)
 	}
 }
 
-func TestAccountRegistrationPreservesOrderAndAddsBeforeReserve(t *testing.T) {
+func prepareShellResult(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "result")
+	t.Setenv("CODEXM_SHELL_RESULT", p)
+	return p
+}
+
+func TestNativeSelectionWithoutShellAdapterFailsBeforeLogin(t *testing.T) {
 	c := accountFixture(t)
-	if e := registerAccount(c, "account-secondary"); e != nil {
-		t.Fatal(e)
+	t.Setenv("CODEXM_SHELL_RESULT", "")
+	if err := Main([]string{"--config", c.Path, "account", "missing"}); err == nil || !strings.Contains(err.Error(), "shell-init zsh") {
+		t.Fatal("missing parent-shell adapter was not explained", err)
 	}
-	if e := registerAccount(c, "extra"); e != nil {
-		t.Fatal(e)
-	}
-	loaded, e := config.Load(c.Path)
-	if e != nil || strings.Join(loaded.WorkerAccounts.Priority, ",") != "account-work,account-secondary,account-main,extra,account-backup" {
-		t.Fatal("registration changed existing order or defaults", e)
+	if _, err := os.Stat(filepath.Join(c.Runtime.AccountsDir, "missing")); !os.IsNotExist(err) {
+		t.Fatal("missing adapter reached login")
 	}
 }

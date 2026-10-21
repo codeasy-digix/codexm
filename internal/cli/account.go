@@ -13,25 +13,28 @@ import (
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/shellinit"
 )
 
-const accountHelp = `codexm account — saved logins and the native Codex default login
+const accountHelp = `codexm account — native Codex accounts
 
-codexm account                         Show saved logins and the native login
+codexm account                         Show this terminal's login and the native default
 codexm account --list                  List existing local logins
-codexm account NAME                    Check/login and register a saved nickname
-codexm account NAME default            Change the computer's GUI/native default login
-codexm account NAME --set-default      Flag form of the same GUI/native default change
+codexm account NAME                    Select native Codex's account in this terminal
+codexm account NAME --set-default      Save native Codex's default for new terminals
+codexm account NAME default            Legacy alias for --set-default
 codexm account NAME --login --device   Log in with a device code (SSH supported)
 codexm account NAME --login --browser  Log in with the browser
-codexm account NAME --remove           Remove registration; keep login and history
-codexm setup --manager NAME            Choose the separate manager account
+codexm account NAME --remove           Remove codexm registration; keep login and history
 
-Worker order is configured in the management panel. Registration leaves existing
-order unchanged and adds a missing nickname before the fallback account. Explicit
-default changes only the shared Codex home's file login, for subsequent native
-launches using that home. Existing terminals, GUI processes and workers keep their
-current connection; they are not restarted. View live quotas with codexm accounts.
+Load the zsh adapter once: source <(command codexm shell-init zsh)
+Account selection changes this shell's environment for subsequent native launches.
+--set-default changes the shared native file login and preserves an explicit
+terminal selection. A new independent terminal uses that native default; child
+shells inherit their parent's selection. Running Codex/GUI/daemon connections are
+not restarted. These native selections never change codexm registration, priority,
+manager or fallback. Configure worker policy in the management panel. There is no
+separate codexm worker default. View live quotas with codexm accounts.
 `
 
 const accountUsage = "usage: codexm account NAME [default|--set-default] [--login] [--browser|--device] | NAME --remove"
@@ -42,7 +45,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		return nil
 	}
 	if len(args) == 0 || len(args) == 1 && args[0] == "--list" {
-		names, e := accounts.List(c)
+		names, e := accounts.SavedLogins(c)
 		if e != nil && !os.IsNotExist(e) {
 			return e
 		}
@@ -50,11 +53,22 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		if native == "" {
 			native = "unrecognized or not signed in"
 		}
-		fmt.Printf("GUI/native default login: %s · Manager: %s\n", native, c.Manager.Account)
+		home := os.Getenv("CODEX_HOME")
+		if home == "" {
+			home = config.Expand(c.Runtime.SharedCodexHome)
+		}
+		current := accounts.CurrentNickname(c, home, "")
+		if current == "" {
+			current = "unrecognized or not signed in"
+		}
+		fmt.Printf("Native Codex in this terminal: %s\nNative default for new terminals / GUI: %s\n", current, native)
 		for _, n := range names {
 			suffix := ""
+			if n == current {
+				suffix += " (this terminal)"
+			}
 			if n == native {
-				suffix = " (GUI/native default)"
+				suffix += " (native default)"
 			}
 			fmt.Println(n + suffix)
 		}
@@ -98,6 +112,15 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		fmt.Printf("Removed registration: %s. Login files, native login and conversations were preserved.\n", name)
 		return nil
 	}
+	var result *os.File
+	if !positionalDefault && !*nativeDefault {
+		var err error
+		result, err = shellinit.OpenResult()
+		if err != nil {
+			return err
+		}
+		defer result.Close()
+	}
 	lock, e := cr.AccountLoginLock(c, name)
 	if e != nil {
 		return e
@@ -128,23 +151,18 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		if e != nil {
 			return e
 		}
-		fmt.Printf("GUI/native default login: %s (saved for %s).\n", name, config.Expand(c.Runtime.SharedCodexHome))
+		fmt.Printf("Native Codex default for new terminals / GUI: %s (saved for %s).\n", name, config.Expand(c.Runtime.SharedCodexHome))
 		if backup != "" {
 			fmt.Printf("Previous login backup: %s\n", backup)
 		}
-		fmt.Println("Native file login was changed. Running GUI/daemon processes may retain cached authentication until restarted. Worker order and existing jobs were not changed.")
+		fmt.Println("An explicit terminal selection was preserved. Running Codex/GUI/daemon connections keep cached authentication until restarted. Codexm worker settings and existing jobs were not changed.")
 		return nil
 	}
-	if e := registerAccount(c, name); e != nil {
+	if e := accounts.ValidateNativeAccount(c, name); e != nil {
 		return e
 	}
-	fmt.Printf("Saved account: %s. Existing priority order was preserved; native Codex login was not changed.\n", name)
-	return nil
-}
-
-func registerAccount(c config.Config, name string) error {
-	_, _, e := config.Update(c.Path, "", func(c *config.Config) error {
-		return c.RegisterAccount(name)
-	})
-	return e
+	if e := shellinit.Select(result, name, filepath.Join(config.Expand(c.Runtime.AccountsDir), name), config.Expand(c.Runtime.SharedCodexHome)); e != nil {
+		return e
+	}
+	return result.Close()
 }

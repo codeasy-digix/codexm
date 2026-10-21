@@ -1,3 +1,5 @@
+> 이전 구현 기록입니다. 현재 명령 의미는 [native 계정·터미널 선택](native-account-shell-20261022.md)과 [README](../README.md)를 따릅니다.
+
 # 기본 계정 CLI 인수 수정 계획
 
 현재 동작은 0.5.4에서 native 기본 로그인 변경으로 정정했다. 아래는 0.5.2의 과거 검증 기록이다. [최종 범위와 검증](native-account-default-plan.md)을 따른다.
