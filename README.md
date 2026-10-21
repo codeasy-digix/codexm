@@ -90,6 +90,10 @@ Markdown 스킬 링크도 처리합니다. `@codexm manage` / `@codexm accounts`
 `codexm plugin doctor`는 공식 엔진의 MCP/skill/hook 발견, 훅 신뢰 상태와 설치 캐시 버전을 검사합니다.
 [최종 기능·검증 상태](docs/completion-status.md)에서 설치 확인과 남은 호스트 경계를 구분합니다.
 
+## 로컬 웹 개발 계획
+
+[Meteor 로컬 웹 개발 계획](docs/meteor-local-web-plan.md)은 기존 Go 관리 서비스와 CLI를 공유하는 웹 화면의 기능 범위·연결 계약·구현 순서·검증 기준을 정리합니다. 개발 프로젝트 경로는 `~/WebstormProjects/codexm/`이며, 현재는 계획 단계입니다.
+
 ## 업데이트와 저장 위치
 
 검증한 공식 엔진을 `~/.local/share/codexm/engines`에 보관합니다. 공식 Codex가 업데이트돼도 기존 작업은 보관한 엔진을 유지합니다. `codexm runtime refresh`는 호환성을 검사한 뒤 새 엔진을 보관합니다.
