@@ -22,6 +22,7 @@ operation ID를 사용하고, 오프라인은 supervisor lease와 읽기 전용 
   로그인 잠금·오래된 revision 거부, 삭제/작업 생성/자동 배정 경합과 중복 operation 재생.
 - 검증된 재로그인의 등록 복원과 설정 저장 실패 시 auth rollback.
 - 실제 공식 엔진의 빈 격리 로그인 시작·취소, 임시 native 대화·paused goal 및 예산 보존.
+- 공식 CLI의 격리 플러그인 설치·발견과 호환 매니페스트/실행 파일 버전 일치 검사.
 - 실제 Meteor/Chromium의 삭제·취소·관리자/사용 중 계정 거부, 다른 탭 반영과 웹/브리지
   재시작 후 유지. 실제 stdio MCP 패널에서도 삭제와 로그인 파일 보존을 확인했다.
 

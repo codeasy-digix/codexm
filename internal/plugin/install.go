@@ -146,6 +146,10 @@ func (i Installer) Install() (installReceipt, error) {
 	if e != nil {
 		return installReceipt{}, e
 	}
+	var manifest struct{ Name, Version string }
+	if json.Unmarshal(legacy, &manifest) != nil || manifest.Name != "codexm" || manifest.Version != config.Version {
+		return installReceipt{}, errors.New("packaged plugin manifest does not match the executable version")
+	}
 	server := map[string]any{"command": i.Self, "args": []string{"--config", i.Config.Path, "plugin", "mcp"}}
 	marketplace := "local-personal"
 	if data, err := os.ReadFile(i.catalog()); err == nil {
