@@ -1,0 +1,12 @@
+meteor-base
+webapp
+ddp-client
+ddp-server
+tracker
+reactive-var
+ecmascript
+typescript
+static-html
+standard-minifier-css
+standard-minifier-js
+rspack

@@ -52,6 +52,9 @@ func (s *Server) requestAccountChange(a JobArgs) (jobs.Action, error) {
 	if e != nil {
 		return jobs.Action{}, e
 	}
+	if a.RunID != "" && a.RunID != j.RunID || a.ExpectedRunID != nil && *a.ExpectedRunID != j.RunID {
+		return jobs.Action{}, errors.New("session execution changed; refresh before selecting an account")
+	}
 	if !j.Managed || j.Kind == "group" {
 		return jobs.Action{}, errors.New("select a managed conversation; use manage first")
 	}

@@ -22,6 +22,7 @@ import (
 )
 
 type NewArgs struct {
+	TokenBudget       *int64   `json:"token_budget,omitempty"`
 	Model             string   `json:"model,omitempty"`
 	Effort            string   `json:"effort,omitempty"`
 	Title             string   `json:"title"`
@@ -35,6 +36,8 @@ type NewArgs struct {
 	CompletionCommand []string `json:"completion_command"`
 }
 type JobArgs struct {
+	TokenBudget     *int64          `json:"token_budget,omitempty"`
+	GoalStatus      string          `json:"goal_status,omitempty"`
 	ID              string          `json:"id"`
 	Text            string          `json:"text"`
 	Steer           bool            `json:"steer"`
@@ -43,6 +46,7 @@ type JobArgs struct {
 	OperationID     string          `json:"operation_id,omitempty"`
 	RunID           string          `json:"run_id,omitempty"`
 	ExpectedAccount string          `json:"expected_account,omitempty"`
+	ExpectedRunID   *string         `json:"expected_run_id,omitempty"`
 	OriginAccount   string          `json:"origin_account,omitempty"`
 	Manage          bool            `json:"manage"`
 	Kind            string          `json:"kind"`
@@ -70,7 +74,30 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	}
 	switch call.Command {
 	case "ping":
-		return map[string]any{"version": config.Version, "manager_api": 2}, nil
+		return map[string]any{"version": config.Version, "manager_api": 2, "web_api": 1}, nil
+	case "web-operation":
+		return s.webOperation(ctx, call.Args)
+	case "operation":
+		return s.Store.Operation(a.OperationID)
+	case "snapshot":
+		_, rev, err := config.Current(s.Config.Path)
+		if err != nil {
+			return nil, err
+		}
+		if err = s.Store.ObserveRevision("config", rev); err != nil {
+			return nil, err
+		}
+		return s.Store.ConsistentSnapshot()
+	case "replay":
+		var p struct {
+			Instance string `json:"instance"`
+			After    int64  `json:"after"`
+			Limit    int    `json:"limit"`
+		}
+		if err := json.Unmarshal(call.Args, &p); err != nil {
+			return nil, err
+		}
+		return s.Store.Replay(p.Instance, p.After, p.Limit)
 	case "status":
 		return s.status()
 	case "sessions":
@@ -371,8 +398,24 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 			s.mu.Unlock()
 			return nil, errors.New("a goal requires a managed conversation")
 		}
+		if len([]rune(a.Text)) > 4000 || strings.TrimSpace(a.Text) == "" || a.TokenBudget != nil && *a.TokenBudget < 1 {
+			s.mu.Unlock()
+			return nil, errors.New("invalid goal objective or token budget")
+		}
+		status := a.GoalStatus
+		if status != "" && !slices.Contains([]string{"active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"}, status) {
+			s.mu.Unlock()
+			return nil, errors.New("invalid goal status")
+		}
 		j.Kind = "goal"
-		action := policy.Action("set_goal", j, map[string]string{"objective": a.Text})
+		payload := map[string]any{"objective": a.Text}
+		if status != "" {
+			payload["status"] = status
+		}
+		if a.TokenBudget != nil {
+			payload["tokenBudget"] = *a.TokenBudget
+		}
+		action := policy.Action("set_goal", j, payload)
 		e = s.persist(j, action)
 		s.mu.Unlock()
 		return action, e
@@ -427,6 +470,9 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 	if !jobs.ValidKind(n.Kind) {
 		return jobs.Job{}, errors.New("kind must be chat, task, goal or group")
 	}
+	if n.TokenBudget != nil && (n.Kind != "goal" || *n.TokenBudget < 1) {
+		return jobs.Job{}, errors.New("positive token budget requires an explicit goal")
+	}
 	if n.Kind == "goal" && n.Goal == "" {
 		return jobs.Job{}, errors.New("a new goal job requires an objective")
 	}
@@ -473,7 +519,7 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 		if len([]rune(n.Goal)) > 4000 {
 			return j, errors.New("goal objective exceeds 4000 characters")
 		}
-		j.Goal = &jobs.Goal{Objective: n.Goal, Status: "active"}
+		j.Goal = &jobs.Goal{Objective: n.Goal, Status: "active", TokenBudget: n.TokenBudget}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -667,7 +713,10 @@ func (s *Server) reply(ctx context.Context, a JobArgs) (any, error) {
 	}
 	j.PendingRequests = rs
 	j.State = "running"
-	return true, s.persist(j)
+	if e = s.persist(j); e != nil {
+		return nil, fmt.Errorf("%w: reply was submitted but its local result could not be recorded", errUncertain)
+	}
+	return true, nil
 }
 func (s *Server) usage() (any, error) {
 	rows, e := s.Store.DB.Query("SELECT data FROM manager_decisions ORDER BY at DESC LIMIT 30")

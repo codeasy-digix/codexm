@@ -81,7 +81,12 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("unsupported state schema %d", v)
 	}
-	return &Store{db}, nil
+	s := &Store{db}
+	if e = s.migrateJournal(dir, existing > 0); e != nil {
+		db.Close()
+		return nil, e
+	}
+	return s, nil
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func threadKey(j jobs.Job) any {

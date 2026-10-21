@@ -27,6 +27,7 @@ type Manager struct {
 	Kind   string
 }
 type Receipt struct {
+	Domain     string `json:"domain,omitempty"`
 	Label      string `json:"label"`
 	Definition string `json:"definition"`
 	Digest     string `json:"digest"`
@@ -139,6 +140,7 @@ func (m Manager) Definition(platform string) ([]byte, error) {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>%s</string><key>ProgramArguments</key><array>%s</array>
+<key>LimitLoadToSessionType</key><array><string>Aqua</string><string>Background</string></array>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 <key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string></dict>
 <key>ThrottleInterval</key><integer>5</integer><key>ExitTimeOut</key><integer>30</integer>
@@ -169,7 +171,19 @@ func (m Manager) run(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	return b, nil
 }
-func (m Manager) target() string { return fmt.Sprintf("gui/%d/%s", os.Getuid(), m.Label()) }
+func (m Manager) domain() string {
+	gui, user := fmt.Sprintf("gui/%d", os.Getuid()), fmt.Sprintf("user/%d", os.Getuid())
+	if r, e := m.read(); e == nil && (r.Domain == gui || r.Domain == user) {
+		return r.Domain
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if exec.CommandContext(ctx, "launchctl", "print", gui).Run() == nil {
+		return gui
+	}
+	return user
+}
+func (m Manager) target() string { return m.domain() + "/" + m.Label() }
 func (m Manager) checkOwned(r Receipt) error {
 	b, e := os.ReadFile(m.DefinitionPath())
 	if e != nil {
@@ -223,6 +237,9 @@ func (m Manager) Install(ctx context.Context, start bool) error {
 		return e
 	}
 	r := Receipt{Label: m.Label(), Definition: m.DefinitionPath(), Digest: digest(b), Binary: m.Self, Enabled: enabled}
+	if runtime.GOOS == "darwin" {
+		r.Domain = m.domain()
+	}
 	if e = m.write(r); e != nil {
 		return e
 	}
@@ -253,7 +270,7 @@ func (m Manager) Start(ctx context.Context) error {
 			return e
 		}
 		if !m.Status(ctx).Loaded {
-			_, e = m.run(ctx, "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), m.DefinitionPath())
+			_, e = m.run(ctx, "bootstrap", m.domain(), m.DefinitionPath())
 			return e
 		}
 		if !m.Status(ctx).Running {

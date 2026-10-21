@@ -323,6 +323,27 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 	if log.Runs[1].EndedAt == nil || log.Runs[1].Account != "account-work" || log.Runs[0].Account != "account-secondary" {
 		t.Fatal("run boundary missing", log.Runs)
 	}
+	// A budget edit must run while the worker is parked, without resuming the
+	// paused goal, changing its thread or resetting its native usage counters.
+	if e = s.park(ctx, j.ID, false); e != nil {
+		t.Fatal(e)
+	}
+	_ = s.update(j.ID, func(j *jobs.Job) { j.Paused = true; j.State = "paused" })
+	for _, budget := range []int64{31000, 30000} {
+		result, err := s.Handle(ctx, Call{Command: "goal", Args: mustJSON(JobArgs{ID: j.ID, Text: "native test", TokenBudget: &budget})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.execute(result.(jobs.Action))
+		edited, _ := s.Store.Job(j.ID)
+		if edited.Goal == nil || edited.Goal.TokenBudget == nil || *edited.Goal.TokenBudget != budget || edited.Goal.Status != "paused" || !edited.Paused || edited.ThreadID != j.ThreadID || edited.Goal.TokensUsed != g.TokensUsed {
+			t.Fatal("parked goal edit lost budget, pause or accounting", edited.State, edited.LastError)
+		}
+		thread, err := s.client(j.ID).Read(ctx, j.ThreadID, true)
+		if err != nil || len(thread.Turns) != 0 {
+			t.Fatal("goal edit generated model work", err)
+		}
+	}
 	// Opening a finished goal must preserve native counters and keep its engine
 	// available for the UI without scheduling any additional model work.
 	c = s.client(j.ID)

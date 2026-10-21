@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func TestDefinitionsEscapePathsAndKeepWorkersAcrossManagerRestart(t *testing.T) 
 	if e = xml.Unmarshal(b, &parsed); e != nil {
 		t.Fatal("invalid plist", e)
 	}
-	if !strings.Contains(string(b), "a &amp; b") || !strings.Contains(string(b), "AbandonProcessGroup") {
+	if !strings.Contains(string(b), "a &amp; b") || !strings.Contains(string(b), "AbandonProcessGroup") || !strings.Contains(string(b), "<string>Background</string>") {
 		t.Fatal(string(b))
 	}
 	b, e = m.Definition("linux")
@@ -36,6 +37,21 @@ func TestDefinitionsEscapePathsAndKeepWorkersAcrossManagerRestart(t *testing.T) 
 	}
 	if m.Label() == (Manager{Config: config.Defaults()}).Label() {
 		t.Fatal("custom configuration collides with production service")
+	}
+}
+
+func TestServiceKeepsRecordedDomainAcrossSessionChanges(t *testing.T) {
+	c := config.Defaults()
+	c.Storage.StateDir = t.TempDir()
+	m := Manager{Config: c}
+	for _, prefix := range []string{"gui", "user"} {
+		domain := fmt.Sprintf("%s/%d", prefix, os.Getuid())
+		if err := m.write(Receipt{Label: m.Label(), Definition: m.DefinitionPath(), Domain: domain}); err != nil {
+			t.Fatal(err)
+		}
+		if m.domain() != domain {
+			t.Fatal("lost recorded service domain", domain)
+		}
 	}
 }
 

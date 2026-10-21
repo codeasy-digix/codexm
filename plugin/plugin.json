@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codexm",
-  "version": "0.5.6",
+  "version": "0.6.0",
   "description": "Local Codex account and task management. Uses your installed codexm service.",
   "author": {
     "name": "account-main"

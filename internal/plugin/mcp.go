@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/application"
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
-	"github.com/codeasy-digix/codexm/internal/service"
 	"github.com/codeasy-digix/codexm/internal/supervisor"
 	assets "github.com/codeasy-digix/codexm/plugin"
 )
@@ -291,49 +291,12 @@ func (m MCP) call(ctx context.Context, name string, args json.RawMessage) (any, 
 		if e := json.Unmarshal(args, &a); e != nil {
 			return nil, e
 		}
-		c, e := config.Load(m.Config.Path)
-		if e != nil {
+		if e := application.Start(ctx, m.Config, m.Self, a.Account); e != nil {
 			return nil, e
-		}
-		if c.Manager.Account == "" {
-			if !config.Nickname.MatchString(a.Account) {
-				return nil, errors.New("select a saved manager account first")
-			}
-			r, e := cr.Resolve(ctx, c)
-			if e != nil {
-				return nil, e
-			}
-			snap := accounts.New(r).Read(ctx, a.Account)
-			if !snap.Authenticated || snap.Error != "" {
-				return nil, errors.New("manager login could not be verified")
-			}
-			c, _, e = config.Update(c.Path, "", func(c *config.Config) error {
-				if c.Manager.Account != "" {
-					return errors.New("manager was selected elsewhere; refresh")
-				}
-				c.Manager.Account = a.Account
-				return nil
-			})
-			if e != nil {
-				return nil, e
-			}
-		}
-		if supervisor.Ping(ctx, c) != nil {
-			svc := service.Manager{Config: c, Self: m.Self}
-			if svc.Registered() {
-				e = svc.Start(ctx)
-			} else {
-				e = svc.Install(ctx, true)
-			}
-			if e != nil {
-				return nil, e
-			}
-			if e = service.WaitReady(ctx, func(ctx context.Context) error { return supervisor.Ping(ctx, c) }); e != nil {
-				return nil, e
-			}
 		}
 		return m.snapshot(ctx)
 	}
+
 	var call struct {
 		Command string          `json:"command"`
 		Args    json.RawMessage `json:"args"`

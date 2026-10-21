@@ -141,4 +141,40 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 	if b, _ := os.ReadFile(conflict); string(b) != "different saved release" {
 		t.Fatal("local build overwrote release")
 	}
+	write(local, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codexm 0.1.0'; else exit 7; fi\n"), 0700)
+	if e = runSource(); e == nil {
+		t.Fatal("failed migration switched installation")
+	}
+	if target, _ := os.Readlink(current); target != secondSource {
+		t.Fatal("failed child changed current", target)
+	}
+	write(local, binary, 0700)
+	entry := filepath.Join(repo, "entrypoint", "codexm")
+	os.Remove(entry)
+	write(entry, []byte("user owned entrypoint"), 0700)
+	if e = runSource(); e == nil {
+		t.Fatal("non-symlink collision overwritten")
+	}
+	if b, _ := os.ReadFile(entry); string(b) != "user owned entrypoint" {
+		t.Fatal("user file changed")
+	}
+	if target, _ := os.Readlink(current); target != secondSource {
+		t.Fatal("collision changed current", target)
+	}
+	os.Remove(entry)
+	os.Symlink(current, entry)
+	realMV, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(bin, "mv"), []byte("#!/bin/sh\ncase \"$*\" in *entrypoint/.codexm-*) exit 7 ;; esac\nexec "+realMV+" \"$@\"\n"), 0700)
+	if e = runSource(); e == nil {
+		t.Fatal("failed public link replacement reported success")
+	}
+	if target, _ := os.Readlink(current); target != secondSource {
+		t.Fatal("failed link replacement did not roll back", target)
+	}
+	if target, _ := os.Readlink(entry); target != current {
+		t.Fatal("failed link replacement changed public entry", target)
+	}
 }

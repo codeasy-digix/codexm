@@ -1,6 +1,6 @@
 # codexm
 
-공식 Codex의 계정과 하위 작업을 관리하는 독립 프로그램입니다. 모델 호출 없이 계정 한도·작업 상태를 감시하고, 같은 대화를 다른 계정으로 이어갑니다. TUI와 로컬 ChatGPT 플러그인이 하나의 관리 서비스에 연결됩니다. `codex` 명령, 로그인, 업데이트는 공식 CLI가 그대로 소유합니다.
+공식 Codex의 계정과 하위 작업을 관리하는 독립 프로그램입니다. 모델 호출 없이 계정 한도·작업 상태를 감시하고, 같은 대화를 다른 계정으로 이어갑니다. Meteor 로컬 웹, TUI와 로컬 ChatGPT 플러그인이 하나의 관리 서비스에 연결됩니다. `codex` 명령, 로그인, 업데이트는 공식 CLI가 그대로 소유합니다.
 
 ## 실행
 
@@ -90,9 +90,25 @@ Markdown 스킬 링크도 처리합니다. `@codexm manage` / `@codexm accounts`
 `codexm plugin doctor`는 공식 엔진의 MCP/skill/hook 발견, 훅 신뢰 상태와 설치 캐시 버전을 검사합니다.
 [최종 기능·검증 상태](docs/completion-status.md)에서 설치 확인과 남은 호스트 경계를 구분합니다.
 
-## 로컬 웹 개발 계획
+## Meteor 로컬 웹
 
-[Meteor 로컬 웹 개발 계획](docs/meteor-local-web-plan.md)은 기존 Go 관리 서비스와 CLI를 공유하는 웹 화면의 기능 범위·연결 계약·구현 순서·검증 기준을 정리합니다. 개발 프로젝트 경로는 `~/WebstormProjects/codexm/`이며, 현재는 계획 단계입니다.
+0.6.0의 선택형 웹은 왼쪽 대화 목록·중앙 채팅·하단 입력창, 계정·설정·사용 기록,
+직접 명령과 작업 상세를 제공합니다. 관리자 설정 전 로그인도 가능하며 MongoDB는 필요하지 않습니다.
+
+```sh
+./build-web.sh                     # Go, Meteor 3.5.2, Node 24
+./install.sh --build --web "$PWD/dist/web/bundle"
+codexm web                         # loopback에서 실행하고 브라우저 열기
+codexm web verify                  # 설치된 번들 검증
+codexm web stop                    # 웹·브리지만 종료, 작업 유지
+```
+
+[사용·설치·복구 안내](docs/local-web.md)와 [실제 검증 기록](docs/web-validation-20261021.md)을 참고하세요.
+개발 실행은 `codexm web --dev /absolute/project/web`, 세션은 `codexm-web-dev`입니다.
+
+## 개발 설계
+
+[Meteor 로컬 웹 개발 계획](docs/meteor-local-web-plan.md)은 착수 당시 기능 범위·연결 계약·구현 순서·검증 기준을 보존합니다. 개발 프로젝트 경로는 `~/WebstormProjects/codexm/`입니다.
 
 ## 업데이트와 저장 위치
 

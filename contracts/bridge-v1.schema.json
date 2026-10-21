@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/codeasy-digix/codexm/contracts/bridge-v1.schema.json",
+  "title": "codexm bridge v1 JSON-lines messages",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" },
+    { "$ref": "#/$defs/notification" }
+  ],
+  "$defs": {
+    "request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "id", "method", "owner", "params"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "method": { "type": "string" },
+        "owner": { "type": "string", "maxLength": 128 },
+        "operation_id": { "type": "string", "maxLength": 128 },
+        "params": { "type": "object" }
+      }
+    },
+    "response": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "id": { "type": "string" },
+        "result": {},
+        "error": {
+          "type": "object", "additionalProperties": false,
+          "required": ["code", "message", "retryable"],
+          "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "retryable": { "type": "boolean" } }
+        }
+      },
+      "oneOf": [{ "required": ["id", "result"] }, { "required": ["error"] }]
+    },
+    "notification": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocolVersion", "method", "params"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "method": { "enum": ["changes", "resync"] },
+        "params": { "type": "object" }
+      }
+    }
+  }
+}

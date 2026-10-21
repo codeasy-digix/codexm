@@ -14,6 +14,7 @@ import (
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/activity"
+	"github.com/codeasy-digix/codexm/internal/bridge"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/daemon"
 	"github.com/codeasy-digix/codexm/internal/display"
@@ -26,6 +27,8 @@ import (
 	"github.com/codeasy-digix/codexm/internal/supervisor"
 	"github.com/codeasy-digix/codexm/internal/terminal"
 	"github.com/codeasy-digix/codexm/internal/tui"
+	"github.com/codeasy-digix/codexm/internal/webbundle"
+	"github.com/codeasy-digix/codexm/internal/webhost"
 	"golang.org/x/term"
 )
 
@@ -76,6 +79,16 @@ func Main(args []string) error {
 		}
 		return cr.Worker(spec)
 	}
+	if command == "__install-web" {
+		if len(args) != 2 {
+			return errors.New("expected source and new destination for web bundle")
+		}
+		m, err := webbundle.Copy(args[0], args[1])
+		if err == nil {
+			fmt.Println(m.Digest)
+		}
+		return err
+	}
 	c, e := config.Load(*cfg)
 	if e != nil {
 		return e
@@ -112,6 +125,21 @@ func Main(args []string) error {
 			return ctx.Err()
 		}
 		return e
+	}
+	if command == "web" {
+		return webhost.Command(ctx, c, self, args, os.Stdout)
+	}
+	if command == "__web" {
+		if len(args) != 1 {
+			return errors.New("missing web launch spec")
+		}
+		return webhost.Run(ctx, c, args[0])
+	}
+	if command == "bridge" {
+		if len(args) != 1 || args[0] != "--stdio" {
+			return errors.New("usage: codexm bridge --stdio")
+		}
+		return bridge.Run(ctx, c, self, os.Stdin, os.Stdout)
 	}
 	if command == "daemon" {
 		return (daemon.Manager{Config: c, Self: self, Out: os.Stdout}).Command(ctx, args)
@@ -477,6 +505,8 @@ func help() {
 	fmt.Fprintln(os.Stdout, `codexm — persistent Codex job manager
 
 codexm [--config FILE]                  Interactive task list / first-run setup
+codexm web [status|stop|logs]            Local browser management (loopback only)
+codexm bridge --stdio                  Versioned local web connection
 codexm account [NAME] [--login]         Saved named login / explicit native default
 codexm daemon watch|unwatch|status     Token-free official daemon recovery
 codexm daemon start|restart|stop       Official lifecycle, using the shared home

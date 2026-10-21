@@ -102,7 +102,7 @@ func (s *Server) execute(a jobs.Action) {
 		_ = s.Store.PutAction(a)
 		return
 	}
-	if j.Paused && a.Kind != "change_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "load_view" && a.Kind != "manager_command" {
+	if j.Paused && a.Kind != "change_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "load_view" && a.Kind != "set_goal" && a.Kind != "manager_command" {
 		if jobs.Terminal(j.State) {
 			s.finishAction(a, "cancelled", nil)
 			return
@@ -181,22 +181,59 @@ func (s *Server) execute(a jobs.Action) {
 	case "goal_continue":
 		e = s.continueGoal(ctx, j.ID)
 	case "set_goal":
-		var p struct {
-			Objective string `json:"objective"`
+		var p map[string]any
+		if e = json.Unmarshal(a.Payload, &p); e != nil {
+			break
 		}
-		_ = json.Unmarshal(a.Payload, &p)
-		if p.Objective == "" {
+		if p["objective"] == "" {
 			e = errors.New("goal objective is empty")
 			break
 		}
-		if e = s.ensureRuntime(ctx, j.ID, false); e != nil {
+		// Editing a parked goal is an explicit metadata operation. Load its
+		// native state without treating the edit as a request to resume work.
+		if e = s.loadView(ctx, j); e != nil {
 			break
 		}
 		j, _ = s.Store.Job(j.ID)
-		e = s.client(j.ID).Call(ctx, "thread/goal/set", map[string]any{"threadId": j.ThreadID, "objective": p.Objective, "origin": "user", "status": "active"}, nil)
-		if e == nil {
-			e = s.update(j.ID, func(j *jobs.Job) { j.ContinuationDue = true; j.State = "goal_wait" })
+		p["threadId"] = j.ThreadID
+		p["origin"] = "user"
+		if p["status"] == nil {
+			p["status"] = "active"
+			g, err := s.client(j.ID).Goal(ctx, j.ThreadID)
+			if err != nil {
+				e = err
+				break
+			}
+			if g != nil {
+				p["status"] = g.Status
+			}
 		}
+		e = s.client(j.ID).Call(ctx, "thread/goal/set", p, nil)
+		if e == nil {
+			var g *jobs.Goal
+			g, e = s.client(j.ID).Goal(ctx, j.ThreadID)
+			if e == nil {
+				e = s.update(j.ID, func(j *jobs.Job) {
+					j.Goal = g
+					j.ContinuationDue = g != nil && g.Status == "active"
+					if g != nil {
+						switch g.Status {
+						case "active":
+							j.Paused = false
+							j.State = "goal_wait"
+						case "complete":
+							j.State = "complete"
+						case "paused":
+							j.Paused = true
+							j.State = "paused"
+						default:
+							j.State = "goal_wait"
+						}
+					}
+				})
+			}
+		}
+
 	case "check_completion":
 		e = s.checkCompletion(ctx, j.ID)
 	case "manager_command", "manager_incident":
@@ -499,6 +536,7 @@ func (s *Server) connect(ctx context.Context, j jobs.Job, user bool) error {
 	}
 	s.watch(j.ID, j.RunID, c)
 	var r cr.ResumeResponse
+	hadThread := j.ThreadID != ""
 	if j.ThreadID == "" {
 		var loaded struct {
 			Data []string `json:"data"`
@@ -575,7 +613,11 @@ func (s *Server) connect(ctx context.Context, j jobs.Job, user bool) error {
 		}
 	}
 	if g == nil && j.Goal != nil {
-		e = c.Call(ctx, "thread/goal/set", map[string]any{"threadId": j.ThreadID, "objective": j.Goal.Objective, "status": "active", "origin": "user"}, nil)
+		p, err := initialGoalParams(j, hadThread)
+		if err != nil {
+			return err
+		}
+		e = c.Call(ctx, "thread/goal/set", p, nil)
 		if e != nil {
 			return e
 		}
@@ -618,6 +660,13 @@ func (s *Server) connect(ctx context.Context, j jobs.Job, user bool) error {
 			j.State = "complete"
 		}
 	})
+}
+
+func initialGoalParams(j jobs.Job, hadThread bool) (map[string]any, error) {
+	if hadThread {
+		return nil, fmt.Errorf("%w: native goal is missing from an existing thread; inspect it before recreating its budget or usage", errUncertain)
+	}
+	return map[string]any{"threadId": j.ThreadID, "objective": j.Goal.Objective, "status": j.Goal.Status, "origin": "user", "tokenBudget": j.Goal.TokenBudget}, nil
 }
 func (s *Server) send(ctx context.Context, id string, in jobs.Input) error {
 	j, e := s.Store.Job(id)

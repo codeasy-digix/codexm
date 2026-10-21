@@ -105,6 +105,11 @@ func New(ctx context.Context, c config.Config, self string) (*Server, error) {
 		lease.Close()
 		return nil, e
 	}
+	if e = st.RecoverOperations(); e != nil {
+		st.Close()
+		lease.Close()
+		return nil, e
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Server{Config: c, Resolver: r, Reader: accounts.New(r), Store: st, Self: self, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, viewers: map[string]viewer{}, dispatching: map[string]bool{}, managerAccount: c.Manager.Account, started: time.Now()}
 	s.lease = lease

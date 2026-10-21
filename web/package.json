@@ -1,0 +1,43 @@
+{
+  "name": "codexm-web",
+  "private": true,
+  "version": "0.6.0",
+  "scripts": {
+    "start": "meteor run --port 127.0.0.1:4317 --app-port 127.0.0.1:4319",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "build": "meteor build ../dist/web --directory --server-only"
+  },
+  "meteor": {
+    "mainModule": {
+      "client": "client/main.tsx",
+      "server": "server/main.ts"
+    },
+    "modern": true,
+    "autoInstallDeps": false
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@babel/runtime": "7.28.4",
+    "@swc/helpers": "0.5.17",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-markdown": "10.1.0"
+  },
+  "devDependencies": {
+    "@meteorjs/rspack": "2.2.0",
+    "@playwright/test": "1.56.1",
+    "@rspack/cli": "1.7.1",
+    "@rspack/core": "1.7.1",
+    "@rspack/plugin-react-refresh": "1.4.3",
+    "@types/meteor": "2.9.11",
+    "@types/node": "24.6.0",
+    "@types/react": "19.2.0",
+    "@types/react-dom": "19.2.0",
+    "react-refresh": "0.17.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}
