@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/codeasy-digix/codexm/internal/config"
+	"golang.org/x/sys/unix"
 )
 
 const manifestName = "codexm-bundle.json"
@@ -28,8 +29,12 @@ type Manifest struct {
 }
 
 func inventory(root string) (string, error) {
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
 	h := sha256.New()
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -152,6 +157,10 @@ func Verify(root string, full bool) (Manifest, error) {
 // Copy only writes a new destination. Failed validation/copy removes only the
 // directory this invocation created; an existing path is never overwritten.
 func Copy(source, destination string) (Manifest, error) {
+	source, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return Manifest{}, err
+	}
 	m, err := Verify(source, true)
 	if err != nil {
 		return m, err
@@ -189,7 +198,15 @@ func Copy(source, destination string) (Manifest, error) {
 			if err != nil {
 				return err
 			}
-			return os.Symlink(link, target)
+			if err := os.Symlink(link, target); err != nil {
+				return err
+			}
+			// Darwin applies the process umask to symlinks. Their mode is part
+			// of the seal, so preserve it without following the link target.
+			if runtime.GOOS == "darwin" {
+				return unix.Fchmodat(unix.AT_FDCWD, target, uint32(info.Mode().Perm()), unix.AT_SYMLINK_NOFOLLOW)
+			}
+			return nil
 		}
 		if !info.Mode().IsRegular() {
 			return errors.New("artifact changed during copy")
