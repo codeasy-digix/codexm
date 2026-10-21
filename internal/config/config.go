@@ -73,6 +73,7 @@ type Config struct {
 		AccountsDir     string `toml:"accounts_dir,omitempty"`
 		Controller      string `toml:"controller,omitempty"`
 		CodexBinary     string `toml:"codex_binary,omitempty"`
+		WebNodeBinary   string `toml:"web_node_binary,omitempty"`
 		EnginesDir      string `toml:"engines_dir"`
 	} `toml:"runtime"`
 	Storage struct {
@@ -201,6 +202,9 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(Expand(c.Runtime.EnginesDir)) || (c.Runtime.CodexBinary != "" && !filepath.IsAbs(Expand(c.Runtime.CodexBinary))) {
 		return errors.New("engine paths must be absolute")
+	}
+	if c.Runtime.WebNodeBinary != "" && !filepath.IsAbs(Expand(c.Runtime.WebNodeBinary)) {
+		return errors.New("web Node binary must be an absolute path")
 	}
 	if c.Manager.Invocation != "on_demand" || c.Manager.AutomaticAccountFallback || c.Completion.ChatOnTurnEnd != "idle" || c.Completion.TaskWithoutCriteriaOnTurnEnd != "result_ready" || c.Completion.GoalCompletionSource != "codex_goal" || c.UI.QuitAction != "detach" {
 		return errors.New("unsupported manager, completion or quit policy")

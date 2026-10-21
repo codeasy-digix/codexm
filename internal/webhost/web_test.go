@@ -44,3 +44,30 @@ func TestFailedChildDoesNotClaimReadiness(t *testing.T) {
 		t.Fatal("failed child left readiness")
 	}
 }
+
+func TestWebNodeIsIndependentOfShellDefault(t *testing.T) {
+	dir := t.TempDir()
+	for name, version := range map[string]string{"node": "26.0.0", "web-node": "24.15.0"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\necho v"+version+"\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	c := config.Defaults()
+	if _, err := nodeProgram(context.Background(), c); err == nil {
+		t.Fatal("unsupported shell Node accepted")
+	}
+	c.Runtime.WebNodeBinary = filepath.Join(dir, "web-node")
+	program, err := nodeProgram(context.Background(), c)
+	if err != nil || program != c.Runtime.WebNodeBinary {
+		t.Fatal("configured Node was not used", program, err)
+	}
+	c.Runtime.WebNodeBinary = filepath.Join(dir, "missing")
+	if _, err := nodeProgram(context.Background(), c); err == nil {
+		t.Fatal("missing configured Node fell back to shell Node")
+	}
+	c.Runtime.WebNodeBinary = "relative-node"
+	if _, err := nodeProgram(context.Background(), c); err == nil {
+		t.Fatal("relative configured Node accepted")
+	}
+}

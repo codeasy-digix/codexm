@@ -130,7 +130,6 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		spec.Args = []string{"run", "--port", address, "--app-port", "127.0.0.1:" + strconv.Itoa(*port+2)}
 	} else {
 		spec.Directory = config.Expand(*bundle)
-		spec.Program, err = exec.LookPath("node")
 		spec.Args = []string{"main.js"}
 	}
 	if err != nil {
@@ -150,9 +149,9 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		if _, err = webbundle.Verify(spec.Directory, false); err != nil {
 			return err
 		}
-		version, err := exec.CommandContext(ctx, spec.Program, "--version").Output()
-		if err != nil || !strings.HasPrefix(string(version), "v24.") {
-			return errors.New("local web requires Node 24")
+		spec.Program, err = nodeProgram(ctx, c)
+		if err != nil {
+			return err
 		}
 	}
 	if exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+spec.Session).Run() == nil {
@@ -183,6 +182,25 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	}
 	fmt.Fprintf(out, "Building; check codexm web status and logs. URL: %s\n", spec.Origin)
 	return nil
+}
+
+func nodeProgram(ctx context.Context, c config.Config) (string, error) {
+	name := "node"
+	if c.Runtime.WebNodeBinary != "" {
+		name = config.Expand(c.Runtime.WebNodeBinary)
+		if !filepath.IsAbs(name) {
+			return "", errors.New("web Node binary must be an absolute path")
+		}
+	}
+	program, err := exec.LookPath(name)
+	if err != nil {
+		return "", err
+	}
+	version, err := exec.CommandContext(ctx, program, "--version").Output()
+	if err != nil || !strings.HasPrefix(string(version), "v24.") {
+		return "", errors.New("local web requires Node 24; set runtime.web_node_binary to its absolute path")
+	}
+	return program, nil
 }
 
 func ready(state, origin string) bool {

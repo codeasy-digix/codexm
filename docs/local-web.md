@@ -10,6 +10,11 @@ codexm 0.6.0은 Meteor 3.5.2·React·TypeScript 화면을 제공합니다. 왼�
 Node의 기준 버전은 `web/.nvmrc`의 24.15.0입니다. 설치한 번들의 실행에는 Meteor·Go가
 필요하지 않으며 Node 24·tmux·공식 Codex와 같은 버전의 codexm이 필요합니다.
 
+다른 프로젝트가 다른 Node 기본 버전을 사용하는 머신에서는 Node 24를 별도로 설치하고
+`~/.config/codexm/config.toml`의 `[runtime]`에
+`web_node_binary = "/absolute/path/to/node24/bin/node"`를 지정합니다.
+웹은 이 실행 파일을 사용하므로 셸·Homebrew·NVM의 기본 Node를 바꿀 필요가 없습니다.
+
 ```sh
 ./build-web.sh
 ./install.sh --build --web "$PWD/dist/web/bundle"
