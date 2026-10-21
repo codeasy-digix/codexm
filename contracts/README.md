@@ -27,6 +27,7 @@ Native conversation, goal, quota and approval payloads retain their native shape
 | jobs.goal | id, text, optional token_budget and goal_status; omitted values preserve existing accounting/intent |
 | settings.read/save | Redacted values/account names/revision; save requires that revision |
 | login.start/status/cancel | owner from authenticated session; account/mode, login_id, generation; empty status ID resumes this owner's last login |
+| accounts.remove | account and exact config revision; preserve credentials/native login/history, reject manager or in-use accounts; durable online operation, offline lease and revision guard |
 | changes.replay / watch | instance, after → ordered invalidations, sequence, more/resync; watch emits changes/resync notifications |
 | operation.read | operation_id → done/failed/pending/outcome_unknown and saved result/error |
 

@@ -164,12 +164,15 @@ func (b *LoginBroker) Start(ctx context.Context, account, mode string) (LoginSta
 	if e = os.Chmod(s.home, 0700); e != nil {
 		return fail("could not protect the private sign-in home")
 	}
-	if setup.Err() != nil {
+	if setup.Err() != nil || lifetime.Err() != nil {
 		return fail("sign-in request was canceled")
 	}
 	s.transport, e = b.start(lifetime, b.config, s.home)
 	if e != nil {
 		return fail("official Codex sign-in server could not be started")
+	}
+	if setup.Err() != nil || lifetime.Err() != nil {
+		return fail("sign-in request was canceled")
 	}
 	params := map[string]any{"type": "chatgpt"}
 	if mode == "device" {
@@ -188,7 +191,7 @@ func (b *LoginBroker) Start(ctx context.Context, account, mode string) (LoginSta
 	// The engine owns this id; the opaque public id never permits another MCP
 	// connection to inspect or cancel a server's unrelated sign-in session.
 	s.serverID = reply.LoginID
-	if setup.Err() != nil {
+	if setup.Err() != nil || lifetime.Err() != nil {
 		return fail("sign-in request was canceled")
 	}
 	if e != nil || reply.LoginID == "" || len(reply.LoginID) > 256 {
@@ -398,7 +401,7 @@ func (b *LoginBroker) verify(s *loginSession) {
 		message = "named account home changed during sign-in; existing credentials were preserved"
 	} else if e != nil || now != s.before {
 		message = "saved credentials changed during sign-in; refresh and try again"
-	} else if e = config.AtomicWrite(s.target, data, 0600); e != nil {
+	} else if e = publishLogin(b.config, s.status.Account, s.target, data); e != nil {
 		message = "new credentials could not be saved; existing credentials were preserved"
 	}
 	if message == "" {
@@ -411,6 +414,36 @@ func (b *LoginBroker) verify(s *loginSession) {
 	} else {
 		b.finish(s, "succeeded", "")
 	}
+}
+
+// Publish verified credentials and registration together. If saving the registry
+// fails, restore the previous auth file while the named account lock is held.
+func publishLogin(c config.Config, name, target string, data []byte) error {
+	previous, existed, err := readAuth(target)
+	if err != nil {
+		return err
+	}
+	wrote := false
+	_, _, err = config.Update(c.Path, "", func(c *config.Config) error {
+		if err := c.RegisterAccount(name); err != nil {
+			return err
+		}
+		if err := c.Validate(); err != nil {
+			return err
+		}
+		if err := config.AtomicWrite(target, data, 0600); err != nil {
+			return err
+		}
+		wrote = true
+		return nil
+	})
+	if err != nil && wrote {
+		if existed {
+			return errors.Join(err, config.AtomicWrite(target, previous, 0600))
+		}
+		return errors.Join(err, os.Remove(target))
+	}
+	return err
 }
 
 func officialAuthURL(value string) bool {

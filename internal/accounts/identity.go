@@ -13,7 +13,7 @@ import (
 // CurrentNickname recognizes an existing login without refreshing it, copying
 // credentials, or returning any credential/account identifier.
 func CurrentNickname(c config.Config, codexHome, account string) string {
-	names, e := List(c)
+	names, e := storedNames(c)
 	if e != nil {
 		return ""
 	}

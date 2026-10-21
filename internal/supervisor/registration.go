@@ -66,6 +66,9 @@ func (s *Server) registerObserved(j jobs.Job, origin string) (jobs.Job, error) {
 	if cur.Managed {
 		return cur, nil
 	}
+	if slices.Contains(s.workerConfig().AccountRegistry.Removed, cur.Account) {
+		return cur, errors.New("이 계정은 등록 해제됐습니다. 등록된 계정을 선택하세요.")
+	}
 	cur.Managed = true
 	if cur.Model == "" {
 		cur.Model = j.Model
@@ -101,7 +104,7 @@ func (s *Server) validateOriginAccount(origin string) error {
 	if origin == "" {
 		return nil
 	}
-	names, e := accounts.List(s.Config)
+	names, e := accounts.List(s.workerConfig())
 	if e != nil {
 		return e
 	}

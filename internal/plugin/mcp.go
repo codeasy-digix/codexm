@@ -173,6 +173,7 @@ func toolList() []any {
 	add("codexm_accounts_open", "Open account management directly from plugin settings, including first account setup. Opening the panel does not sign in or start the manager.", true, object(map[string]any{}), true)
 	add("codexm_snapshot", "Refresh account observations and task list without a model call. Cached quotas include their observation time.", true, object(map[string]any{}), false)
 	add("codexm_account", "Explicit account sign-in buttons only. Start official browser or device sign-in, inspect its status or cancel this connection's request. Authentication details are private UI metadata; existing credentials change only after verification.", false, object(map[string]any{"command": choice("start", "status", "cancel"), "account": property("string"), "mode": choice("browser", "device"), "login_id": map[string]any{"type": "string", "pattern": "^[a-f0-9]{32}$"}}, "command"), false)
+	add("codexm_account_remove", "Remove a saved alias from codexm registration and worker priority. Preserve credentials, native login, conversations and historical runs. Refuse manager or in-use accounts; use the snapshot config_revision.", false, object(map[string]any{"account": property("string"), "revision": property("string"), "operation_id": property("string")}, "account", "revision", "operation_id"), false)
 	add("codexm_ui_ready", "Record an optional panel bridge observation. Never starts supervision or a model, and does not prove the host displayed the UI.", false, object(map[string]any{"ui_build": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}, "bridge": choice("mcp-app", "legacy"), "visible": property("boolean")}, "ui_build", "bridge", "visible"), false)
 	add("codexm_read", "Read selected conversation, logs, settings or models. Account refresh uses authenticated quota APIs without generating a turn.", true, object(map[string]any{"command": choice("read", "details", "logs", "events", "accounts", "settings-edit", "models"), "id": property("string"), "thread_id": property("string"), "cursor": property("string"), "limit": property("integer")}, "command"), false)
 	add("codexm_control", "Explicit user action on a selected managed conversation. Register preserves the existing chat and goal without generating a turn. New/send/resume may start work. Account switching obeys fallback restrictions.", false, object(map[string]any{"command": choice("new", "resume", "manage", "register", "unregister", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account"), "args": object(map[string]any{"id": property("string"), "thread_id": property("string"), "account": property("string"), "expected_account": property("string"), "operation_id": property("string"), "run_id": property("string"), "text": property("string"), "steer": property("boolean"), "manage": property("boolean"), "kind": choice("chat", "task", "goal"), "cwd": property("string"), "title": property("string"), "model": property("string"), "effort": property("string"), "prompt": property("string"), "goal": property("string"), "read_only": property("boolean"), "request_id": map[string]any{}, "result": map[string]any{}})}, "command", "args"), false)
@@ -273,6 +274,22 @@ func (m MCP) call(ctx context.Context, name string, args json.RawMessage) (any, 
 	}
 	if name == "codexm_account" {
 		return m.accountLogin(ctx, args)
+	}
+	if name == "codexm_account_remove" {
+		var p struct {
+			accounts.RemoveArgs
+			Operation string `json:"operation_id"`
+		}
+		d := json.NewDecoder(strings.NewReader(string(args)))
+		d.DisallowUnknownFields()
+		if err := d.Decode(&p); err != nil {
+			return nil, err
+		}
+		c, err := config.Load(m.Config.Path)
+		if err != nil {
+			return nil, err
+		}
+		return application.RemoveAccount(ctx, c, p.RemoveArgs, p.Operation)
 	}
 	if name == "codexm_open" || name == "codexm_accounts_open" || name == "codexm_snapshot" {
 		if name != "codexm_snapshot" {
@@ -380,7 +397,7 @@ func (m MCP) accountLogin(ctx context.Context, raw json.RawMessage) (any, error)
 }
 
 func (m MCP) snapshot(ctx context.Context) (any, error) {
-	c, e := config.Load(m.Config.Path)
+	c, rev, e := config.Current(m.Config.Path)
 	if e != nil {
 		return nil, e
 	}
@@ -392,16 +409,20 @@ func (m MCP) snapshot(ctx context.Context) (any, error) {
 		names = []string{}
 	}
 	snapshot := map[string]any{"connected": false, "setup_required": c.Manager.Account == "", "account_names": names, "login_available": m.Logins != nil, "manager_account": c.Manager.Account, "native_default_account": accounts.CurrentNickname(c, config.Expand(c.Runtime.SharedCodexHome), ""), "priority": c.WorkerAccounts.Priority, "fallback_account": c.WorkerAccounts.FallbackAccount, "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "at": time.Now()}
+	snapshot["config_revision"] = rev
+	snapshot["account_removal_available"] = true
 	if supervisor.Ping(ctx, c) != nil {
 		snapshot["message"] = "관리 서비스가 연결되지 않았습니다. 계정을 준비한 뒤 시작 버튼으로 연결하세요."
 		return snapshot, nil
 	}
 	var capability struct {
-		API int `json:"manager_api"`
+		API      int `json:"manager_api"`
+		Accounts int `json:"accounts_api"`
 	}
 	if e = supervisor.Request(ctx, c, "ping", nil, &capability); e != nil {
 		return nil, e
 	}
+	snapshot["account_removal_available"] = capability.Accounts == 1
 	var st supervisor.Status
 	if e = supervisor.Request(ctx, c, "status", nil, &st); e != nil {
 		return nil, e

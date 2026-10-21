@@ -7,12 +7,42 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/codeasy-digix/codexm/internal/config"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
+
+func TestAccountRemoveWorksWithoutAnEngineAndExplicitRegistrationRestoresIt(t *testing.T) {
+	c := accountFixture(t)
+	before, _ := os.ReadFile(filepath.Join(c.Runtime.AccountsDir, "account-secondary", "auth.json"))
+	if err := os.Rename(filepath.Join(c.StateDir(), "engine.json"), filepath.Join(c.StateDir(), "saved-engine.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Main([]string{"--config", c.Path, "account", "account-secondary", "--remove"}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := config.Load(c.Path)
+	if !slices.Contains(loaded.AccountRegistry.Removed, "account-secondary") {
+		t.Fatal("CLI did not remove registration")
+	}
+	after, _ := os.ReadFile(filepath.Join(c.Runtime.AccountsDir, "account-secondary", "auth.json"))
+	if string(after) != string(before) {
+		t.Fatal("CLI changed saved auth")
+	}
+	if err := os.Rename(filepath.Join(c.StateDir(), "saved-engine.json"), filepath.Join(c.StateDir(), "engine.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Main([]string{"--config", c.Path, "account", "account-secondary"}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ = config.Load(c.Path)
+	if slices.Contains(loaded.AccountRegistry.Removed, "account-secondary") || !slices.Contains(loaded.WorkerAccounts.Priority, "account-secondary") {
+		t.Fatal("CLI did not restore registration")
+	}
+}
 
 func accountFixture(t *testing.T) config.Config {
 	t.Helper()

@@ -2,6 +2,8 @@ package supervisor
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
@@ -14,6 +16,9 @@ import (
 func (s *Server) changeAccount(id, to, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if slices.Contains(s.workerConfig().AccountRegistry.Removed, to) {
+		return errors.New("selected account was removed; refresh account selection before starting work")
+	}
 	j, e := s.Store.Job(id)
 	if e != nil {
 		return e

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { call } from "../../client/data";
 import { remaining, type Data } from "../contracts/types";
 export type Run = (method: string, params?: Data) => Promise<any>;
@@ -22,9 +22,17 @@ export function Accounts({
   const [account, setAccount] = useState(""),
     [mode, setMode] = useState("device"),
     [manager, setManager] = useState(snapshot.manager_account || ""),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [removal, setRemoval] = useState<{ account: string; revision: string } | null>(null),
+    [removing, setRemoving] = useState(false);
+  const removeDialog = useRef<HTMLDialogElement>(null);
   const names: string[] = snapshot.account_names || [],
     observations: Data[] = snapshot.state?.accounts || [];
+  useEffect(() => {
+    const dialog = removeDialog.current;
+    if (removal && dialog && !dialog.open) dialog.showModal();
+    if (!removal && dialog?.open) dialog.close();
+  }, [removal]);
   useEffect(() => {
     let active = true;
     void call("login.status")
@@ -69,6 +77,38 @@ export function Accounts({
   return (
     <div>
       <h2>계정 관리</h2>
+      <dialog
+        ref={removeDialog}
+        aria-labelledby="remove-account-title"
+        onCancel={(e) => {
+          if (removing) e.preventDefault();
+          else setRemoval(null);
+        }}
+      >
+        <h3 id="remove-account-title">계정 등록 삭제</h3>
+        <p><strong>{removal?.account}</strong> 계정을 목록과 작업 우선순위에서 삭제합니다.</p>
+        <p>로그인 파일·공용 기본 로그인·대화 기록은 보존합니다. 같은 별칭으로 다시 등록할 수 있습니다.</p>
+        {error && <p role="alert" className="error">{error}</p>}
+        <div className="toolbar">
+          <button disabled={removing} onClick={() => setRemoval(null)}>취소</button>
+          <button
+            disabled={removing || !removal}
+            onClick={async () => {
+              if (!removal || removing) return;
+              setRemoving(true);
+              setError("");
+              try {
+                await run("accounts.remove", removal);
+                setRemoval(null);
+              } catch (e: any) {
+                setError(e.reason || e.message);
+              } finally {
+                setRemoving(false);
+              }
+            }}
+          >{removing ? "삭제 중…" : "등록 삭제"}</button>
+        </div>
+      </dialog>
       <p>
         작업 우선순위: {(snapshot.priority || []).join(" → ")} · 관리자:{" "}
         {snapshot.manager_account || "미설정"} · 공용 기본 로그인:{" "}
@@ -226,6 +266,14 @@ export function Accounts({
                 >
                   공용 기본 로그인으로 선택
                 </button>
+                <button
+                  aria-label={`${name} 등록 삭제`}
+                  disabled={!snapshot.account_removal_available || !!(pending && login?.account === name)}
+                  onClick={() => {
+                    setError("");
+                    setRemoval({ account: name, revision: snapshot.config_revision });
+                  }}
+                >등록 삭제</button>
               </div>
             </section>
           );

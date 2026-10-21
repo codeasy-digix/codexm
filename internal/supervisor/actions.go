@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -354,6 +355,9 @@ func (s *Server) snapshots() (map[string]accounts.Snapshot, map[string]bool, err
 	return m, blocked, e
 }
 func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error) {
+	if !j.AutoAccount && slices.Contains(s.workerConfig().AccountRegistry.Removed, j.Account) {
+		return "", errors.New("이 계정은 등록 해제됐습니다. 작업의 계정을 변경하거나 다시 등록하세요.")
+	}
 	// A manual selection must either use that exact account or fail visibly.
 	// It must never silently fall through to a different priority account.
 	if j.TargetAccount != "" {

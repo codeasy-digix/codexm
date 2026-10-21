@@ -12,7 +12,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const Version = "0.6.0"
+const Version = "0.6.1"
 
 var Nickname = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
@@ -26,8 +26,11 @@ func (c Config) FirstPriority() string {
 }
 
 type Config struct {
-	SchemaVersion int `toml:"schema_version" json:"schema_version"`
-	Manager       struct {
+	SchemaVersion   int `toml:"schema_version" json:"schema_version"`
+	AccountRegistry struct {
+		Removed []string `toml:"removed,omitempty" json:"removed,omitempty"`
+	} `toml:"account_registry"`
+	Manager struct {
 		Account                  string `toml:"account" json:"account"`
 		Invocation               string `toml:"invocation"`
 		Model                    string `toml:"model,omitempty"`
@@ -172,6 +175,16 @@ func (c Config) Validate() error {
 	if c.Manager.Account != "" && !Nickname.MatchString(c.Manager.Account) {
 		return errors.New("invalid manager account")
 	}
+	removed := map[string]bool{}
+	for _, name := range c.AccountRegistry.Removed {
+		if !Nickname.MatchString(name) || removed[name] {
+			return errors.New("invalid or duplicate removed account")
+		}
+		removed[name] = true
+	}
+	if removed[c.Manager.Account] {
+		return errors.New("choose a registered manager account")
+	}
 	if c.Manager.MaxInputChars < 256 || c.Manager.MaxCallsPerIncident < 1 || c.Manager.MaxCallsPerHour < 1 || c.Manager.DecisionTimeoutSeconds < 1 {
 		return errors.New("manager limits must be positive")
 	}
@@ -180,13 +193,10 @@ func (c Config) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, n := range c.WorkerAccounts.Priority {
-		if !Nickname.MatchString(n) || seen[n] {
+		if !Nickname.MatchString(n) || seen[n] || removed[n] {
 			return fmt.Errorf("invalid or duplicate worker account %q", n)
 		}
 		seen[n] = true
-	}
-	if len(seen) == 0 {
-		return errors.New("at least one worker account is required")
 	}
 	if f := c.WorkerAccounts.FallbackAccount; f != "" && (!slices.Contains(c.WorkerAccounts.Priority, f) || c.WorkerAccounts.Priority[len(c.WorkerAccounts.Priority)-1] != f) {
 		return errors.New("fallback account must be last in priority")

@@ -62,7 +62,7 @@ type JobArgs struct {
 func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	if s.isStopping() {
 		switch call.Command {
-		case "new", "resume", "resume-job", "manage", "register", "unregister", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "set-worker-account", "switch-account", "settings-save", "resolve-action":
+		case "new", "resume", "resume-job", "manage", "register", "unregister", "view", "record-handoff", "send", "goal", "manager", "reply", "set-manager", "set-worker-account", "switch-account", "settings-save", "resolve-action", "account-remove":
 			return nil, errors.New("supervisor is shutting down; restart it before submitting work")
 		}
 	}
@@ -74,7 +74,13 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	}
 	switch call.Command {
 	case "ping":
-		return map[string]any{"version": config.Version, "manager_api": 2, "web_api": 1}, nil
+		return map[string]any{"version": config.Version, "manager_api": 2, "web_api": 1, "accounts_api": 1}, nil
+	case "account-remove":
+		var p accounts.RemoveArgs
+		if err := json.Unmarshal(call.Args, &p); err != nil {
+			return nil, err
+		}
+		return s.removeAccount(p)
 	case "web-operation":
 		return s.webOperation(ctx, call.Args)
 	case "operation":
@@ -530,6 +536,9 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 	if e = policy.ValidateParent(j, all, s.Config.Execution.MaxChildDepth); e != nil {
 		return j, e
 	}
+	if !slices.Contains(s.workerConfig().WorkerAccounts.Priority, j.Account) {
+		return j, errors.New("account selection changed; refresh before creating work")
+	}
 	as := []jobs.Action{}
 	if n.Kind != "group" {
 		as = append(as, policy.Action("start", j, map[string]any{"new": true, "origin": "user"}))
@@ -621,6 +630,9 @@ func (s *Server) importThread(ctx context.Context, a JobArgs) (jobs.Job, error) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	as := []jobs.Action{}
+	if !slices.Contains(s.workerConfig().WorkerAccounts.Priority, j.Account) {
+		return j, errors.New("account selection changed; refresh before importing work")
+	}
 	if a.Manage {
 		as = append(as, policy.Action("start", j, map[string]string{"origin": "user"}))
 	}
@@ -629,7 +641,7 @@ func (s *Server) importThread(ctx context.Context, a JobArgs) (jobs.Job, error) 
 func (s *Server) refreshAccounts(ctx context.Context) ([]accounts.Snapshot, error) {
 	s.accountMu.Lock()
 	defer s.accountMu.Unlock()
-	names, e := accounts.List(s.Config)
+	names, e := accounts.List(s.workerConfig())
 	if e != nil {
 		return nil, e
 	}

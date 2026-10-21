@@ -46,6 +46,9 @@ func (s *Server) notifyQuotas(c config.Config) {
 	slices.Sort(names)
 	names = slices.Compact(names)
 	for _, name := range names {
+		if slices.Contains(c.AccountRegistry.Removed, name) {
+			continue
+		}
 		if s.ctx.Err() != nil {
 			return
 		}
@@ -72,7 +75,7 @@ func (s *Server) notifyQuotas(c config.Config) {
 
 func (s *Server) queueQuotaNotice(a accounts.Snapshot) {
 	c, e := config.Load(s.Config.Path)
-	if e != nil || !c.Notifications.FiveHourDiscord {
+	if e != nil || !c.Notifications.FiveHourDiscord || slices.Contains(c.AccountRegistry.Removed, a.Account) {
 		return
 	}
 	include := slices.Contains(c.Notifications.Accounts, a.Account)

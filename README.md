@@ -13,6 +13,7 @@
 ./install.sh                       # 정식 Release 이후 사용 (private 저장소: gh 로그인 필요)
 codexm account account-work              # 저장 로그인 확인/등록
 codexm account account-main default    # native Codex 기본 로그인 변경
+codexm account account-secondary --remove        # 등록 삭제 (로그인 파일·대화 보존)
 codexm setup --manager account-backup     # 관리 판단에 사용할 별도 계정 저장
 codexm service install            # 사용자 OS 서비스 설치 및 시작
 codexm plugin install             # 개인 로컬 marketplace 등록

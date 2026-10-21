@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -48,6 +49,14 @@ type Reader struct {
 
 func New(r cr.Resolver) *Reader { return &Reader{Resolver: r, locks: map[string]*sync.Mutex{}} }
 func List(c config.Config) ([]string, error) {
+	names, err := storedNames(c)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(names, func(name string) bool { return slices.Contains(c.AccountRegistry.Removed, name) }), nil
+}
+
+func storedNames(c config.Config) ([]string, error) {
 	ds, e := os.ReadDir(config.Expand(c.Runtime.AccountsDir))
 	if e != nil {
 		return nil, e

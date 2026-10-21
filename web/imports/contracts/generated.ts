@@ -12,6 +12,11 @@ export const bridgeContract = {
       "model": false
     },
     {
+      "name": "accounts.remove",
+      "mutation": true,
+      "model": false
+    },
+    {
       "name": "actions.resolve",
       "mutation": true,
       "model": false

@@ -14,7 +14,7 @@ import (
 )
 
 // Only this explicit surface can be used through a reconnecting web client.
-var webMutations = []string{"new", "resume", "register", "unregister", "manage", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account", "goal", "manager", "settings-save", "resolve-action"}
+var webMutations = []string{"new", "resume", "register", "unregister", "manage", "send", "pause", "stop", "resume-job", "complete", "reply", "switch-account", "goal", "manager", "settings-save", "resolve-action", "account-remove"}
 var operationID = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
 type WebOperation struct {

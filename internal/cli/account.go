@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/application"
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
@@ -23,6 +24,7 @@ codexm account NAME default            Change the computer's GUI/native default 
 codexm account NAME --set-default      Flag form of the same GUI/native default change
 codexm account NAME --login --device   Log in with a device code (SSH supported)
 codexm account NAME --login --browser  Log in with the browser
+codexm account NAME --remove           Remove registration; keep login and history
 codexm setup --manager NAME            Choose the separate manager account
 
 Worker order is configured in the management panel. Registration leaves existing
@@ -32,7 +34,7 @@ launches using that home. Existing terminals, GUI processes and workers keep the
 current connection; they are not restarted. View live quotas with codexm accounts.
 `
 
-const accountUsage = "usage: codexm account NAME [default|--set-default] [--login] [--browser|--device]"
+const accountUsage = "usage: codexm account NAME [default|--set-default] [--login] [--browser|--device] | NAME --remove"
 
 func accountCommand(ctx context.Context, c config.Config, args []string) error {
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
@@ -72,6 +74,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 	browser := f.Bool("browser", false, "browser sign-in")
 	device := f.Bool("device", false, "device-code sign-in")
 	nativeDefault := f.Bool("set-default", false, "change the native Codex default login")
+	remove := f.Bool("remove", false, "remove codexm registration while keeping credentials and history")
 	if e := f.Parse(options); e != nil {
 		return e
 	}
@@ -80,6 +83,20 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 	}
 	if *browser && *device {
 		return errors.New("choose one login method: --browser or --device")
+	}
+	if *remove {
+		if *login || *browser || *device || positionalDefault || *nativeDefault {
+			return errors.New("--remove cannot be combined with sign-in or default-login options")
+		}
+		latest, rev, err := config.Current(c.Path)
+		if err != nil {
+			return err
+		}
+		if _, err = application.RemoveAccount(ctx, latest, accounts.RemoveArgs{Account: name, Revision: rev}, jobs.ID()); err != nil {
+			return err
+		}
+		fmt.Printf("Removed registration: %s. Login files, native login and conversations were preserved.\n", name)
+		return nil
 	}
 	lock, e := cr.AccountLoginLock(c, name)
 	if e != nil {
@@ -127,14 +144,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 
 func registerAccount(c config.Config, name string) error {
 	_, _, e := config.Update(c.Path, "", func(c *config.Config) error {
-		if !slices.Contains(c.WorkerAccounts.Priority, name) {
-			position := len(c.WorkerAccounts.Priority)
-			if fallback := slices.Index(c.WorkerAccounts.Priority, c.WorkerAccounts.FallbackAccount); fallback >= 0 {
-				position = fallback
-			}
-			c.WorkerAccounts.Priority = slices.Insert(c.WorkerAccounts.Priority, position, name)
-		}
-		return nil
+		return c.RegisterAccount(name)
 	})
 	return e
 }

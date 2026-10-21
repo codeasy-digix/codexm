@@ -23,8 +23,11 @@ export function mergeTurns(older, latest) {
 }
 
 export function accountNames(snapshot) {
-  const configured=snapshot?.priority||[],saved=snapshot?.account_names||[];
-  return [...new Set([...configured,...saved,...(snapshot?.status?.accounts||[]).map(a=>a.account)].filter(name=>typeof name==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)))];
+  const configured=snapshot?.priority||[],saved=snapshot?.account_names;
+  // The registry is authoritative; historical quota observations cannot restore
+  // a removed alias. Older servers without a registry retain their fallback.
+  const names=Array.isArray(saved)?[...configured.filter(name=>saved.includes(name)),...saved]:[...configured,...(snapshot?.status?.accounts||[]).map(a=>a.account)];
+  return [...new Set(names.filter(name=>typeof name==='string'&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)))];
 }
 export function loginPending(login) {return ['pending','verifying'].includes(login?.status);}
 export function safeLoginURL(value) {
@@ -74,7 +77,7 @@ export class Bridge {
   }
   request(method,params,timeout=120000){return new Promise((resolve,reject)=>{const id=++this.id;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('연결 응답을 확인하지 못했습니다. 작업 상태를 확인한 후 다시 시도하세요.'));},timeout);this.pending.set(id,{resolve,reject,timer});window.parent.postMessage({jsonrpc:'2.0',id,method,params},'*');});}
   async initialize(){
-    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.6.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
+    try{const r=await this.request('ui/initialize',{appInfo:{name:'codexm',version:'0.6.1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']},protocolVersion:'2026-01-26'},8000);this.context(r.hostContext);window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*');}
     catch(e){if(typeof window.openai?.callTool!=='function')throw e;this.compat=true;this.context({displayMode:window.openai.displayMode||'inline'});}
     this.resize=new ResizeObserver(()=>this.queueSize());this.resize.observe(document.body);window.addEventListener('resize',()=>this.queueSize());this.queueSize();
     void this.reportReady();
@@ -210,7 +213,7 @@ export function startUI(options={}){
     }
   }
   function renderAccounts(){
-    const d=$('accounts'),snap=state.snapshot||{},names=accountNames(snap),available=snap.login_available===true,signature=JSON.stringify([names,available,!!snap.connected,canManage()]);
+    const d=$('accounts'),snap=state.snapshot||{},names=accountNames(snap),available=snap.login_available===true,signature=JSON.stringify([names,available,!!snap.connected,!!snap.account_removal_available,canManage()]);
     if(signature!==state.accountsSignature||!state.accountsView){
       state.accountsSignature=signature;d.replaceChildren(el('h2','계정 관리'));
       const summary=el('p',null,'hint'),bar=el('div',null,'toolbar'),add=button('계정 추가',()=>loginDialog(),'primary'),reload=button('모든 계정 한도 새로 조회',()=>action(async()=>{await read('accounts');message('계정 한도를 다시 관측했습니다.');})),settings=button('우선순위·관리 설정',()=>setTab('settings'));
@@ -219,7 +222,7 @@ export function startUI(options={}){
       if(!snap.connected)d.append(el('p','계정 추가와 재로그인은 관리 서비스가 중지된 상태에서도 가능합니다. 관리자·예비 계정과 순서는 관리 서비스를 시작한 뒤 설정에서 저장하세요.','hint'));
       const grid=el('div',null,'grid'),cards=new Map();
       for(const name of names){
-        const card=el('div',null,'account-card'),metrics=el('div'),roles=el('p',null,'hint'),sessions=el('p',null,'hint'),actions=el('div',null,'toolbar'),login=button('재로그인',()=>loginDialog(name));login.setAttribute('aria-label',`${name} 재로그인`);login.disabled=!available;actions.append(login);card.append(metrics,roles,sessions,actions);grid.append(card);cards.set(name,{card,metrics,roles,sessions});
+        const card=el('div',null,'account-card'),metrics=el('div'),roles=el('p',null,'hint'),sessions=el('p',null,'hint'),actions=el('div',null,'toolbar'),login=button('재로그인',()=>loginDialog(name));login.setAttribute('aria-label',`${name} 재로그인`);login.disabled=!available;const remove=button('등록 삭제',()=>{const revision=state.snapshot.config_revision,d=dialog('계정 등록 삭제');d.append(el('p',`${name} 계정을 목록과 작업 우선순위에서 삭제합니다. 로그인 파일·공용 기본 로그인·대화 기록은 보존합니다.`));dialogEnd(d,button('등록 삭제',()=>{closeDialog();void action(async()=>{await bridge.call('codexm_account_remove',{account:name,revision,operation_id:uid()});message('계정 등록을 삭제했습니다. 로그인 파일과 대화는 보존했습니다.');});}));});remove.setAttribute('aria-label',`${name} 등록 삭제`);remove.disabled=!snap.account_removal_available;actions.append(login,remove);card.append(metrics,roles,sessions,actions);grid.append(card);cards.set(name,{card,metrics,roles,sessions});
       }
       if(!names.length)grid.append(el('p','저장된 계정이 없습니다. 계정 추가를 눌러 별칭과 로그인 방식을 선택하세요.','hint'));
       d.append(grid,el('p','비율은 계정 전체 한도입니다. 여러 세션의 사용량이 합쳐져 있으며 한 세션의 정확한 소비 비율을 뜻하지 않습니다.','hint'));

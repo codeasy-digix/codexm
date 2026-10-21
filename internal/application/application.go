@@ -48,7 +48,7 @@ func Methods() []Method {
 	for _, name := range []string{"capabilities", "snapshot", "sessions.list", "settings.read", "login.status", "service.status"} {
 		out = append(out, Method{name, false, false})
 	}
-	for _, name := range []string{"service.start", "login.start", "login.cancel", "accounts.default", "terminal.open"} {
+	for _, name := range []string{"service.start", "login.start", "login.cancel", "accounts.default", "accounts.remove", "terminal.open"} {
 		out = append(out, Method{name, true, false})
 	}
 	slices.SortFunc(out, func(a, b Method) int { return strings.Compare(a.Name, b.Name) })
@@ -115,6 +115,12 @@ func (a *App) Call(ctx context.Context, owner, method, operation string, raw jso
 		return nil, err
 	}
 	switch method {
+	case "accounts.remove":
+		var p accounts.RemoveArgs
+		if err = decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return RemoveAccount(ctx, c, p, operation)
 	case "capabilities":
 		var ping map[string]any
 		_ = supervisor.Request(ctx, c, "ping", nil, &ping)
@@ -228,11 +234,13 @@ func (a *App) snapshot(ctx context.Context, c config.Config) (any, error) {
 		return nil, err
 	}
 	out := map[string]any{"connected": false, "setup_required": c.Manager.Account == "", "account_names": names, "manager_account": c.Manager.Account, "native_default_account": accounts.CurrentNickname(c, config.Expand(c.Runtime.SharedCodexHome), ""), "priority": c.WorkerAccounts.Priority, "fallback_account": c.WorkerAccounts.FallbackAccount, "preferred_recheck_seconds": c.WorkerAccounts.PreferredRecheckSeconds, "config_revision": rev, "observed_at": time.Now()}
+	out["account_removal_available"] = true
 	var snap store.Snapshot
 	var ping map[string]any
 	if supervisor.Request(ctx, c, "ping", nil, &ping) == nil {
 		out["connected"] = true
 		out["supervisor"] = ping
+		out["account_removal_available"] = ping["accounts_api"] == float64(1)
 		if ping["web_api"] == float64(1) {
 			err = supervisor.Request(ctx, c, "snapshot", nil, &snap)
 		} else {

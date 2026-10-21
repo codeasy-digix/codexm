@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 
 const control = process.env.CODEXM_WEB_FIXTURE;
 const base = process.env.CODEXM_WEB_URL || "http://127.0.0.1:4317";
@@ -46,6 +47,8 @@ test("native fixture: two tabs, settings conflict, registration, paused goal acc
         "--config",
         fixture.config,
         "web",
+        "--port",
+        new URL(base).port || "4317",
         "--bundle",
         process.env.CODEXM_WEB_BUNDLE!,
         "--no-open",
@@ -214,6 +217,30 @@ test("native fixture: two tabs, settings conflict, registration, paused goal acc
     (j: any) => j.title === title,
   );
   expect(group.kind).toBe("group");
+  await page.getByRole("button", { name: "계정", exact: true }).click();
+  for (const [account, reason] of [["account-backup", "관리자"], ["account-work", "작업에서 사용하는"]]) {
+    await page.getByRole("button", { name: `${account} 등록 삭제`, exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "계정 등록 삭제" });
+    await dialog.getByRole("button", { name: "등록 삭제", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText(reason);
+    await dialog.getByRole("button", { name: "취소", exact: true }).click();
+  }
+  const authPath = resolve(fixture.state, "../accounts/account-main/auth.json");
+  const originalAuth = readFileSync(authPath);
+  await page.getByRole("button", { name: "account-main 등록 삭제", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "취소", exact: true }).click();
+  expect((await rpc(page, "snapshot")).account_names).toContain("account-main");
+  await page.getByRole("button", { name: "account-main 등록 삭제", exact: true }).click();
+  const removal = page.getByRole("dialog", { name: "계정 등록 삭제" });
+  await expect(removal).toContainText("로그인 파일·공용 기본 로그인·대화 기록은 보존");
+  await page.screenshot({ path: control + "/account-removal-dialog.png" });
+  await removal.getByRole("button", { name: "등록 삭제", exact: true }).click();
+  await expect(removal).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "account-main 등록 삭제", exact: true })).toHaveCount(0);
+  expect(readFileSync(authPath).equals(originalAuth)).toBe(true);
+  expect((await rpc(tab, "snapshot")).account_names).not.toContain("account-main");
+  expect((await rpc(page, "snapshot")).priority).toEqual(["account-work", "account-secondary", "account-backup"]);
+  await page.screenshot({ path: control + "/accounts-after-removal.png" });
   const generation = (await rpc(page, "capabilities")).generation;
   const web = JSON.parse(
     readFileSync(fixture.state + "/web/ready.json", "utf8"),
@@ -258,6 +285,7 @@ test("native fixture: two tabs, settings conflict, registration, paused goal acc
   await expect(
     page.getByRole("button", { name: "새 채팅", exact: true }),
   ).toBeVisible({ timeout: 20000 });
+  expect((await rpc(page, "snapshot")).account_names).not.toContain("account-main");
   expect(
     (await rpc(page, "jobs.details", { id: fixture.first_job })).job.thread_id,
   ).toBe(before.job.thread_id);

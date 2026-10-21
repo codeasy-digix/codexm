@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {accountNames,loginPending,safeLoginURL,startUI} from './app.mjs';
 
 test('account catalog includes saved accounts outside the automatic order',()=>{
-  assert.deepEqual(accountNames({priority:['account-secondary','account-work'],account_names:['extra','account-work'],status:{accounts:[{account:'observed'},{account:'../invalid'}]}}),['account-secondary','account-work','extra','observed']);
+  assert.deepEqual(accountNames({priority:['account-secondary','account-work'],account_names:['extra','account-work'],status:{accounts:[{account:'observed'},{account:'../invalid'}]}}),['account-work','extra']);
+  assert.deepEqual(accountNames({priority:['removed'],account_names:[],status:{accounts:[{account:'removed'}]}}),[]);
+  assert.deepEqual(accountNames({priority:['legacy'],status:{accounts:[{account:'observed'}]}}),['legacy','observed']);
   assert.equal(loginPending({status:'verifying'}),true);
   assert.equal(loginPending({status:'succeeded'}),false);
 });
