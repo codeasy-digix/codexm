@@ -104,6 +104,14 @@ func (m Model) View() tea.View {
 }
 
 func (m Model) dashboard() (string, []hitRegion) {
+	return m.dashboardFrame(false)
+}
+
+func (m Model) dashboardFrame(measure bool) (string, []hitRegion) {
+	detailLines := m.detailLines
+	if measure {
+		detailLines = func(_ int, height int) []string { return make([]string, max(0, height)) }
+	}
 	w, h := max(20, m.Width), max(10, m.Height)
 	c := dashboardCanvas{width: w}
 	manager := m.Config.Manager.Account
@@ -148,6 +156,9 @@ func (m Model) dashboard() (string, []hitRegion) {
 			}
 		}
 		footer = append(footer, accent.Render(ansi.Truncate("입력 대상: "+target, w, "…")))
+		if status := m.chatInputStatus(); status != "" {
+			footer = append(footer, dim.Render(ansi.Truncate(plain(status), w, "…")))
+		}
 		input := m.Input
 		input.SetWidth(max(10, w-2))
 		input.SetHeight(2)
@@ -211,13 +222,13 @@ func (m Model) dashboard() (string, []hitRegion) {
 			c.line("")
 		}
 	} else if m.inChat() {
-		c.lines = append(c.lines, m.detailLines(w, bodyH)...)
+		c.lines = append(c.lines, detailLines(w, bodyH)...)
 		c.hits = append(c.hits, hitRegion{0, bodyY, w, bodyH, "area:detail"})
 	} else if m.Tab == "tasks" || m.Tab == "" {
 		if w >= 96 && bodyH >= 8 {
 			leftW := min(40, max(28, w/3))
 			left, leftHits := m.sessionLines(leftW, bodyH)
-			right := m.detailLines(w-leftW-3, bodyH)
+			right := detailLines(w-leftW-3, bodyH)
 			for i := 0; i < bodyH; i++ {
 				pad := max(0, leftW-ansi.StringWidth(left[i]))
 				c.line(left[i] + strings.Repeat(" ", pad) + " │ " + right[i])
@@ -240,11 +251,11 @@ func (m Model) dashboard() (string, []hitRegion) {
 			}
 			detailY := len(c.lines)
 			detailH := max(0, bodyH-listH)
-			c.lines = append(c.lines, m.detailLines(w, detailH)...)
+			c.lines = append(c.lines, detailLines(w, detailH)...)
 			c.hits = append(c.hits, hitRegion{0, detailY, w, detailH, "area:detail"})
 		}
 	} else {
-		c.lines = append(c.lines, m.detailLines(w, bodyH)...)
+		c.lines = append(c.lines, detailLines(w, bodyH)...)
 		c.hits = append(c.hits, hitRegion{0, bodyY, w, bodyH, "area:detail"})
 	}
 	for i, line := range footer {
@@ -271,11 +282,14 @@ func (m Model) dashboard() (string, []hitRegion) {
 func (m Model) panelButtons() []uiButton {
 	if m.inChat() {
 		bs := []uiButton{{"목록 Esc", "chat:back"}, {"전송", "chat:send"}, {"관리 F9", "command:actions"}}
+		if _, child := m.nativeChild(); child {
+			bs[1] = uiButton{"부모 대화", "chat:parent"}
+		}
 		if m.Width >= 72 && m.Height >= 26 {
 			bs = append(bs, uiButton{"대화 새로고침", "chat:refresh"}, uiButton{"터미널 열기", "command:open"})
 			if j, ok := m.selected(); ok && j.Managed {
 				bs = append(bs, uiButton{"계정 변경", "command:account"})
-				if j.Paused {
+				if resumableJob(j) {
 					bs = append(bs, uiButton{"재개", "command:resume"})
 				} else {
 					bs = append(bs, uiButton{"일시 중지", "command:pause"})
@@ -322,7 +336,7 @@ func (m Model) taskButtons() []uiButton {
 	if j.Kind != "group" {
 		bs = append(bs, uiButton{"지시 보내기", "command:send"}, uiButton{"계정 변경", "command:account"}, uiButton{"목표", "command:goal"})
 	}
-	if j.Paused {
+	if resumableJob(j) {
 		bs = append(bs, uiButton{"재개", "command:resume"})
 	} else {
 		bs = append(bs, uiButton{"일시 중지", "command:pause"})
@@ -389,16 +403,19 @@ func (m Model) detailLines(width, height int) []string {
 		return nil
 	}
 	vp := m.Detail
-	vp.SetWidth(max(1, width))
-	vp.SetHeight(height)
-	text := m.content()
-	if m.Tab == "logs" {
-		text = m.logsText()
+	if vp.Width() != max(1, width) {
+		vp.SetWidth(max(1, width))
 	}
-	if strings.TrimSpace(text) == "" {
-		text = "대화를 선택하거나 새 작업을 만드세요.\n목록 클릭 또는 Enter로 채팅 모드를 열고 지시를 입력하세요."
+	if vp.Height() != height {
+		vp.SetHeight(height)
 	}
-	vp.SetContent(ansi.Wrap(plain(text), max(1, width), ""))
+	if !m.DetailCache.Valid || m.DetailCache.Key != m.detailKey() || m.DetailCache.Width != width {
+		text := m.detailContent()
+		if strings.TrimSpace(text) == "" {
+			text = "대화를 선택하거나 새 작업을 만드세요.\n목록 클릭 또는 Enter로 채팅 모드를 열고 지시를 입력하세요."
+		}
+		vp.SetContent(ansi.Wrap(plain(text), max(1, width), ""))
+	}
 	return fixedLines(vp.View(), width, height)
 }
 
@@ -477,6 +494,8 @@ func (m *Model) dashboardAction(action string) tea.Cmd {
 		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		*m = next.(Model)
 		return cmd
+	case action == "chat:parent":
+		return m.openParentChat()
 	case action == "chat:older":
 		m.AutoFollow = false
 		return m.refreshChat(true)
@@ -494,6 +513,10 @@ func (m *Model) dashboardAction(action string) tea.Cmd {
 	case action == "area:input":
 		m.returnInput()
 	case action == "area:detail":
+		if m.inChat() {
+			m.returnInput()
+			return nil
+		}
 		m.Focus = "detail"
 		m.Input.Blur()
 	case action == "area:list":

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -30,6 +31,9 @@ type chatState struct {
 }
 
 type chatSession struct {
+	ContentVersion              uint64
+	PrependAnchor               *chatScrollAnchor
+	ViewLines                   int
 	Job                         jobs.Job
 	Composer                    composerState
 	Thread                      cr.Thread
@@ -43,6 +47,8 @@ type chatSession struct {
 	Offset                      int
 	Follow                      bool
 }
+
+type chatScrollAnchor struct{ Offset, Lines int }
 
 // Replies carry the immutable conversation identity and request sequence, not
 // whichever row happens to be selected when asynchronous work finishes.
@@ -79,6 +85,7 @@ func (m *Model) saveChatComposer() {
 		if s := m.currentChat(); s != nil {
 			s.Composer = m.captureComposer()
 			s.Offset, s.Follow = m.Detail.YOffset(), m.AutoFollow
+			s.ViewLines = m.Detail.TotalLineCount()
 		}
 	}
 }
@@ -132,6 +139,9 @@ func (m *Model) enterChat(j jobs.Job) tea.Cmd {
 	m.AutoFollow = s.Follow
 	m.restoreComposer(s.Composer)
 	m.Input.Placeholder = "이 대화에 지시 입력 · Enter 전송 · Shift+Enter 줄바꿈"
+	if _, child := m.nativeChild(); child {
+		m.Input.Placeholder = "하위 작업 읽기 전용 · 부모 대화에서 지시"
+	}
 	m.prepareDetail()
 	m.Detail.SetYOffset(s.Offset)
 	if s.Follow {
@@ -217,6 +227,11 @@ func (m *Model) sendChat(text string) tea.Cmd {
 	if s == nil || strings.TrimSpace(text) == "" {
 		return nil
 	}
+	if _, child := m.nativeChild(); child {
+		s.Error = "하위 에이전트 대화는 부모 대화에서 지시해야 합니다. 부모 대화 버튼으로 이동하세요."
+		m.Notice = s.Error
+		return nil
+	}
 	if s.Uncertain {
 		m.Notice = "전송 결과를 확인해야 합니다. 전송 확인 버튼으로 기존 요청부터 조회하세요."
 		return nil
@@ -296,8 +311,12 @@ func (m *Model) chatUpdate(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		active := m.inChat() && m.Chat.ThreadID == v.ThreadID
-		oldLines := m.Detail.TotalLineCount()
 		if v.Older {
+			if active && !m.AutoFollow {
+				s.PrependAnchor = &chatScrollAnchor{m.Detail.YOffset(), m.Detail.TotalLineCount()}
+			} else if !active && !s.Follow {
+				s.PrependAnchor = &chatScrollAnchor{s.Offset, s.ViewLines}
+			}
 			v.Thread.Turns = mergeChatTurns(v.Thread.Turns, s.Thread.Turns)
 			s.Cursor, s.OlderLoaded = v.Cursor, true
 		} else {
@@ -306,12 +325,12 @@ func (m *Model) chatUpdate(msg tea.Msg) (tea.Cmd, bool) {
 				s.Cursor = v.Cursor
 			}
 		}
+		if !reflect.DeepEqual(s.Thread, v.Thread) {
+			s.ContentVersion++
+		}
 		s.Thread, s.ReadReady, s.ReadError = v.Thread, true, ""
 		if active {
 			m.prepareDetail()
-			if v.Older && !m.AutoFollow {
-				m.Detail.SetYOffset(m.Detail.YOffset() + max(0, m.Detail.TotalLineCount()-oldLines))
-			}
 		}
 		return nil, true
 	case chatSendMsg:
@@ -475,4 +494,77 @@ func (m Model) chatText() string {
 		b.WriteString("이 대화에 첫 지시를 입력하세요.\n")
 	}
 	return b.String()
+}
+
+// Keep actionable state next to the composer even when the transcript is long
+// and auto-follow has scrolled its header off screen.
+func (m Model) chatInputStatus() string {
+	if !m.inChat() {
+		return ""
+	}
+	s := m.currentChat()
+	if s == nil {
+		return ""
+	}
+	if _, child := m.nativeChild(); child {
+		return "하위 작업 읽기 전용 · 부모 대화에서 지시"
+	}
+	if s.Uncertain {
+		return "전송 결과 확인 필요 · 전송 확인 버튼으로 기존 요청을 조회하세요."
+	}
+	if s.Pending != "" {
+		return "전송 접수 중… 같은 지시를 다시 보내지 않습니다."
+	}
+	if s.Error != "" {
+		return "전송 안내: " + s.Error
+	}
+	j, _ := m.selected()
+	if j.Paused {
+		return "일시 중지 · F9 → 재개 후 전송"
+	}
+	if j.State == "external_writer" {
+		return "다른 GUI/터미널 사용 중 · 실행권 해제 대기"
+	}
+	if j.State == "auth_required" {
+		return "로그인 필요 · F2 재로그인 / F9 계정 변경·재개"
+	}
+	if len(j.PendingRequests) > 0 {
+		return fmt.Sprintf("질문·승인 대기 %d개 · /requests로 응답", len(j.PendingRequests))
+	}
+	if j.LastError != "" {
+		return "실행 오류: " + j.LastError
+	}
+	if s.ReadError != "" {
+		return s.ReadError
+	}
+	return "상태: " + display.State(j.State)
+}
+
+func resumableJob(j jobs.Job) bool {
+	return j.Paused || slices.Contains([]string{"error", "auth_required", "needs_user", "manager_wait"}, j.State)
+}
+
+func (m Model) nativeChild() (catalog.Entry, bool) {
+	if !m.inChat() || !m.CatalogReady {
+		return catalog.Entry{}, false
+	}
+	for _, entry := range m.Catalog.Sessions {
+		if entry.ThreadID == m.Chat.ThreadID && entry.Source == "subagent" && !entry.Managed {
+			return entry, true
+		}
+	}
+	return catalog.Entry{}, false
+}
+
+func (m *Model) openParentChat() tea.Cmd {
+	entry, child := m.nativeChild()
+	if child && entry.ParentThreadID != "" {
+		for _, j := range m.allJobs() {
+			if j.ThreadID == entry.ParentThreadID {
+				return m.enterChat(j)
+			}
+		}
+	}
+	m.Notice = "현재 장비에서 부모 대화를 찾을 수 없습니다. F1 목록에서 확인하세요."
+	return nil
 }

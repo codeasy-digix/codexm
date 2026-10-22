@@ -50,6 +50,8 @@ type openMsg struct {
 }
 
 type Model struct {
+	DetailCache      detailRenderCache
+	DetailGeneration uint64
 	Chat             chatState
 	App              *application.App
 	Context          context.Context
@@ -231,20 +233,35 @@ func (m Model) request(command string, args any) tea.Cmd {
 	}
 }
 func (m Model) selected() (jobs.Job, bool) {
-	if m.inChat() {
-		s := m.currentChat()
-		for _, j := range m.allJobs() {
-			if j.ThreadID == m.Chat.ThreadID || s != nil && j.ID == s.Job.ID {
-				return j, true
-			}
+	// Selecting one row must not allocate a projection of every conversation.
+	for _, j := range m.Status.Jobs {
+		matches := j.ID == m.SelectedID
+		if m.inChat() {
+			s := m.currentChat()
+			matches = j.ThreadID == m.Chat.ThreadID || s != nil && j.ID == s.Job.ID
 		}
-		if s := m.currentChat(); s != nil {
-			return s.Job, true
+		if matches {
+			if m.CatalogReady {
+				for _, entry := range m.Catalog.Sessions {
+					if entry.JobID == j.ID {
+						j.Title = entry.Title
+						break
+					}
+				}
+			}
+			return j, true
 		}
 	}
-	for _, j := range m.allJobs() {
-		if j.ID == m.SelectedID {
-			return j, true
+	if m.CatalogReady {
+		for _, entry := range m.Catalog.Sessions {
+			if m.inChat() && entry.ThreadID == m.Chat.ThreadID || !m.inChat() && (entry.ID == m.SelectedID || entry.JobID != "" && entry.JobID == m.SelectedID) {
+				return entry.Job(m.Config.Runtime.SharedCodexHome), true
+			}
+		}
+	}
+	if m.inChat() {
+		if s := m.currentChat(); s != nil {
+			return s.Job, true
 		}
 	}
 	return jobs.Job{}, false
@@ -335,7 +352,18 @@ func (m *Model) focusInput(value string) {
 	m.PaletteDismissed = false
 }
 func (m *Model) returnInput() { m.Focus = "input"; m.Input.Focus() }
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
+	// Prepare once after state changes. View only reads this cached viewport.
+	defer func() {
+		if next, ok := result.(Model); ok {
+			next.prepareDetail()
+			result = next
+		}
+	}()
+	switch msg.(type) {
+	case pollMsg, replyMsg:
+		m.DetailGeneration++
+	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		if key.String() == "ctrl+c" {
 			return m, tea.Quit
@@ -359,7 +387,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if cmd, handled := m.dashboardUpdate(msg); handled {
 		return m, cmd
 	}
-	m.prepareDetail()
+	if _, ok := msg.(tea.PasteMsg); ok && m.inChat() && m.Screen == "agents" {
+		m.returnInput()
+	}
 	var cmd tea.Cmd
 	switch v := msg.(type) {
 	case readyMsg:
@@ -426,6 +456,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if j.ThreadID == m.Chat.ThreadID || s != nil && j.ID == s.Job.ID {
 					m.SelectedID = j.ID
 					if s != nil {
+						if reason := chatBlocked(s.Job); reason != "" && s.Error == reason && chatBlocked(j) == "" {
+							s.Error = ""
+						}
 						if s.Job.ThreadID == "" && j.ThreadID != "" {
 							delete(m.Chat.Sessions, m.Chat.ThreadID)
 							m.Chat.ThreadID = j.ThreadID
@@ -616,10 +649,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Width = max(20, v.Width)
 		m.Height = max(10, v.Height)
 		m.Input.SetWidth(max(10, m.Width-4))
-		m.Detail.SetWidth(max(10, m.Width-5))
-		m.Detail.SetHeight(max(3, m.Height-13))
 	case tea.KeyPressMsg:
 		key := v.String()
+		if m.inChat() && m.Screen == "agents" && m.Focus != "input" {
+			printable := v.Code >= 32 && v.Code <= 0x10ffff && v.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper|tea.ModMeta) == 0
+			if printable || key == "enter" || key == "ctrl+enter" || key == "shift+enter" || key == "alt+enter" {
+				m.returnInput()
+			}
+		}
 		if key == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -1423,29 +1460,6 @@ func (m Model) content() string {
 	}
 
 	return text
-}
-func (m *Model) prepareDetail() {
-	width := max(10, m.Width-2)
-	height := m.detailHeight()
-	if m.Screen == "agents" && !m.managementVisible() && m.TaskForm.Kind == "" {
-		_, hits := m.dashboard()
-		for _, hit := range hits {
-			if hit.Action == "area:detail" {
-				width, height = hit.W, max(1, hit.H)
-				break
-			}
-		}
-	}
-	m.Detail.SetWidth(width)
-	m.Detail.SetHeight(height)
-	content := m.content()
-	if m.Tab == "logs" {
-		content = m.logsText()
-	}
-	m.Detail.SetContent(ansi.Wrap(plain(content), width, ""))
-	if m.AutoFollow && m.Focus != "detail" && m.Panel == "" && m.DetailText == "" {
-		m.Detail.GotoBottom()
-	}
 }
 func (m Model) detailHeight() int {
 	shown := max(1, min(len(m.filtered()), m.listHeight()))
