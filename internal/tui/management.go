@@ -125,6 +125,7 @@ func (m *Model) managementControls() []managementControl {
 		controls := []managementControl{{"계정 추가", "mgmt:add"}, {"모든 계정 한도 새로 조회", "mgmt:refresh"}, {"우선순위·관리자·예비 계정 설정", "mgmt:settings"}}
 		for _, name := range s.Snapshot.AccountNames {
 			controls = append(controls, managementControl{name + " · " + m.accountSummary(name), "mgmt:account:" + name})
+			controls = append(controls, managementControl{name + " 계정 삭제…", "mgmt:remove-account:" + name})
 		}
 		if managementLoginPending(s.Login) {
 			controls = append(controls, managementControl{"진행 중인 로그인 확인", "mgmt:login-status"})
@@ -135,7 +136,7 @@ func (m *Model) managementControls() []managementControl {
 		}
 		return append(controls, managementControl{label, "mgmt:close"})
 	case "account":
-		return []managementControl{{"재로그인", "mgmt:relogin"}, {"native 기본 계정으로 저장…", "mgmt:default"}, {"계정 등록 삭제…", "mgmt:remove"}, {"계정 정책 설정", "mgmt:settings"}, {"계정 목록", "mgmt:back"}}
+		return []managementControl{{"재로그인", "mgmt:relogin"}, {"native 기본 계정으로 저장…", "mgmt:default"}, {"계정 삭제… (codexm 등록 해제)", "mgmt:remove"}, {"계정 정책 설정", "mgmt:settings"}, {"계정 목록", "mgmt:back"}}
 	case "login-status":
 		if managementLoginPending(s.Login) {
 			return []managementControl{{"공식 로그인 페이지 열기", "mgmt:login-open"}, {"로그인 상태 다시 확인", "mgmt:login-check"}, {"로그인 취소", "mgmt:login-cancel"}}
@@ -311,6 +312,15 @@ func (m *Model) managementAction(action string) tea.Cmd {
 	if s.Busy && action != "login-open" {
 		m.Notice = "요청 처리 중입니다."
 		return nil
+	}
+	if strings.HasPrefix(action, "remove-account:") {
+		name := strings.TrimPrefix(action, "remove-account:")
+		if s.Mode != "accounts" || !slices.Contains(s.Snapshot.AccountNames, name) {
+			s.Error = "등록된 계정을 선택하세요."
+			return nil
+		}
+		s.Account = name
+		return m.managementAction("remove")
 	}
 	s.Error, s.Message = "", ""
 	switch action {
@@ -741,6 +751,7 @@ func (m *Model) managementView(width, height int) (string, []hitRegion) {
 		add("작업 우선순위: " + strings.Join(s.Snapshot.Priority, " → "))
 		add("관리자: " + managementUnknown(s.Snapshot.ManagerAccount) + " · native 기본: " + managementUnknown(s.Snapshot.NativeDefaultAccount))
 		add("계정 선택은 상세만 엽니다. 한도는 계정 전체의 관측값입니다.")
+		add("계정별 삭제 버튼은 codexm 등록을 해제합니다. 로그인 파일·대화는 보존합니다.")
 		if len(s.Snapshot.AccountNames) == 0 {
 			add("저장된 계정이 없습니다. 계정을 추가하고 관리자와 작업 우선순위를 설정하세요.")
 		}

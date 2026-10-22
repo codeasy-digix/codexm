@@ -67,9 +67,9 @@ func (m Model) pickerView(width, height int) (string, []hitRegion) {
 func (m *Model) pickerAction(action string) tea.Cmd {
 	switch {
 	case action == "picker:cancel":
-		m.Screen = "agents"
-		m.returnInput()
-		return nil
+		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+		*m = next.(Model)
+		return cmd
 	case action == "picker:enter":
 		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		*m = next.(Model)

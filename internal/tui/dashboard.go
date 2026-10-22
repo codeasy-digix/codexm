@@ -134,6 +134,11 @@ func (m Model) dashboard() (string, []hitRegion) {
 			footer = nil
 		}
 		target := "작업 검색 (모델 호출 없음)"
+		if m.inChat() {
+			if j, ok := m.selected(); ok {
+				target = "채팅 · " + plain(j.Title)
+			}
+		}
 		if m.Target == "manager" {
 			target = "관리자 " + m.Config.Manager.Account + " (모델 호출)"
 			if m.ManagerAll {
@@ -147,7 +152,11 @@ func (m Model) dashboard() (string, []hitRegion) {
 		input.SetWidth(max(10, w-2))
 		input.SetHeight(2)
 		footer = append(footer, strings.Split(input.View(), "\n")...)
-		footer = append(footer, dim.Render(ansi.Truncate("/ 명령 · ↑↓ 입력 기록 · Alt+↑↓ 작업 · Tab 영역 · PgUp/PgDn · Ctrl+G 마우스/복사", w, "…")))
+		help := "/ 명령 · ↑↓ 입력 기록 · Alt+↑↓ 작업 · Tab 영역 · PgUp/PgDn · Ctrl+G 마우스/복사"
+		if m.inChat() {
+			help = "Enter 전송 · Shift/Alt+Enter 줄바꿈 · ↑↓ 기록 · Esc 목록 · / 관리 명령"
+		}
+		footer = append(footer, dim.Render(ansi.Truncate(help, w, "…")))
 	}
 	if !modal {
 		c.buttons(m.panelButtons())
@@ -201,6 +210,9 @@ func (m Model) dashboard() (string, []hitRegion) {
 		for len(c.lines) < h-len(footer) {
 			c.line("")
 		}
+	} else if m.inChat() {
+		c.lines = append(c.lines, m.detailLines(w, bodyH)...)
+		c.hits = append(c.hits, hitRegion{0, bodyY, w, bodyH, "area:detail"})
 	} else if m.Tab == "tasks" || m.Tab == "" {
 		if w >= 96 && bodyH >= 8 {
 			leftW := min(40, max(28, w/3))
@@ -257,6 +269,32 @@ func (m Model) dashboard() (string, []hitRegion) {
 }
 
 func (m Model) panelButtons() []uiButton {
+	if m.inChat() {
+		bs := []uiButton{{"목록 Esc", "chat:back"}, {"전송", "chat:send"}, {"관리 F9", "command:actions"}}
+		if m.Width >= 72 && m.Height >= 26 {
+			bs = append(bs, uiButton{"대화 새로고침", "chat:refresh"}, uiButton{"터미널 열기", "command:open"})
+			if j, ok := m.selected(); ok && j.Managed {
+				bs = append(bs, uiButton{"계정 변경", "command:account"})
+				if j.Paused {
+					bs = append(bs, uiButton{"재개", "command:resume"})
+				} else {
+					bs = append(bs, uiButton{"일시 중지", "command:pause"})
+				}
+				if len(j.PendingRequests) > 0 {
+					bs = append(bs, uiButton{"질문·승인 응답", "command:requests"})
+				}
+			}
+		}
+		if s := m.currentChat(); s != nil {
+			if s.Cursor != "" {
+				bs = append(bs, uiButton{"이전 대화", "chat:older"})
+			}
+			if s.Uncertain {
+				bs = append(bs, uiButton{"전송 확인", "chat:check"})
+			}
+		}
+		return bs
+	}
 	switch m.Tab {
 	case "logs":
 		return []uiButton{{"전체 작업", "logs:all"}, {"선택 작업", "logs:selected"}, {"필터", "command:log-filter"}, {"새로고침", "logs:refresh"}}
@@ -277,7 +315,7 @@ func (m Model) taskButtons() []uiButton {
 	if !ok {
 		return bs
 	}
-	bs = append(bs, uiButton{"미리보기", "command:read"}, uiButton{"터미널 열기", "command:open"})
+	bs = append(bs, uiButton{"채팅 열기", "command:chat"}, uiButton{"미리보기", "command:read"}, uiButton{"터미널 열기", "command:open"})
 	if !m.registered(j) || !j.Managed {
 		return append(bs, uiButton{"관리 등록", "command:manage"})
 	}
@@ -358,7 +396,7 @@ func (m Model) detailLines(width, height int) []string {
 		text = m.logsText()
 	}
 	if strings.TrimSpace(text) == "" {
-		text = "대화를 선택하거나 새 작업을 만드세요.\n목록을 클릭하면 선택만 바뀝니다. 실행은 버튼으로 요청하세요."
+		text = "대화를 선택하거나 새 작업을 만드세요.\n목록 클릭 또는 Enter로 채팅 모드를 열고 지시를 입력하세요."
 	}
 	vp.SetContent(ansi.Wrap(plain(text), max(1, width), ""))
 	return fixedLines(vp.View(), width, height)
@@ -369,6 +407,8 @@ func (m *Model) activateTab(tab string) tea.Cmd {
 		m.Notice = "현재 폼을 저장하거나 Esc로 닫은 후 메뉴를 바꾸세요."
 		return nil
 	}
+	m.leaveChat()
+	m.WantOpen, m.WantRead, m.WantCommand = false, false, ""
 	m.ViewEpoch++
 	m.Tab = tab
 	m.Target = "search"
@@ -426,8 +466,25 @@ func (m *Model) dashboardAction(action string) tea.Cmd {
 			return nil
 		}
 		m.selectIndex(i - m.Selected)
-		m.Focus = "list"
-		m.Input.Blur()
+		return m.enterChat(m.filtered()[i])
+	case action == "chat:back":
+		m.leaveChat()
+		m.Panel, m.DetailText, m.LogsOpen = "", "", false
+		m.ViewEpoch++
+		m.Notice = "작업 목록 · 대화를 선택하면 채팅 모드로 들어갑니다."
+	case action == "chat:send":
+		m.returnInput()
+		next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		*m = next.(Model)
+		return cmd
+	case action == "chat:older":
+		m.AutoFollow = false
+		return m.refreshChat(true)
+	case action == "chat:refresh":
+		m.Panel, m.DetailText, m.LogsOpen = "", "", false
+		return m.refreshChat(false)
+	case action == "chat:check":
+		return m.checkChatOperation()
 	case strings.HasPrefix(action, "palette:"):
 		i, err := strconv.Atoi(strings.TrimPrefix(action, "palette:"))
 		if err == nil {
@@ -486,6 +543,8 @@ func (m *Model) dashboardUpdate(msg tea.Msg) (tea.Cmd, bool) {
 			m.beginNew()
 			return nil, true
 		case "f8":
+			m.leaveChat()
+			m.Screen = "agents"
 			m.beginTaskForm("filters")
 			return nil, true
 		case "f9":
@@ -543,6 +602,9 @@ func (m *Model) dashboardUpdate(msg tea.Msg) (tea.Cmd, bool) {
 				m.Detail.ScrollUp(3)
 			} else {
 				m.Detail.ScrollDown(3)
+			}
+			if m.Detail.AtBottom() {
+				m.AutoFollow = true
 			}
 			return nil, true
 		}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +54,8 @@ func TestInteractiveDashboardFixture(t *testing.T) {
 		st.Jobs = append(st.Jobs, jobs.Job{ID: fmt.Sprintf("fixture-job-%02d", i), ThreadID: fmt.Sprintf("fixture-thread-%02d", i), RunID: fmt.Sprintf("fixture-run-%02d", i), Title: fmt.Sprintf("격리 작업 %02d", i), Kind: "chat", Managed: true, State: "idle", Account: "account-work", Cwd: m.Config.Runtime.SharedCodexHome})
 	}
 	log := jobs.WorkLog{At: now, Note: "격리된 모의 기록", Runs: []jobs.Run{{ID: "fixture-run-00", JobID: st.Jobs[0].ID, Account: "account-work", StartedAt: now.Add(-10 * time.Minute), UsageStart: &jobs.AccountUsage{Primary: &jobs.UsageWindow{UsedPercent: 10}}, UsageLatest: &jobs.AccountUsage{Primary: &jobs.UsageWindow{UsedPercent: 25}}}}, Changes: []jobs.WorkChange{{ID: "change", JobID: st.Jobs[0].ID, From: "account-secondary", To: "account-work", At: now.Add(-20 * time.Minute), Reason: "격리 테스트 전환"}}}
+	var chatMu sync.Mutex
+	inputs := map[string]string{}
 	f.Handler = func(call supervisor.Call) (any, error) {
 		switch call.Command {
 		case "status":
@@ -69,8 +72,30 @@ func TestInteractiveDashboardFixture(t *testing.T) {
 			return map[string]any{"data": []any{map[string]any{"id": "fixture-model", "model": "fixture-model", "displayName": "격리 모의 모델"}}}, nil
 		case "settings-save":
 			return settings.Save(context.Background(), m.Config, interactiveAccountReader{}, call.Args)
+		case "send":
+			var args supervisor.JobArgs
+			json.Unmarshal(call.Args, &args)
+			chatMu.Lock()
+			inputs[args.ID] = args.Text
+			chatMu.Unlock()
+			return jobs.Action{ID: "fake-accepted-" + args.ID}, nil
 		case "read":
-			return map[string]any{"thread": map[string]any{"id": "fixture-thread-00", "name": "격리 미리보기"}}, nil
+			var args supervisor.JobArgs
+			json.Unmarshal(call.Args, &args)
+			thread, jobID := args.ThreadID, args.ID
+			for _, job := range st.Jobs {
+				if job.ID == jobID || job.ThreadID == thread {
+					thread, jobID = job.ThreadID, job.ID
+					break
+				}
+			}
+			chatMu.Lock()
+			text := inputs[jobID]
+			chatMu.Unlock()
+			if text == "" {
+				text = "격리된 기존 대화"
+			}
+			return map[string]any{"thread": fixtureChatThread(thread, "격리 응답 · "+text)}, nil
 		}
 		return true, nil
 	}
@@ -89,6 +114,9 @@ func TestInteractiveDashboardFixture(t *testing.T) {
 	count := len(f.Operations)
 	f.mu.Unlock()
 	evidence := map[string]any{"operations": count, "fake_login_starts": fake.Starts, "fake_login_cancels": fake.Cancels, "model_calls": 0, "private_config": true}
+	chatMu.Lock()
+	evidence["chat_inputs"] = inputs
+	chatMu.Unlock()
 	if file := os.Getenv("CODEXM_TUI_FIXTURE_REPORT"); file != "" {
 		raw, _ := json.MarshalIndent(evidence, "", "  ")
 		if err := os.WriteFile(file, raw, 0600); err != nil {

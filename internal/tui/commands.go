@@ -13,8 +13,8 @@ type slashCommand struct {
 	NeedsArg                bool
 }
 
-// codexm owns management commands. Chat commands belong to the official TUI
-// opened in its own terminal, so no native command emulation is necessary.
+// Direct conversation input uses the shared worker API. Management commands stay
+// deterministic; native-only Codex commands remain available through /open.
 var slashCommands = []slashCommand{
 	{Name: "agents", Description: "전체 Codex 대화·관리 작업 목록"},
 	{Name: "status", Description: "전체 작업·관리자·감시 상태"},
@@ -22,7 +22,8 @@ var slashCommands = []slashCommand{
 	{Name: "usage", Description: "전체 계정 한도·관리자 호출·세션별 토큰"},
 	{Name: "logs", Args: "[all]", Description: "선택 작업 로그 · all은 전체 세션"},
 	{Name: "open", Description: "선택한 작업을 새 터미널의 공식 Codex로 열기"},
-	{Name: "new", Description: "새 채팅을 만들고 새 터미널에서 열기"},
+	{Name: "chat", Description: "선택한 대화를 이 화면의 채팅 모드로 열기"},
+	{Name: "new", Description: "새 작업 생성 · 기본은 이 화면에서 채팅"},
 	{Name: "chats", Args: "[검색어]", Description: "전체 대화 목록 검색"},
 	{Name: "accounts", Description: "계정 추가·로그인·등록 삭제·기본 로그인 관리"},
 	{Name: "account", Args: "[이름]", Description: "선택 세션의 계정 변경 · 이름 생략 시 선택 메뉴"},
@@ -123,10 +124,10 @@ func (m *Model) chooseCommand(execute bool) tea.Cmd {
 
 func commandHelp() string {
 	var b strings.Builder
-	b.WriteString("codexm은 작업 관리자입니다. 대화와 Codex 명령은 /open으로 연 공식 화면에서 사용합니다.\n\n/ 을 입력하면 관리 명령 목록이 열립니다.\n↑↓ 선택 · Tab 완성 · Enter 실행 · Esc 닫기\n\n")
+	b.WriteString("대화를 선택하면 이 화면에서 채팅합니다. 관리 화면은 F1–F6, 공식 Codex 전용 명령은 /open으로 연 별도 터미널에서 사용합니다.\n\n/ 을 입력하면 관리 명령 목록이 열립니다.\n↑↓ 선택 · Tab 완성 · Enter 실행 · Esc 닫기\n\n")
 	for _, c := range slashCommands {
 		b.WriteString("/" + c.Name + " " + c.Args + " · " + c.Description + "\n")
 	}
-	b.WriteString("\n입력창 기본 포커스 · 일반 텍스트 + Enter: 작업 검색 (모델 호출 없음)\n빈 입력 + Enter: 선택 대화 열기 · 입력 ↑↓/Ctrl+P,N: 입력 기록 · Alt+↑↓: 대화 선택\nF1 작업 · F2 계정 · F3 사용량 · F4 기록 · F5 설정 · F6 관리자 · F7 새 작업 · F8 필터 · F9 작업 동작\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 미리보기 스크롤\n마우스: 탭·목록·버튼 클릭, 휠 스크롤 · Ctrl+G 또는 /mouse: 보고 해제 후 터미널 기본 선택/복사\n폼: Tab 이동 · Enter 편집/선택 · ←→ 옵션 변경 · Ctrl+S 저장 · Esc 취소\n목록: ↑↓ 선택 · Enter 새 터미널 열기 · v 미리보기 · l 전체 로그\n새 터미널을 닫아도 작업 감시는 계속됩니다. /quit는 관리 화면만 닫습니다.\n")
+	b.WriteString("\n기본 포커스는 입력창 · 목록의 일반 텍스트 + Enter: 검색 (모델 호출 없음)\n목록 클릭/Enter 또는 /chat: 해당 대화의 채팅 모드 · 채팅 Enter: 지시 전송\n채팅 빈 입력 Enter: 동작 없음 · Shift/Alt+Enter: 줄바꿈 · Esc 또는 /agents: 목록\n입력 ↑↓/Ctrl+P,N: 입력 기록 · Alt+↑↓: 대화 전환 (초안은 대화별 보존)\nF1 작업 · F2 계정 · F3 사용량 · F4 기록 · F5 설정 · F6 관리자 · F7 새 작업 · F8 필터 · F9 작업 동작\nTab 영역 이동 · Shift+Tab 반대 이동 · PgUp/PgDn 대화 스크롤\n마우스: 탭·목록·버튼 클릭, 휠 스크롤 · Ctrl+G 또는 /mouse: 보고 해제 후 터미널 기본 선택/복사\n폼: Tab 이동 · Enter 편집/선택 · ←→ 옵션 변경 · Ctrl+S 저장 · Esc 취소\n목록: ↑↓ 선택 · Enter 채팅 모드 · v 미리보기 · l 전체 로그\n화면을 닫아도 작업 감시는 계속됩니다. /quit는 화면만 닫습니다.\n")
 	return b.String()
 }

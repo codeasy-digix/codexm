@@ -278,7 +278,7 @@ func TestPlainInputSearchesInsteadOfSubmittingWork(t *testing.T) {
 	c.Manager.Account = "account-backup"
 	m := New(c, "codexm")
 	m.SelectedID = "job"
-	m.Status.Jobs = []jobs.Job{{ID: "job", LastInput: "private instruction", Goal: &jobs.Goal{Objective: "private goal"}}}
+	m.Status.Jobs = []jobs.Job{{ID: "job", ThreadID: "thread", LastInput: "private instruction", Goal: &jobs.Goal{Objective: "private goal"}}}
 	m.submit("찾을 작업")
 	if m.Filter != "찾을 작업" || m.Target != "search" || !strings.Contains(m.Notice, "작업 검색") {
 		t.Fatal("plain input still sends a worker instruction")
@@ -290,8 +290,8 @@ func TestPlainInputSearchesInsteadOfSubmittingWork(t *testing.T) {
 	}
 	m.Focus = "list"
 	m, cmd := press(m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd == nil || m.Focus != "list" {
-		t.Fatal("list Enter did not launch a separate terminal")
+	if cmd == nil || m.Focus != "input" || !m.inChat() {
+		t.Fatal("list Enter did not open the selected chat's composer")
 	}
 	for _, c := range slashCommands {
 		if strings.HasPrefix(c.Name, "codexm_") || c.Name == "model" || c.Name == "permissions" {

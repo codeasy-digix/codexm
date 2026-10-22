@@ -50,6 +50,7 @@ type openMsg struct {
 }
 
 type Model struct {
+	Chat             chatState
 	App              *application.App
 	Context          context.Context
 	Management       managementState
@@ -230,6 +231,17 @@ func (m Model) request(command string, args any) tea.Cmd {
 	}
 }
 func (m Model) selected() (jobs.Job, bool) {
+	if m.inChat() {
+		s := m.currentChat()
+		for _, j := range m.allJobs() {
+			if j.ThreadID == m.Chat.ThreadID || s != nil && j.ID == s.Job.ID {
+				return j, true
+			}
+		}
+		if s := m.currentChat(); s != nil {
+			return s.Job, true
+		}
+	}
 	for _, j := range m.allJobs() {
 		if j.ID == m.SelectedID {
 			return j, true
@@ -266,6 +278,7 @@ func (m Model) registered(j jobs.Job) bool {
 }
 func (m *Model) openSelected(j jobs.Job) tea.Cmd {
 	if !m.registered(j) {
+		m.saveChatComposer()
 		m.Threads = []cr.Thread{{ID: j.ThreadID, Name: j.Title, Cwd: j.Cwd}}
 		m.ThreadSelected = 0
 		m.Screen = "import-account"
@@ -333,6 +346,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if cmd, handled := m.chatUpdate(msg); handled {
+		return m, cmd
+	}
 	m.preparePanelForms()
 	if cmd, handled := m.managementUpdate(msg); handled {
 		return m, cmd
@@ -361,6 +377,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.poll(), tick())
 	case tickMsg:
 		if m.Ready {
+			if m.inChat() && m.Screen == "agents" && m.TaskForm.Kind == "" {
+				return m, tea.Batch(m.poll(), m.refreshChat(false), tick())
+			}
 			if m.Management.Mode == "accounts" || m.Management.Mode == "account" {
 				return m, tea.Batch(m.poll(), m.appCall("snapshot", nil), tick())
 			}
@@ -401,6 +420,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Notice = "관리자 대기: " + d.Error
 			}
 		}
+		if m.inChat() {
+			s := m.currentChat()
+			for _, j := range m.allJobs() {
+				if j.ThreadID == m.Chat.ThreadID || s != nil && j.ID == s.Job.ID {
+					m.SelectedID = j.ID
+					if s != nil {
+						if s.Job.ThreadID == "" && j.ThreadID != "" {
+							delete(m.Chat.Sessions, m.Chat.ThreadID)
+							m.Chat.ThreadID = j.ThreadID
+							m.Chat.Sessions[j.ThreadID] = s
+						}
+						s.Job = j
+					}
+				}
+			}
+			if s != nil && !s.ReadReady && !s.ReadPending && s.Job.ThreadID != "" {
+				return m, m.refreshChat(false)
+			}
+			return m, nil
+		}
 		js := m.filtered()
 		if m.SelectedID == "" && len(js) > 0 {
 			m.SelectedID = js[0].ID
@@ -417,6 +456,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.SelectedID = js[m.Selected].ID
 		}
 	case replyMsg:
+		if v.Epoch != m.ViewEpoch && (v.Command == "new" || v.Command == "resume" || v.Command == "register") {
+			// A late management reply may refresh metadata, but must not close a
+			// different conversation's composer, picker or unfinished form.
+			return m, m.poll()
+		}
 		switch v.Command {
 		case "logs", "usage", "read", "events", "settings", "threads", "accounts":
 			if v.Epoch != m.ViewEpoch {
@@ -440,6 +484,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "new", "resume", "register":
 			var j jobs.Job
 			if json.Unmarshal(v.Data, &j) == nil {
+				fromImportPicker := m.Screen == "import-account" && v.Command == "resume"
 				m.SelectedID = j.ID
 				m.TaskForm = taskFormState{}
 				m.Screen = "agents"
@@ -447,6 +492,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Input.Focus()
 				m.DetailText = ""
 				m.Panel = ""
+				if m.inChat() && m.Chat.ThreadID == j.ThreadID {
+					if s := m.currentChat(); s != nil {
+						m.acceptChatJob(s, j)
+						if fromImportPicker {
+							m.restoreComposer(s.Composer)
+						}
+					}
+				}
 				if m.WantOpen && j.Kind != "group" {
 					m.WantOpen = false
 					return m, tea.Batch(m.poll(), m.openID(j.ID))
@@ -592,6 +645,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key == "esc" {
+			if m.inChat() && m.Screen == "agents" && m.Panel == "" {
+				m.leaveChat()
+				m.ViewEpoch++
+				m.Notice = "작업 목록 · 대화를 선택하면 채팅 모드로 들어갑니다."
+				return m, nil
+			}
+			importPicker := m.Screen == "import-account"
 			m.ViewEpoch++
 			m.AutoFollow = true
 			m.LogsOpen = false
@@ -604,6 +664,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Focus = "input"
 			m.Screen = "agents"
 			m.Input.Focus()
+			if importPicker && m.inChat() {
+				if s := m.currentChat(); s != nil {
+					m.restoreComposer(s.Composer)
+				}
+			}
 			m.PaletteDismissed = true
 			return m, nil
 		}
@@ -681,7 +746,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if key == "alt+up" {
 					direction = -1
 				}
-				m.selectIndex(direction)
+				if m.inChat() {
+					js := m.filtered()
+					if len(js) > 0 {
+						return m, m.enterChat(js[max(0, min(len(js)-1, m.Selected+direction))])
+					}
+				} else {
+					m.selectIndex(direction)
+				}
 				return m, nil
 			}
 			if key == "ctrl+p" || key == "ctrl+n" || (key == "up" || key == "down") && !strings.Contains(m.Input.Value(), "\n") {
@@ -690,6 +762,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if key == "enter" || key == "ctrl+enter" {
 				text := m.Input.Value()
+				if m.inChat() && !strings.HasPrefix(strings.TrimSpace(text), "/") {
+					return m, m.sendChat(text)
+				}
 				m.rememberInput(text)
 				m.Input.Reset()
 				return m, m.submit(text)
@@ -700,6 +775,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if key == "tab" {
 				m.Focus = "list"
+				if m.inChat() {
+					m.Focus = "detail"
+				}
 				m.Input.Blur()
 				return m, nil
 			}
@@ -761,6 +839,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if key == "shift+tab" {
 				m.Focus = "list"
+				if m.inChat() {
+					m.returnInput()
+				}
 				return m, nil
 			}
 			if key == "tab" {
@@ -783,7 +864,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Focus = "detail"
 		case "enter", "a":
 			if j, ok := m.selected(); ok {
-				return m, m.openSelected(j)
+				return m, m.enterChat(j)
 			}
 		case "v":
 			if j, ok := m.selected(); ok && j.ThreadID != "" {
@@ -835,6 +916,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 func (m *Model) beginNew() {
+	m.leaveChat()
 	m.Target = "search"
 	m.beginTaskForm("new")
 }
@@ -897,15 +979,21 @@ func (m Model) openID(id string) tea.Cmd {
 func (m *Model) submit(text string) tea.Cmd {
 	text = strings.TrimSpace(text)
 	if text == "" {
+		if m.inChat() {
+			return nil
+		}
 		if m.Target != "manager" {
 			if j, ok := m.selected(); ok {
-				return m.openSelected(j)
+				return m.enterChat(j)
 			}
 		}
 		return nil
 	}
 	if strings.HasPrefix(text, "/") {
 		return m.slash(text)
+	}
+	if m.inChat() {
+		return m.sendChat(text)
 	}
 	if m.Target == "manager" {
 		j, _ := m.selected()
@@ -952,6 +1040,7 @@ func (m *Model) slash(text string) tea.Cmd {
 	case "quit", "exit":
 		return tea.Quit
 	case "agents":
+		m.leaveChat()
 		m.Tab = "tasks"
 		m.Target = "search"
 		m.Focus = "list"
@@ -959,11 +1048,17 @@ func (m *Model) slash(text string) tea.Cmd {
 	case "new":
 		m.beginNew()
 	case "chats":
+		m.leaveChat()
 		m.Filter = arg
 		m.Selected, m.SelectedID = 0, ""
 		m.Target = "search"
 		m.returnInput()
 		return m.poll()
+	case "chat":
+		if j.ID != "" {
+			return m.enterChat(j)
+		}
+		m.Notice = "채팅할 대화를 먼저 선택하세요."
 	case "status":
 		m.Panel = "manager-status"
 		return m.poll()
@@ -985,6 +1080,7 @@ func (m *Model) slash(text string) tea.Cmd {
 			m.Notice = "이 대화는 아직 관리 작업이 아닙니다. /manage로 등록하세요."
 			return nil
 		}
+		m.leaveChat()
 		m.Target = "manager"
 		m.Tab = "manager"
 		m.Notice = "입력 대상: 관리자 · 모델 호출 · /filter 로 검색 입력 복귀"
@@ -992,6 +1088,7 @@ func (m *Model) slash(text string) tea.Cmd {
 			return m.request("manager", supervisor.JobArgs{ID: j.ID, Text: arg})
 		}
 	case "accounts":
+		m.leaveChat()
 		return m.openAccountManagement()
 	case "account":
 		if j.ID == "" || !m.registered(j) || !j.Managed || j.Kind == "group" {
@@ -1016,12 +1113,15 @@ func (m *Model) slash(text string) tea.Cmd {
 		}
 		return m.request("set-manager", supervisor.JobArgs{Account: arg})
 	case "settings":
+		m.leaveChat()
 		return m.openSettingsEditor()
 	case "usage":
+		m.leaveChat()
 		m.Tab = "usage"
 		m.Panel = "usage"
 		return tea.Batch(m.poll(), m.request("usage", nil))
 	case "logs":
+		m.leaveChat()
 		m.Tab = "logs"
 		if arg != "" && arg != "all" {
 			m.Notice = "/logs 또는 /logs all"
@@ -1047,11 +1147,19 @@ func (m *Model) slash(text string) tea.Cmd {
 		m.Panel = "logs"
 		return m.request("logs", supervisor.JobArgs{ID: m.LogsJob})
 	case "older":
+		if m.inChat() {
+			m.AutoFollow = false
+			return m.refreshChat(true)
+		}
 		if j.ID != "" && m.ReadCursor != "" {
 			return m.request("read", supervisor.JobArgs{ID: j.ID, Cursor: m.ReadCursor})
 		}
 		m.Notice = "이전 대화 페이지가 없습니다."
 	case "pause", "resume", "resume-job", "manage", "stop", "complete", "events", "read":
+		if command == "read" && m.inChat() {
+			m.Panel = ""
+			return m.refreshChat(false)
+		}
 		if command == "read" || command == "events" {
 			m.Tab = "tasks"
 		}
@@ -1079,6 +1187,7 @@ func (m *Model) slash(text string) tea.Cmd {
 		}
 		return m.request(api, supervisor.JobArgs{ID: j.ID, ThreadID: j.ThreadID})
 	case "filter":
+		m.leaveChat()
 		m.Target = "search"
 		m.Filter = arg
 		m.Selected = 0
@@ -1093,6 +1202,9 @@ func (m *Model) slash(text string) tea.Cmd {
 	case "shutdown":
 		m.beginTaskForm("shutdown")
 	case "send", "goal", "requests", "unmanage", "log-filter", "filters", "resolve-action", "actions":
+		if command == "filters" {
+			m.leaveChat()
+		}
 		m.beginTaskForm(command)
 	case "mouse":
 		m.MouseDisabled = !m.MouseDisabled
@@ -1291,6 +1403,9 @@ func (m Model) content() string {
 			}
 		}
 		return text
+	}
+	if m.inChat() {
+		return m.chatText()
 	}
 	j, ok := m.selected()
 	if !ok {

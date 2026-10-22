@@ -94,7 +94,7 @@ func (m *Model) beginTaskForm(kind string) {
 			{Key: "budget", Label: "목표 토큰 예산 · 선택 사항", Kind: "number"},
 			toggleField("read_only", "작업 폴더 읽기 전용", false),
 			textField("completion", "단발 작업 완료 검사 · 인자 배열 (선택)", ""),
-			toggleField("open", "생성 후 공식 Codex 터미널 열기", true),
+			toggleField("open", "생성 후 별도 공식 Codex 터미널 열기", false),
 		}
 		fields[0].Required = true
 		fields[11].Help = "예: [\"go\",\"test\",\"./...\"]. 저장 시 이 실행을 완료 검사로 허용합니다."
@@ -267,6 +267,10 @@ func (m *Model) taskFormUpdate(msg tea.Msg) (tea.Cmd, bool) {
 			m.returnInput()
 			if open && j.Kind != "group" {
 				return tea.Batch(m.poll(), m.openID(j.ID)), true
+			}
+			if j.Kind != "group" {
+				m.Status.Jobs = append(m.Status.Jobs, j)
+				return tea.Batch(m.poll(), m.enterChat(j)), true
 			}
 		}
 		if kind == "shutdown" {
