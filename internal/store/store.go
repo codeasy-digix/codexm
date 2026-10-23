@@ -209,6 +209,16 @@ func (s *Store) Actions(state string) ([]jobs.Action, error) {
 	}
 	return out, r.Err()
 }
+
+func (s *Store) Action(id string) (jobs.Action, error) {
+	var a jobs.Action
+	var raw string
+	err := s.DB.QueryRow("SELECT data FROM actions WHERE id=?", id).Scan(&raw)
+	if err == nil {
+		err = json.Unmarshal([]byte(raw), &a)
+	}
+	return a, err
+}
 func (s *Store) RecoverActions() error {
 	as, e := s.Actions("executing")
 	if e != nil {

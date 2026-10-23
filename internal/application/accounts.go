@@ -10,7 +10,6 @@ import (
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/config"
-	"github.com/codeasy-digix/codexm/internal/jobs"
 	"github.com/codeasy-digix/codexm/internal/store"
 	"github.com/codeasy-digix/codexm/internal/supervisor"
 	"golang.org/x/sys/unix"
@@ -29,10 +28,11 @@ func RemoveAccount(ctx context.Context, c config.Config, p accounts.RemoveArgs, 
 		return nil, errors.New("invalid_input: operation ID required")
 	}
 	var ping struct {
-		Accounts int `json:"accounts_api"`
+		Accounts     int `json:"accounts_api"`
+		Reassignment int `json:"account_reassignment_api"`
 	}
 	if supervisor.Request(ctx, c, "ping", nil, &ping) == nil {
-		if ping.Accounts != 1 {
+		if ping.Accounts < 1 || ping.Reassignment < 1 {
 			return nil, errors.New("version_mismatch: 계정 삭제를 사용하려면 관리 서비스를 업그레이드하세요.")
 		}
 		raw, _ := json.Marshal(p)
@@ -55,13 +55,14 @@ func RemoveAccount(ctx context.Context, c config.Config, p accounts.RemoveArgs, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var current []jobs.Job
+	stateExists := false
 	if _, err = os.Stat(filepath.Join(c.StateDir(), "state.sqlite")); err == nil {
+		stateExists = true
 		st, err := store.ReadOnly(c.StateDir())
 		if err != nil {
 			return nil, err
 		}
-		current, err = st.Jobs()
+		_, err = st.Jobs()
 		st.Close()
 		if err != nil {
 			return nil, err
@@ -72,5 +73,19 @@ func RemoveAccount(ctx context.Context, c config.Config, p accounts.RemoveArgs, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return accounts.RemoveRegistration(c, p, current)
+	result, err := accounts.RemoveRegistration(c, p)
+	if err != nil || !stateExists {
+		return result, err
+	}
+	latest, err := config.Load(c.Path)
+	if err != nil {
+		return result, err
+	}
+	st, err := store.Open(c.StateDir())
+	if err != nil {
+		return result, err
+	}
+	defer st.Close()
+	result.DetachedJobs, result.PendingHandoffs, err = accounts.DetachRemovedAssignments(latest, st, nil)
+	return result, err
 }

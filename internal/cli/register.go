@@ -46,7 +46,7 @@ func registerPrompt(ctx context.Context, configPath string, sessionID string) (s
 		// registration failed or echo an RPC error containing conversation data.
 		return registrationFailure("codexm 등록 결과를 확인하지 못했습니다. 관리 패널에서 이 대화의 등록 상태를 확인한 뒤 다시 실행하세요")
 	}
-	if !j.Managed || j.ThreadID != sessionID || !config.Nickname.MatchString(j.Account) {
+	if !j.Managed || j.ThreadID != sessionID || (j.Account != "" && !config.Nickname.MatchString(j.Account)) || (j.Account == "" && !j.AutoAccount) {
 		return registrationFailure("codexm이 현재 대화의 관리 등록을 확인하지 못했습니다. 관리 패널에서 등록 상태를 확인하세요")
 	}
 	message := fmt.Sprintf("현재 대화가 codexm 관리 대상으로 등록되어 있습니다. 인계 후 작업 계정: %s.", j.Account)

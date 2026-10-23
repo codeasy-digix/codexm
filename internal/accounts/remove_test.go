@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/codeasy-digix/codexm/internal/config"
-	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
@@ -55,8 +54,7 @@ func TestRemovalPreservesNativeLoginCredentialsHistoryAndCanBeRestored(t *testin
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(auth)
-	historical := jobs.Job{ID: "finished", Managed: true, State: "complete", Account: "account-secondary"}
-	result, err := RemoveRegistration(c, p, []jobs.Job{historical})
+	result, err := RemoveRegistration(c, p)
 	if err != nil || result.Revision == p.Revision {
 		t.Fatal("remove", err)
 	}
@@ -87,20 +85,13 @@ func TestRemovalPreservesNativeLoginCredentialsHistoryAndCanBeRestored(t *testin
 	}
 }
 
-func TestRemovalRejectsManagerJobsLoginLockAndStaleRevisionWithoutChanges(t *testing.T) {
-	for _, which := range []string{"manager", "running", "idle", "paused", "queued", "target", "terminal-worker", "login", "stale"} {
+func TestRemovalRejectsManagerLoginLockAndStaleRevisionWithoutChanges(t *testing.T) {
+	for _, which := range []string{"manager", "login", "stale"} {
 		t.Run(which, func(t *testing.T) {
 			c, p := removalFixture(t)
-			var current []jobs.Job
 			switch which {
 			case "manager":
 				p.Account = "account-work"
-			case "running", "idle", "paused", "queued":
-				current = []jobs.Job{{Managed: true, Account: "account-secondary", State: which}}
-			case "target":
-				current = []jobs.Job{{Managed: true, Account: "account-work", TargetAccount: "account-secondary", State: "switching"}}
-			case "terminal-worker":
-				current = []jobs.Job{{Managed: true, Account: "account-secondary", State: "complete", Session: "existing-worker"}}
 			case "login":
 				lock, err := cr.AccountLoginLock(c, "account-secondary")
 				if err != nil {
@@ -113,7 +104,7 @@ func TestRemovalRejectsManagerJobsLoginLockAndStaleRevisionWithoutChanges(t *tes
 				}
 			}
 			before, _ := os.ReadFile(c.Path)
-			if _, err := RemoveRegistration(c, p, current); err == nil {
+			if _, err := RemoveRegistration(c, p); err == nil {
 				t.Fatal("unsafe removal accepted")
 			}
 			after, _ := os.ReadFile(c.Path)
@@ -132,7 +123,7 @@ func TestLastRegistrationCanBeRemovedAndInvalidAliasCreatesNoHome(t *testing.T) 
 		t.Fatal(err)
 	}
 	_, p.Revision, _ = config.Current(c.Path)
-	if _, err := RemoveRegistration(c, p, nil); err != nil {
+	if _, err := RemoveRegistration(c, p); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := config.Load(c.Path)
@@ -141,7 +132,7 @@ func TestLastRegistrationCanBeRemovedAndInvalidAliasCreatesNoHome(t *testing.T) 
 	}
 	for _, name := range []string{"missing", "../outside", "default"} {
 		p.Account = name
-		if _, err := RemoveRegistration(loaded, p, nil); err == nil {
+		if _, err := RemoveRegistration(loaded, p); err == nil {
 			t.Fatal("invalid alias accepted")
 		}
 	}
@@ -154,7 +145,7 @@ func TestVerifiedLoginRestoresRegistryAndRollsBackAuthWhenSettingsWriteFails(t *
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "restore", true: "rollback"}[fail], func(t *testing.T) {
 			c, p := removalFixture(t)
-			if _, err := RemoveRegistration(c, p, nil); err != nil {
+			if _, err := RemoveRegistration(c, p); err != nil {
 				t.Fatal(err)
 			}
 			target := filepath.Join(c.Runtime.AccountsDir, "account-secondary", "auth.json")

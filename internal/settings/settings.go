@@ -37,7 +37,7 @@ func Read(c config.Config) (Document, error) {
 		return Document{}, e
 	}
 	names, e := accounts.List(c)
-	return Document{rev, editable(c), names, "새 작업과 다음 계정 선택에 적용됩니다. 기존 세션 계정은 바뀌지 않습니다. 감시 간격은 다음 대조부터 반영됩니다."}, e
+	return Document{rev, editable(c), names, "작업 시작·재개·새 요청마다 가용 계정을 확인하고 현재 우선순위로 선택합니다. 진행 중인 turn은 유지합니다. 감시 간격은 다음 대조부터 반영됩니다."}, e
 }
 
 type AccountReader interface {

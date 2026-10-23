@@ -87,6 +87,7 @@ export function Accounts({
       >
         <h3 id="remove-account-title">계정 등록 삭제</h3>
         <p><strong>{removal?.account}</strong> 계정을 목록과 작업 우선순위에서 삭제합니다.</p>
+        <p>이 계정의 작업 배정을 해제하고 소유 worker를 안전하게 인계합니다. 중지된 작업은 유지하며, 다음 실행 때마다 가용 계정을 우선순위로 선택합니다. 가용 계정이 없으면 작업을 보존하고 대기합니다. 관리자 계정은 역할을 먼저 변경하세요.</p>
         <p>로그인 파일·공용 기본 로그인·대화 기록은 보존합니다. 같은 별칭으로 다시 등록할 수 있습니다.</p>
         {error && <p role="alert" className="error">{error}</p>}
         <div className="toolbar">

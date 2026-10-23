@@ -76,7 +76,7 @@ func TestOfflineAccountRemovalPreservesHistoricalJobsAndRejectsLiveServiceLease(
 			}
 			before, _ := os.ReadFile(c.Path)
 			_, err = RemoveAccount(ctx, c, p, "offline-remove-operation")
-			if mode != "offline" {
+			if mode != "offline" && mode != "worker" {
 				after, _ := os.ReadFile(c.Path)
 				if err == nil || string(after) != string(before) {
 					t.Fatal("unsafe offline removal changed state", err)
@@ -99,6 +99,9 @@ func TestOfflineAccountRemovalPreservesHistoricalJobsAndRejectsLiveServiceLease(
 			got, err := st.Job(j.ID)
 			if err != nil || got.ThreadID != j.ThreadID || got.Goal.TokensUsed != 21 {
 				t.Fatal("historical conversation changed", err)
+			}
+			if mode == "worker" && (got.Account != "" || !got.Paused || !got.AutoAccount) {
+				t.Fatal("offline paused assignment was not detached")
 			}
 		})
 	}

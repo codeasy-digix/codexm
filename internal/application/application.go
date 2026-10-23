@@ -240,7 +240,9 @@ func (a *App) snapshot(ctx context.Context, c config.Config) (any, error) {
 	if supervisor.Request(ctx, c, "ping", nil, &ping) == nil {
 		out["connected"] = true
 		out["supervisor"] = ping
-		out["account_removal_available"] = ping["accounts_api"] == float64(1)
+		api, _ := ping["accounts_api"].(float64)
+		reassignment, _ := ping["account_reassignment_api"].(float64)
+		out["account_removal_available"] = api >= 1 && reassignment >= 1
 		if ping["web_api"] == float64(1) {
 			err = supervisor.Request(ctx, c, "snapshot", nil, &snap)
 		} else {

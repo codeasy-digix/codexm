@@ -15,16 +15,17 @@ func (r *countedAccountReader) Read(context.Context, string) accounts.Snapshot {
 	return accounts.Snapshot{Error: "fixture refuses network authentication"}
 }
 
-func TestOpenReusesOnlyRecentKnownPrimaryQuota(t *testing.T) {
+func TestViewerReusesOnlyRecentKnownPrimaryQuota(t *testing.T) {
 	for _, tc := range []struct {
 		Name, Account       string
 		Age                 time.Duration
 		Blocked, WantCached bool
+		WantCalls           int
 	}{
-		{"recent primary", "account-work", time.Second, false, true},
-		{"expired", "account-work", 2 * time.Minute, false, false},
-		{"previously exhausted", "account-work", time.Second, true, false},
-		{"fallback always checks primaries", "account-backup", time.Second, false, false},
+		{"recent primary", "account-work", time.Second, false, true, 0},
+		{"expired", "account-work", 2 * time.Minute, false, false, 3},
+		{"previously exhausted", "account-work", time.Second, true, false, 3},
+		{"fallback always checks primaries", "account-backup", time.Second, false, false, 3},
 	} {
 		t.Run(tc.Name, func(t *testing.T) {
 			s := fixture(t)
@@ -39,12 +40,12 @@ func TestOpenReusesOnlyRecentKnownPrimaryQuota(t *testing.T) {
 			if e := s.Store.PutJob(j); e != nil {
 				t.Fatal(e)
 			}
-			name, e := s.initialAccount(context.Background(), j)
+			name, e := s.priorityAccount(context.Background(), j, false)
 			if tc.WantCached {
 				if e != nil || name != tc.Account || r.Calls != 0 {
 					t.Fatal("cached opening performed another authentication", name, e, r.Calls)
 				}
-			} else if r.Calls != 1 || e == nil {
+			} else if r.Calls != tc.WantCalls || e == nil {
 				t.Fatal("unknown/stale/fallback quota bypassed verification", e, r.Calls)
 			}
 		})

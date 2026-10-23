@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	"github.com/codeasy-digix/codexm/internal/config"
-	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
@@ -15,14 +14,17 @@ type RemoveArgs struct {
 }
 
 type Removal struct {
-	Account  string `json:"account"`
-	Revision string `json:"revision"`
+	Account         string `json:"account"`
+	Revision        string `json:"revision"`
+	DetachedJobs    int    `json:"detached_jobs"`
+	PendingHandoffs int    `json:"pending_handoffs"`
 }
 
 // RemoveRegistration changes only the registry and selection policy. The caller
-// must hold the supervisor dispatch gate or its offline lease while reading jobs
-// and calling this function. Account homes, auth, histories and past runs remain.
-func RemoveRegistration(c config.Config, p RemoveArgs, current []jobs.Job) (Removal, error) {
+// must hold the supervisor dispatch gate or its offline lease, and reconcile
+// removed assignments after saving. The tombstone is the recovery source if
+// assignment cleanup is interrupted. Auth, histories and past runs remain.
+func RemoveRegistration(c config.Config, p RemoveArgs) (Removal, error) {
 	if !config.Nickname.MatchString(p.Account) || p.Account == "default" || p.Revision == "" {
 		return Removal{}, errors.New("invalid_input: select a registered account and reload its settings revision")
 	}
@@ -48,11 +50,6 @@ func RemoveRegistration(c config.Config, p RemoveArgs, current []jobs.Job) (Remo
 		}
 		if c.Manager.Account == p.Account {
 			return errors.New("관리자 계정입니다. 설정에서 다른 관리자를 선택한 뒤 삭제하세요.")
-		}
-		for _, j := range current {
-			if j.TargetAccount == p.Account || j.Account == p.Account && (j.Session != "" || j.Managed && !jobs.Terminal(j.State)) {
-				return errors.New("작업에서 사용하는 계정입니다. 해당 작업의 계정을 변경하거나 관리 등록을 해제한 뒤 삭제하세요.")
-			}
 		}
 		c.WorkerAccounts.Priority = slices.DeleteFunc(c.WorkerAccounts.Priority, func(n string) bool { return n == p.Account })
 		if c.WorkerAccounts.FallbackAccount == p.Account {

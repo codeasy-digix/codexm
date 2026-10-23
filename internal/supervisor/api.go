@@ -74,7 +74,7 @@ func (s *Server) Handle(ctx context.Context, call Call) (any, error) {
 	}
 	switch call.Command {
 	case "ping":
-		return map[string]any{"version": config.Version, "manager_api": 2, "web_api": 1, "accounts_api": 1}, nil
+		return map[string]any{"version": config.Version, "manager_api": 2, "web_api": 1, "accounts_api": 1, "account_reassignment_api": 1}, nil
 	case "account-remove":
 		var p accounts.RemoveArgs
 		if err := json.Unmarshal(call.Args, &p); err != nil {
@@ -515,7 +515,7 @@ func (s *Server) newJob(n NewArgs) (jobs.Job, error) {
 	}
 	host, _ := os.Hostname()
 	now := time.Now()
-	j := jobs.Job{ID: jobs.ID(), ParentID: n.ParentID, Title: n.Title, Kind: n.Kind, Cwd: p, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Account: n.Account, AutoAccount: auto, InitialAccount: n.Account, State: "queued", Managed: true, ReadOnly: n.ReadOnly, CompletionCommand: n.CompletionCommand, CreatedAt: now, UpdatedAt: now, LastInput: n.Prompt}
+	j := jobs.Job{ID: jobs.ID(), ParentID: n.ParentID, Title: n.Title, Kind: n.Kind, Cwd: p, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Account: n.Account, AutoAccount: true, InitialAccount: n.Account, State: "queued", Managed: true, ReadOnly: n.ReadOnly, CompletionCommand: n.CompletionCommand, CreatedAt: now, UpdatedAt: now, LastInput: n.Prompt}
 	j.Model = n.Model
 	j.Effort = n.Effort
 	if n.Effort != "" && !slices.Contains([]string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}, n.Effort) {
@@ -616,7 +616,7 @@ func (s *Server) importThread(ctx context.Context, a JobArgs) (jobs.Job, error) 
 	if len([]rune(title)) > 120 {
 		title = string([]rune(title)[:120])
 	}
-	j := jobs.Job{ID: jobs.ID(), ThreadID: t.ID, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Cwd: t.Cwd, Title: title, Kind: a.Kind, Account: a.Account, AutoAccount: auto, InitialAccount: a.Account, Managed: a.Manage, State: "observed", Goal: g, LastInput: input, LastOutput: output, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	j := jobs.Job{ID: jobs.ID(), ThreadID: t.ID, Host: host, Store: config.Expand(s.Config.Runtime.SharedCodexHome), Cwd: t.Cwd, Title: title, Kind: a.Kind, Account: a.Account, AutoAccount: true, InitialAccount: a.Account, Managed: a.Manage, State: "observed", Goal: g, LastInput: input, LastOutput: output, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	if g != nil && g.Status == "complete" {
 		j.State = "complete"
 	}

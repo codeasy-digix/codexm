@@ -596,7 +596,12 @@ func (m *Model) managementUpdate(msg tea.Msg) (tea.Cmd, bool) {
 			if sameEpoch && s.Mode == "confirm-remove" {
 				s.Mode, s.Selected, s.Scroll = "accounts", 0, 0
 			}
-			s.Message = s.ConfirmAccount + " 등록을 삭제했습니다. 로그인 파일과 대화는 보존했습니다."
+			var removal struct {
+				Detached int `json:"detached_jobs"`
+				Pending  int `json:"pending_handoffs"`
+			}
+			_ = json.Unmarshal(v.Data, &removal)
+			s.Message = fmt.Sprintf("%s 등록 삭제 · 배정 해제 %d개 · 인계 대기 %d개. 다음 실행 때 가용 계정을 우선순위로 선택합니다.", s.ConfirmAccount, removal.Detached, removal.Pending)
 			m.Notice = s.Message
 			return m.appCall("snapshot", nil), true
 		}
@@ -720,7 +725,7 @@ func (m *Model) managementView(width, height int) (string, []hitRegion) {
 			notes = append(notes, "선택 계정: "+s.ConfirmAccount, "이후 실행하는 공식 CLI·GUI의 기본 로그인에 적용됩니다. 기존 작업의 계정·작업 우선순위·관리자 계정은 유지됩니다.")
 		}
 		if s.Mode == "confirm-remove" {
-			notes = append(notes, "선택 계정: "+s.ConfirmAccount, "목록과 작업 우선순위에서 등록을 삭제합니다. 로그인 파일·공용 기본 로그인·대화 기록은 보존합니다. 사용 중이거나 관리자 계정이면 삭제가 거부됩니다.")
+			notes = append(notes, "선택 계정: "+s.ConfirmAccount, "목록과 작업 우선순위에서 삭제하고 과거 배정을 해제합니다.", "소유 worker는 안전하게 인계합니다. 중지된 작업은 유지합니다.", "다음 실행 때마다 가용 계정을 우선순위로 선택합니다.", "가용 계정이 없으면 대기합니다. 관리자 계정은 역할을 먼저 변경하세요.", "로그인 파일·공용 기본 로그인·대화 기록은 보존합니다.")
 		}
 		if s.Mode == "settings" {
 			notes = append(notes, s.Settings.Application)

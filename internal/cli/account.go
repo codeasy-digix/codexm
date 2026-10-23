@@ -109,7 +109,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		if _, err = application.RemoveAccount(ctx, latest, accounts.RemoveArgs{Account: name, Revision: rev}, jobs.ID()); err != nil {
 			return err
 		}
-		fmt.Printf("Removed registration: %s. Login files, native login and conversations were preserved.\n", name)
+		fmt.Printf("Removed registration: %s. Job assignments are detached or safely handed off. Each execution selects an available account by priority. Login files, native login and conversations were preserved.\n", name)
 		return nil
 	}
 	var result *os.File

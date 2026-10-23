@@ -110,6 +110,11 @@ func New(ctx context.Context, c config.Config, self string) (*Server, error) {
 		lease.Close()
 		return nil, e
 	}
+	if _, _, e = accounts.DetachRemovedAssignments(c, st, nil); e != nil {
+		st.Close()
+		lease.Close()
+		return nil, e
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Server{Config: c, Resolver: r, Reader: accounts.New(r), Store: st, Self: self, ctx: ctx, cancel: cancel, clients: map[string]*cr.Client{}, viewers: map[string]viewer{}, dispatching: map[string]bool{}, managerAccount: c.Manager.Account, started: time.Now()}
 	s.lease = lease
@@ -341,6 +346,10 @@ func (s *Server) handleEvent(jobID, runID, key string, m cr.Message) {
 		return
 	}
 	if j.RunID != runID {
+		return
+	}
+	if m.Method == "connection/lost" && j.AccountReassignment != nil {
+		// Deliberate retirement is not an unexpected disconnect/restart request.
 		return
 	}
 	if m.Method == "item/agentMessage/delta" {

@@ -29,7 +29,7 @@ func (s *Server) registerThread(ctx context.Context, a JobArgs) (jobs.Job, error
 	}
 	for _, j := range all {
 		if j.ThreadID == a.ThreadID && j.Managed {
-			return j, nil
+			return s.registerObserved(j, a.OriginAccount)
 		}
 	}
 	list, e := catalog.Read(ctx, config.Expand(s.Config.Runtime.SharedCodexHome))
@@ -64,11 +64,16 @@ func (s *Server) registerObserved(j jobs.Job, origin string) (jobs.Job, error) {
 		return j, e
 	}
 	if cur.Managed {
+		if !cur.AutoAccount {
+			cur.AutoAccount = true
+			return cur, s.persist(cur)
+		}
 		return cur, nil
 	}
 	if slices.Contains(s.workerConfig().AccountRegistry.Removed, cur.Account) {
-		return cur, errors.New("이 계정은 등록 해제됐습니다. 등록된 계정을 선택하세요.")
+		cur.Account = ""
 	}
+	cur.AutoAccount = true
 	cur.Managed = true
 	if cur.Model == "" {
 		cur.Model = j.Model
@@ -104,7 +109,7 @@ func (s *Server) validateOriginAccount(origin string) error {
 	if origin == "" {
 		return nil
 	}
-	names, e := accounts.List(s.workerConfig())
+	names, e := accounts.SavedLogins(s.workerConfig())
 	if e != nil {
 		return e
 	}

@@ -51,7 +51,7 @@ func TestAccountListDeletionOpensExactConfirmationWithoutMutation(t *testing.T) 
 		t.Fatal("account-list deletion did not capture the exact account and revision with cancel selected")
 	}
 	view, _ := m.managementView(100, 20)
-	for _, text := range []string{"선택 계정: b", "로그인 파일", "대화 기록", "사용 중이거나 관리자 계정"} {
+	for _, text := range []string{"선택 계정: b", "로그인 파일", "대화 기록", "작업 우선순위", "가용 계정", "관리자 계정은 역할을 먼저 변경"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("deletion confirmation omitted %q", text)
 		}

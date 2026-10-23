@@ -235,7 +235,7 @@ func TestRegisterPromptReusesCorePreservingWriterGoalAndExistingRegistration(t *
 		t.Fatal(err)
 	}
 	message, err = hookRegistrationCall(t, context.Background(), c.Path, hookThread)
-	if err != nil || !strings.Contains(message, "인계 후 작업 계정: account-work") {
+	if err != nil || !strings.Contains(message, "우선순위에서 가용 계정을 자동 선택") {
 		t.Fatal(message, err)
 	}
 	again, err := st.Job(original.ID)
@@ -320,5 +320,19 @@ func TestRegisterPromptDeadlineAndRPCFailureAreBoundedAndPrivate(t *testing.T) {
 				t.Fatal("registration ignored caller deadline")
 			}
 		})
+	}
+}
+
+func TestRegisterPromptAcceptsAutomaticAssignmentClearedByRemoval(t *testing.T) {
+	c := hookRegistrationConfig(t)
+	hookRegistrationServer(t, c, func(_ context.Context, call supervisor.Call) (any, error) {
+		if call.Command == "ping" {
+			return true, nil
+		}
+		return jobs.Job{ThreadID: hookThread, Account: "", AutoAccount: true, Managed: true, State: "paused", Paused: true}, nil
+	})
+	message, err := hookRegistrationCall(t, context.Background(), c.Path, hookThread)
+	if err != nil || !strings.Contains(message, "우선순위에서 가용 계정을 자동 선택") {
+		t.Fatal("cleared assignment was mistaken for failed registration", err)
 	}
 }

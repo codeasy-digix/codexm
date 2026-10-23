@@ -31,6 +31,13 @@ func (s *Server) reconcile() {
 	if s.isStopping() {
 		return
 	}
+	s.mu.Lock()
+	_, _, e := accounts.DetachRemovedAssignments(s.workerConfig(), s.Store, s.dispatching)
+	s.mu.Unlock()
+	if e != nil {
+		s.fail(e)
+		return
+	}
 	js, e := s.Store.Jobs()
 	if e != nil {
 		s.fail(e)
@@ -93,6 +100,9 @@ func (s *Server) reconcile() {
 	}
 }
 func (s *Server) reconcileJob(j jobs.Job) {
+	if j.AccountReassignment != nil {
+		return
+	}
 	if j.Registration != nil && j.Session == "" {
 		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 		defer cancel()
@@ -279,6 +289,14 @@ func (s *Server) reconcileActions() {
 			continue
 		}
 		switch a.Kind {
+		case "reassign_account":
+			if j.AccountReassignment == nil {
+				s.finishAction(a, "done", nil)
+			} else {
+				a.State = "pending"
+				_ = s.Store.PutAction(a)
+			}
+			continue
 		case "change_account":
 			if j.TargetAccount == "" {
 				var p accountChange

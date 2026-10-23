@@ -43,6 +43,19 @@ func (s *Server) update(id string, f func(*jobs.Job)) error {
 	return s.persist(j)
 }
 func (s *Server) client(id string) *cr.Client { s.mu.Lock(); defer s.mu.Unlock(); return s.clients[id] }
+
+func (s *Server) deferPendingAction(a jobs.Action, delay time.Duration) {
+	s.mu.Lock()
+	current, err := s.Store.Action(a.ID)
+	if err == nil && current.State == "pending" {
+		current.NotBefore = time.Now().Add(delay)
+		err = s.Store.PutAction(current)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		s.fail(err)
+	}
+}
 func (s *Server) actionLoop() {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -82,6 +95,15 @@ func (s *Server) actionLoop() {
 	}
 }
 func (s *Server) execute(a jobs.Action) {
+	if saved, err := s.Store.Action(a.ID); err == nil {
+		if saved.State != "pending" {
+			return
+		}
+		a = saved
+	} else if !store.NotFound(err) {
+		s.fail(err)
+		return
+	}
 	if s.isStopping() && a.Kind != "pause_execution" && a.Kind != "cleanup" {
 		s.finishAction(a, "cancelled", nil)
 		return
@@ -98,18 +120,20 @@ func (s *Server) execute(a jobs.Action) {
 			return
 		}
 	}
-	if j.TargetAccount != "" && a.Kind != "change_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" {
-		a.NotBefore = time.Now().Add(time.Second)
-		_ = s.Store.PutAction(a)
+	if j.AccountReassignment != nil && a.Kind != "reassign_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" {
+		s.deferPendingAction(a, time.Second)
 		return
 	}
-	if j.Paused && a.Kind != "change_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "load_view" && a.Kind != "set_goal" && a.Kind != "manager_command" {
+	if j.TargetAccount != "" && a.Kind != "change_account" && a.Kind != "reassign_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" {
+		s.deferPendingAction(a, time.Second)
+		return
+	}
+	if j.Paused && a.Kind != "change_account" && a.Kind != "reassign_account" && a.Kind != "pause_execution" && a.Kind != "cleanup" && a.Kind != "load_view" && a.Kind != "set_goal" && a.Kind != "manager_command" {
 		if jobs.Terminal(j.State) {
 			s.finishAction(a, "cancelled", nil)
 			return
 		}
-		a.NotBefore = time.Now().Add(5 * time.Second)
-		_ = s.Store.PutAction(a)
+		s.deferPendingAction(a, 5*time.Second)
 		return
 	}
 	// A user input may wait across account runs. Lifecycle actions belong to one run.
@@ -117,15 +141,25 @@ func (s *Server) execute(a jobs.Action) {
 		s.finishAction(a, "cancelled", nil)
 		return
 	}
+	s.mu.Lock()
+	// Removal may have cancelled a selection after the loop read its queue.
+	if saved, err := s.Store.Action(a.ID); err == nil && saved.State != "pending" {
+		s.mu.Unlock()
+		return
+	}
 	a.State = "executing"
 	a.Attempts++
 	if e = s.Store.PutAction(a); e != nil {
+		s.mu.Unlock()
 		s.fail(e)
 		return
 	}
+	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(s.ctx, 90*time.Second)
 	defer cancel()
 	switch a.Kind {
+	case "reassign_account":
+		e = s.reassignRemovedAccount(ctx, j.ID)
 	case "change_account":
 		e = s.manualAccountChange(ctx, &a)
 	case "load_view":
@@ -336,7 +370,7 @@ func (s *Server) reserveRuntime(id string, viewing bool) error {
 	if busy >= s.workerConfig().Execution.MaxParallelJobs {
 		return later("parallel job limit reached")
 	}
-	if j.State != "running" && j.State != "waiting_on_user" && j.State != "waiting_on_approval" {
+	if !viewing && j.State != "running" && j.State != "waiting_on_user" && j.State != "waiting_on_approval" {
 		j.State = "starting"
 	}
 	return s.persist(j)
@@ -355,60 +389,12 @@ func (s *Server) snapshots() (map[string]accounts.Snapshot, map[string]bool, err
 	return m, blocked, e
 }
 func (s *Server) initialAccount(ctx context.Context, j jobs.Job) (string, error) {
-	if !j.AutoAccount && slices.Contains(s.workerConfig().AccountRegistry.Removed, j.Account) {
-		return "", errors.New("이 계정은 등록 해제됐습니다. 작업의 계정을 변경하거나 다시 등록하세요.")
-	}
-	// A manual selection must either use that exact account or fail visibly.
-	// It must never silently fall through to a different priority account.
+	// A pending explicit switch owns only this handoff. Saved assignments never
+	// pin a later start/resume/input to an old account.
 	if j.TargetAccount != "" {
 		return j.TargetAccount, s.checkSelectedAccount(ctx, j, j.TargetAccount)
 	}
-	if j.AutoAccount {
-		return s.automaticAccount(ctx, j)
-	}
-	// Opening a viewer reuses a recently verified quota instead of launching
-	// another authentication server and waiting for the same network response.
-	if snapshots, blocked, e := s.snapshots(); e == nil && j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {
-		if a, ok := snapshots[j.Account]; ok && !blocked[j.Account] && a.Authenticated && a.Error == "" && time.Since(a.CheckedAt) >= 0 && time.Since(a.CheckedAt) < time.Minute {
-			if state := a.State(j.Model); state == "available" || state == "candidate" {
-				return j.Account, nil
-			}
-		}
-	}
-	a := s.Reader.Read(ctx, j.Account)
-	if e := s.recordAccount(a); e != nil {
-		return "", e
-	}
-	if !a.Authenticated {
-		_ = s.update(j.ID, func(j *jobs.Job) { j.State = "auth_required" })
-		return "", fmt.Errorf("account %s: %s", j.Account, a.Error)
-	}
-	if a.Error != "" {
-		return "", later("account availability could not be checked: " + a.Error)
-	}
-	if j.Account != s.workerConfig().WorkerAccounts.FallbackAccount {
-		_, blocked, err := s.snapshots()
-		if err != nil {
-			return "", err
-		}
-		state := a.State(j.Model)
-		if state == "available" || state == "candidate" && !blocked[j.Account] {
-			return j.Account, nil
-		}
-	}
-	if _, e := s.refreshAccounts(ctx); e != nil {
-		return "", e
-	}
-	m, blocked, e := s.snapshots()
-	if e != nil {
-		return "", e
-	}
-	choice, reason := accounts.Choose(s.workerConfig(), m, j.Model, blocked)
-	if choice == "" {
-		_ = s.update(j.ID, func(j *jobs.Job) { j.State = "quota_wait"; j.LastError = reason })
-		return "", &postpone{reason, 30 * time.Second}
-	}
-	return choice, nil
+	return s.automaticAccount(ctx, j)
 }
 func (s *Server) recordAccount(a accounts.Snapshot) error {
 	s.accountMu.Lock()
@@ -443,6 +429,23 @@ func (s *Server) ensureRuntimeMode(ctx context.Context, id string, user, viewing
 		select {
 		case <-c.Done:
 		default:
+			// A new execution boundary rechecks priority even when a worker from
+			// an earlier turn is still connected. Viewing/steering keep it intact.
+			account, selected := ctx.Value(executionAccountKey{}).(string)
+			if !viewing && user && !selected {
+				account, e = s.initialAccount(ctx, j)
+				if e != nil {
+					return e
+				}
+				ctx = context.WithValue(ctx, executionAccountKey{}, account)
+				selected = true
+			}
+			if selected && account != j.Account {
+				if e = s.park(ctx, id, false); e != nil {
+					return e
+				}
+				return s.ensureRuntimeMode(ctx, id, user, viewing)
+			}
 			if user && j.Goal != nil && j.Goal.Status != "complete" {
 				if e = c.SetGoalStatus(ctx, j.ThreadID, "active", "user"); e != nil {
 					return e
@@ -457,12 +460,26 @@ func (s *Server) ensureRuntimeMode(ctx context.Context, id string, user, viewing
 	}
 	// A live owned worker wins over a local timeout. Reattach instead of launching twice.
 	if j.Session != "" && cr.HasSession(ctx, j.Session) {
-		return s.connect(ctx, j, user)
+		if e = s.connect(ctx, j, false); e != nil {
+			return e
+		}
+		_, selected := ctx.Value(executionAccountKey{}).(string)
+		if !viewing && (user || selected) {
+			return s.ensureRuntimeMode(ctx, id, user, viewing)
+		}
+		return nil
 	}
 	if cr.WriterBusy(j.Store, j.ThreadID) {
 		return errForeignWriter
 	}
-	account, e := s.initialAccount(ctx, j)
+	account, selected := ctx.Value(executionAccountKey{}).(string)
+	if !selected {
+		if viewing {
+			account, e = s.priorityAccount(ctx, j, false)
+		} else {
+			account, e = s.initialAccount(ctx, j)
+		}
+	}
 	if e != nil {
 		return e
 	}
@@ -484,10 +501,19 @@ func (s *Server) ensureRuntimeMode(ctx context.Context, id string, user, viewing
 	j.RunID = jobs.ID()
 	j.Session = cr.ProcessSession(s.Config, j.RunID)
 	j.Socket = cr.SocketPath(s.Config, j.RunID[:12])
-	j.State = "starting"
+	if !viewing {
+		j.State = "starting"
+	}
 	j.PendingRequests = nil
 	j.TurnID = ""
-	if e = s.update(id, func(cur *jobs.Job) { j.Paused = cur.Paused; j.LastInput = cur.LastInput; *cur = j }); e != nil {
+	if e = s.update(id, func(cur *jobs.Job) {
+		j.Paused = cur.Paused
+		j.LastInput = cur.LastInput
+		j.AccountReassignment = cur.AccountReassignment
+		j.TargetAccount = cur.TargetAccount
+		j.AutoAccount = true
+		*cur = j
+	}); e != nil {
 		return e
 	}
 	run := jobs.Run{ID: j.RunID, JobID: id, ThreadID: j.ThreadID, Account: account, Socket: j.Socket, Session: j.Session, EngineBinary: j.EngineBinary, EngineVersion: j.EngineVersion, StartedAt: time.Now(), State: "starting"}
@@ -504,7 +530,14 @@ func (s *Server) ensureRuntimeMode(ctx context.Context, id string, user, viewing
 	r := s.Resolver
 	r.Binary = j.EngineBinary
 	r.Version = j.EngineVersion
-	if e = r.LaunchWorker(ctx, s.Self, cr.WorkerSpec{Account: account, Socket: j.Socket, Session: j.Session, Cwd: j.Cwd}); e != nil {
+	s.mu.Lock()
+	if slices.Contains(s.workerConfig().AccountRegistry.Removed, account) {
+		e = later("계정 등록이 삭제되었습니다. 남은 우선순위로 다시 선택합니다.")
+	} else {
+		e = r.LaunchWorker(ctx, s.Self, cr.WorkerSpec{Account: account, Socket: j.Socket, Session: j.Session, Cwd: j.Cwd})
+	}
+	s.mu.Unlock()
+	if e != nil {
 		_ = s.Store.EndRun(j.RunID, "launch_failed", time.Now())
 		return e
 	}
@@ -683,6 +716,13 @@ func (s *Server) send(ctx context.Context, id string, in jobs.Input) error {
 	if e = s.reserve(id); e != nil {
 		return e
 	}
+	if !in.Steer {
+		account, err := s.initialAccount(ctx, j)
+		if err != nil {
+			return err
+		}
+		ctx = context.WithValue(ctx, executionAccountKey{}, account)
+	}
 	if e = s.ensureRuntime(ctx, id, false); e != nil {
 		return e
 	}
@@ -692,6 +732,9 @@ func (s *Server) send(ctx context.Context, id string, in jobs.Input) error {
 	}
 	if j.Paused {
 		return later("job paused")
+	}
+	if j.AccountReassignment != nil || slices.Contains(s.workerConfig().AccountRegistry.Removed, j.Account) {
+		return later("계정 삭제 인계가 끝난 뒤 남은 우선순위로 실행합니다.")
 	}
 	if !in.Steer && j.TurnID != "" {
 		return later("input queued for the next turn")
@@ -723,6 +766,13 @@ func (s *Server) park(ctx context.Context, id string, pauseGoal bool) error {
 		return e
 	}
 	c := s.client(id)
+	if c != nil {
+		select {
+		case <-c.Done:
+			c = nil
+		default:
+		}
+	}
 	if c == nil && j.Session != "" && cr.HasSession(ctx, j.Session) {
 		if e = s.connect(ctx, j, false); e != nil {
 			return e

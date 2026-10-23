@@ -12,7 +12,7 @@ import (
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
-func TestAutomaticJobsFollowPanelPriorityWithoutChangingExistingJobs(t *testing.T) {
+func TestEveryJobExecutionFollowsCurrentPriorityWithoutChangingSavedHistory(t *testing.T) {
 	s := fixture(t)
 	if e := s.Config.Save(); e != nil {
 		t.Fatal(e)
@@ -22,7 +22,7 @@ func TestAutomaticJobsFollowPanelPriorityWithoutChangingExistingJobs(t *testing.
 		t.Fatal(e)
 	}
 	auto, e := s.newJob(NewArgs{Cwd: t.TempDir(), Kind: "chat"})
-	if e != nil || !auto.AutoAccount || explicit.AutoAccount {
+	if e != nil || !auto.AutoAccount || !explicit.AutoAccount {
 		t.Fatal("selection policy was lost", e)
 	}
 	if _, _, e = config.Update(s.Config.Path, "", func(c *config.Config) error {
@@ -38,8 +38,8 @@ func TestAutomaticJobsFollowPanelPriorityWithoutChangingExistingJobs(t *testing.
 		t.Fatal("automatic job ignored the panel's current order", choice, e)
 	}
 	choice, e = s.initialAccount(context.Background(), explicit)
-	if e != nil || choice != "account-secondary" {
-		t.Fatal("existing explicit job was changed", choice, e)
+	if e != nil || choice != "account-main" {
+		t.Fatal("saved explicit account pinned the next execution", choice, e)
 	}
 	if _, e = s.Handle(context.Background(), Call{Command: "set-worker-account", Args: mustJSON(JobArgs{Account: "account-work"})}); e == nil {
 		t.Fatal("retired default worker command was accepted")
@@ -49,7 +49,7 @@ func TestAutomaticJobsFollowPanelPriorityWithoutChangingExistingJobs(t *testing.
 		t.Fatal("unrelated account selection changed")
 	}
 	got, _ := s.Store.Job(explicit.ID)
-	if got.Account != "account-secondary" || got.AutoAccount {
+	if got.Account != "account-secondary" || !got.AutoAccount {
 		t.Fatal("existing job was rewritten")
 	}
 }
@@ -171,6 +171,7 @@ func TestAllAccountsExhaustedKeepsBasicCommandsAndQueuedWorkWithoutModel(t *test
 		t.Fatal("work queue was lost", len(before))
 	}
 	yes := true
+	s.Reader.(fakeReader)["account-secondary"] = accounts.Snapshot{Authenticated: true, Ordinary: &yes}
 	if e = s.recordAccount(accounts.Snapshot{Account: "account-secondary", Authenticated: true, Ordinary: &yes, CheckedAt: time.Now()}); e != nil {
 		t.Fatal(e)
 	}
@@ -184,7 +185,7 @@ func TestAllAccountsExhaustedKeepsBasicCommandsAndQueuedWorkWithoutModel(t *test
 	}
 }
 
-func TestManualSessionChoiceDisablesAutomaticAccountSelection(t *testing.T) {
+func TestManualSessionChoiceKeepsNextExecutionAutomatic(t *testing.T) {
 	s := fixture(t)
 	j, e := s.newJob(NewArgs{Cwd: t.TempDir(), Kind: "chat"})
 	if e != nil || !j.AutoAccount {
@@ -198,7 +199,7 @@ func TestManualSessionChoiceDisablesAutomaticAccountSelection(t *testing.T) {
 	}
 	s.execute(a)
 	got, _ := s.Store.Job(j.ID)
-	if got.AutoAccount {
-		t.Fatal("manual same-account selection retained automatic policy")
+	if !got.AutoAccount {
+		t.Fatal("manual selection pinned subsequent executions")
 	}
 }

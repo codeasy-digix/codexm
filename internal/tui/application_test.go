@@ -58,7 +58,7 @@ func startTUIFixture(t *testing.T) (*tuiRPCFixture, Model) {
 		var result any = true
 		var callErr error
 		if call.Command == "ping" {
-			result = map[string]any{"web_api": 1, "accounts_api": 1}
+			result = map[string]any{"web_api": 1, "accounts_api": 1, "account_reassignment_api": 1}
 		} else if call.Command == "web-operation" {
 			var op supervisor.WebOperation
 			if err := json.Unmarshal(call.Args, &op); err != nil {

@@ -162,7 +162,9 @@ func TestOSServiceRestartsAndAdoptsOwnedNativeWorker(t *testing.T) {
 		t.Fatal(e)
 	}
 	deadline := time.Now().Add(20 * time.Second)
-	for Ping(ctx, s.Config) == nil && time.Now().Before(deadline) {
+	// The control listener can close before Run finishes parking its workers.
+	// Wait for both parts of the asynchronous shutdown acknowledgement.
+	for (Ping(ctx, s.Config) == nil || cr.HasSession(ctx, j.Session)) && time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if Ping(ctx, s.Config) == nil || cr.HasSession(ctx, j.Session) {

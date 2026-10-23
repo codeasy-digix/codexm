@@ -58,6 +58,9 @@ func (s *Server) requestAccountChange(a JobArgs) (jobs.Action, error) {
 	if !j.Managed || j.Kind == "group" {
 		return jobs.Action{}, errors.New("select a managed conversation; use manage first")
 	}
+	if j.AccountReassignment != nil {
+		return jobs.Action{}, errors.New("계정 삭제 인계가 진행 중입니다. 완료 후 계정을 선택하세요.")
+	}
 	if a.ExpectedAccount != "" && a.ExpectedAccount != j.Account {
 		return jobs.Action{}, errors.New("the session account changed; refresh before selecting again")
 	}
@@ -76,8 +79,8 @@ func (s *Server) requestAccountChange(a JobArgs) (jobs.Action, error) {
 	if a.OperationID != "" {
 		action.ID = a.OperationID
 	}
-	if j.Account == a.Account && !j.AutoAccount {
-		j.AutoAccount = false
+	if j.Account == a.Account {
+		j.AutoAccount = true
 		action.State = "done"
 	} else {
 		j.TargetAccount = a.Account
@@ -159,7 +162,7 @@ func (s *Server) manualAccountChange(ctx context.Context, action *jobs.Action) e
 		if e != nil {
 			return e
 		}
-		if action.RunID != j.RunID || j.Account != p.From {
+		if action.RunID != j.RunID || j.Account != p.From || j.TargetAccount != p.Account || j.AccountReassignment != nil {
 			return errors.New("session execution changed during account verification; refresh before retrying")
 		}
 		// Persist intent before interrupting: after a crash, an interrupted turn
@@ -218,7 +221,7 @@ func (s *Server) manualAccountChange(ctx context.Context, action *jobs.Action) e
 			}
 		}
 	}
-	return s.update(j.ID, func(cur *jobs.Job) { cur.TargetAccount = ""; cur.AutoAccount = false })
+	return s.update(j.ID, func(cur *jobs.Job) { cur.TargetAccount = ""; cur.AutoAccount = true })
 }
 
 func mayContinueAfterChange(j jobs.Job) bool {

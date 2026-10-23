@@ -416,13 +416,14 @@ func (m MCP) snapshot(ctx context.Context) (any, error) {
 		return snapshot, nil
 	}
 	var capability struct {
-		API      int `json:"manager_api"`
-		Accounts int `json:"accounts_api"`
+		API          int `json:"manager_api"`
+		Accounts     int `json:"accounts_api"`
+		Reassignment int `json:"account_reassignment_api"`
 	}
 	if e = supervisor.Request(ctx, c, "ping", nil, &capability); e != nil {
 		return nil, e
 	}
-	snapshot["account_removal_available"] = capability.Accounts == 1
+	snapshot["account_removal_available"] = capability.Accounts >= 1 && capability.Reassignment >= 1
 	var st supervisor.Status
 	if e = supervisor.Request(ctx, c, "status", nil, &st); e != nil {
 		return nil, e

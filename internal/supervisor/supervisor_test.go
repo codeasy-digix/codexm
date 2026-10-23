@@ -131,15 +131,15 @@ func TestRetryDeadlineSurvivesFrequentStateRefresh(t *testing.T) {
 	if e := s.Store.PutJob(j); e != nil {
 		t.Fatal(e)
 	}
-	// No account is authenticated here: dispatch must fail at the auth check,
-	// rather than be postponed forever by the freshly updated job timestamp.
+	// An expired retry must reach a fresh priority/quota check instead of being
+	// postponed forever by the freshly updated job timestamp.
 	e := s.retry(context.Background(), j.ID, time.Now().Add(-6*time.Second))
 	var p *postpone
-	if errors.As(e, &p) {
-		t.Fatal("expired retry was postponed", e)
+	if !errors.As(e, &p) || p.reason == "bounded retry backoff" {
+		t.Fatal("expired retry did not reach account selection", e)
 	}
 	got, _ := s.Store.Job(j.ID)
-	if got.RetryCount != 1 || got.State != "auth_required" {
+	if got.RetryCount != 1 || got.State != "quota_wait" {
 		t.Fatal(got.RetryCount, got.State, e)
 	}
 	j.State = "retry_wait"
@@ -308,11 +308,11 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 		t.Fatal(e)
 	}
 	loaded, _ := s.Store.Job(j.ID)
-	if loaded.ThreadID != j.ThreadID || loaded.Account != "account-secondary" || loaded.Model != j.Model || loaded.Effort != j.Effort || loaded.Goal == nil || loaded.Goal.Status != "paused" || loaded.Goal.TokenBudget == nil || *loaded.Goal.TokenBudget != 30000 || loaded.Goal.TokensUsed != g.TokensUsed {
+	if loaded.ThreadID != j.ThreadID || loaded.Account != "account-work" || loaded.Model != j.Model || loaded.Effort != j.Effort || loaded.Goal == nil || loaded.Goal.Status != "paused" || loaded.Goal.TokenBudget == nil || *loaded.Goal.TokenBudget != 30000 || loaded.Goal.TokensUsed != g.TokensUsed {
 		t.Fatal(loaded)
 	}
 	log, e := s.Store.WorkLogs(j.ID, 10)
-	if e != nil || len(log.Runs) != 2 || len(log.Changes) != 1 || log.Changes[0].From != "account-work" || log.Changes[0].To != "account-secondary" {
+	if e != nil || len(log.Runs) != 2 || len(log.Changes) != 2 || log.Changes[0].From != "account-secondary" || log.Changes[0].To != "account-work" || log.Changes[1].From != "account-work" || log.Changes[1].To != "account-secondary" {
 		t.Fatal("account switch history", log, e)
 	}
 	for _, run := range log.Runs {
@@ -320,7 +320,7 @@ func TestOfficialNativeWorkerLifecycleAndWriterLock(t *testing.T) {
 			t.Fatal("run start or thread lost", run)
 		}
 	}
-	if log.Runs[1].EndedAt == nil || log.Runs[1].Account != "account-work" || log.Runs[0].Account != "account-secondary" {
+	if log.Runs[1].EndedAt == nil || log.Runs[1].Account != "account-work" || log.Runs[0].Account != "account-work" {
 		t.Fatal("run boundary missing", log.Runs)
 	}
 	// A budget edit must run while the worker is parked, without resuming the

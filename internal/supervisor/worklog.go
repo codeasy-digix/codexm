@@ -28,6 +28,7 @@ func (s *Server) changeAccount(id, to, reason string) error {
 	}
 	c := jobs.WorkChange{ID: jobs.ID(), JobID: id, ThreadID: j.ThreadID, From: j.Account, To: to, Reason: reason, At: time.Now()}
 	j.Account, j.UpdatedAt = to, c.At
+	j.AutoAccount = true
 	return s.Store.ChangeAccount(j, c)
 }
 
