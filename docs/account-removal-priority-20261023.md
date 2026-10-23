@@ -60,3 +60,23 @@ unknown과 예비 계정 제한, 재시작·요청 재전송·삭제 경합을 �
 검증 로그·배포 번들·설치 전 관리 DB 백업은 로컬 private 경로
 `~/.local/state/codexm/validation/account-removal-priority-20261023/`에 보관한다.
 실행권을 가진 외부 GUI 연결을 스킬에서 해제하는 기능은 이 변경에 포함되지 않는다.
+
+## 로컬 설치 반영
+
+구현 커밋 `e09496d`를 main에 반영·push하고 0.6.2 로컬 소스 빌드로 설치했다.
+웹 번들은 Node 24의 서버 의존성을 설치한 뒤 seal/verify했으며 digest는
+`c17c6033830c3facaf201106fb2aac831ae56c4cb38158b27e7dc5402b7b80d6`이다.
+기존 서비스는 `codexm service upgrade`로 observer만 교체했고 설치 영수증의 실행
+파일과 현재 설치 파일이 일치한다. 새 bridge의 snapshot에서 연결·삭제·인계 지원을 확인했다.
+
+설치 전후 기존 11개 작업의 ID/thread/account/run/kind/paused, 목표 예산과 사용량의
+연속성, 설정 파일, native auth 링크와 바이트가 보존됐다. 실제 account-work 등록과 실행 중인
+원본 대화는 삭제하거나 중지하지 않았다. 기존 GUI 플러그인은 호환되는 관리 API를
+계속 사용하며, 기존 훅 설치·승인도 변경하지 않았다. 실행 중인 로컬 웹은 없었고
+업데이트된 번들은 다음 `codexm web` 실행에 사용한다. TUI 안내문은 새 실행 파일에 포함된다.
+
+현재 실제 worker에 고정된 Codex 0.162.1에서도 설치된 바이너리를 사용해 삭제 인계와
+원본 writer/paused goal 보존 native 검사 2개를 추가로 통과했다. 설치된 CLI의 별도
+격리 config에서 `account account-work --remove`를 실제 실행해 paused 배정 해제,
+같은 thread/목표/예산/사용량/로그인 보존, 감사 기록 1건을 확인했다. 실제 계정은
+모델 호출 없이 보존했다. 임시 검증 tmux 세션은 모두 종료됐다.
