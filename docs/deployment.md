@@ -66,3 +66,6 @@ codexm --version
 과거 통합 중간 단계는 [검증 기록](consolidation-20261101.md)에 남겼다. 그 문서의
 relay 통합·`.home` pin/build 설명은 현재 정책이 아니다. 제거한 기능의 데이터 경계는
 [history-sync 제거](history-sync.md)를 따른다.
+
+소스 분리·로컬 설치·서비스 제거의 실제 확인 결과와 남은 관리자 단계는
+[2026-11-01 검증 기록](retirement-20261101.md)에 남긴다.
