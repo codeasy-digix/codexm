@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestOfficialNativeTerminalAccountUsesSharedDatabaseWithoutArgumentInjection(t *testing.T) {
@@ -89,5 +91,86 @@ func TestOfficialNativeTerminalAccountUsesSharedDatabaseWithoutArgumentInjection
 	after, _ := os.ReadFile(filepath.Join(c.Runtime.SharedCodexHome, "config.toml"))
 	if !bytes.Equal(before, after) {
 		t.Fatal("native terminal account selection rewrote shared configuration")
+	}
+}
+
+func TestOfficialNativeSettingsWriteIsSharedAcrossAccounts(t *testing.T) {
+	if os.Getenv("CODEXM_NATIVE_TEST") != "1" {
+		t.Skip("requires isolated official CLI integration")
+	}
+	binary := os.Getenv("CODEXM_NATIVE_RUNTIME")
+	if binary == "" {
+		t.Fatal("official runtime missing")
+	}
+	c := nativeDefaultFixture(t)
+	if err := cr.EnsureAccountHome(c, "other"); err != nil {
+		t.Fatal(err)
+	}
+	efforts := []string{"low", "medium", "high", "xhigh", "max", "ultra"}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, account := range []string{"chosen", "other", ""} {
+		func() {
+			cmd := exec.CommandContext(ctx, binary, "--no-daemon", "app-server", "--listen", "stdio://")
+			cmd.Env = cr.Env(c, account, "")
+			cmd.Dir = c.Runtime.SharedCodexHome
+			client, err := cr.StartStdio(ctx, cmd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				client.Close()
+				select {
+				case <-client.ProcessDone:
+				case <-time.After(3 * time.Second):
+					_ = cmd.Process.Kill()
+					<-client.ProcessDone
+				}
+			}()
+			if account == "chosen" {
+				err = client.Call(ctx, "config/batchWrite", map[string]any{"edits": []map[string]any{
+					{"keyPath": "model", "value": "gpt-6.1-sol", "mergeStrategy": "replace"},
+					{"keyPath": "model_reasoning_effort", "value": "max", "mergeStrategy": "replace"},
+					{"keyPath": "desktop.theme", "value": "dark", "mergeStrategy": "replace"},
+					{"keyPath": "desktop.enabled-reasoning-efforts", "value": efforts, "mergeStrategy": "replace"},
+				}}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var reply struct {
+				Config map[string]any `json:"config"`
+			}
+			if err := client.Call(ctx, "config/read", map[string]any{"includeLayers": false}, &reply); err != nil {
+				t.Fatal(err)
+			}
+			desktop, _ := reply.Config["desktop"].(map[string]any)
+			gotEfforts, _ := json.Marshal(desktop["enabled-reasoning-efforts"])
+			wantEfforts, _ := json.Marshal(efforts)
+			if desktop["theme"] != "dark" || !bytes.Equal(gotEfforts, wantEfforts) || reply.Config["model"] != "gpt-6.1-sol" || reply.Config["model_reasoning_effort"] != "max" {
+				t.Errorf("account %q lost shared desktop setting after native save/restart", account)
+			}
+		}()
+	}
+	b, err := os.ReadFile(filepath.Join(c.Runtime.SharedCodexHome, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		Model   string `toml:"model"`
+		Effort  string `toml:"model_reasoning_effort"`
+		Desktop struct {
+			Theme   string
+			Efforts []string `toml:"enabled-reasoning-efforts"`
+		} `toml:"desktop"`
+	}
+	if err := toml.Unmarshal(b, &saved); err != nil || saved.Desktop.Theme != "dark" || saved.Model != "gpt-6.1-sol" || saved.Effort != "max" || !reflect.DeepEqual(saved.Desktop.Efforts, efforts) {
+		t.Fatal("native settings write did not reach the machine-wide configuration", err)
+	}
+	for _, name := range []string{"chosen", "other"} {
+		p := filepath.Join(c.Runtime.AccountsDir, name, "config.toml")
+		if _, err := os.Readlink(p); err != nil {
+			t.Errorf("native settings write replaced account %s shared config link: %v", name, err)
+		}
 	}
 }
