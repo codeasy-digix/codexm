@@ -9,9 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
-	"github.com/codeasy-digix/codexm/internal/application"
 	"github.com/codeasy-digix/codexm/internal/config"
-	"github.com/codeasy-digix/codexm/internal/jobs"
+	"github.com/codeasy-digix/codexm/internal/nativecli"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"github.com/codeasy-digix/codexm/internal/shellinit"
 )
@@ -32,9 +31,8 @@ Account selection changes this shell's environment for subsequent native launche
 --set-default changes the shared native file login and preserves an explicit
 terminal selection. A new independent terminal uses that native default; child
 shells inherit their parent's selection. Running Codex/GUI/daemon connections are
-not restarted. These native selections never change codexm registration, priority,
-manager or fallback. Configure worker policy in the management panel. There is no
-separate codexm worker default. View live quotas with codexm accounts.
+not restarted. Account selection does not start a manager or change other running
+CLIs. Choose an account again when opening a chat. The local web can refresh usage.
 `
 
 const accountUsage = "usage: codexm account NAME [default|--set-default] [--login] [--browser|--device] | NAME --remove"
@@ -102,14 +100,10 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		if *login || *browser || *device || positionalDefault || *nativeDefault {
 			return errors.New("--remove cannot be combined with sign-in or default-login options")
 		}
-		latest, rev, err := config.Current(c.Path)
-		if err != nil {
+		if err := nativecli.RemoveAccount(c, name); err != nil {
 			return err
 		}
-		if _, err = application.RemoveAccount(ctx, latest, accounts.RemoveArgs{Account: name, Revision: rev}, jobs.ID()); err != nil {
-			return err
-		}
-		fmt.Printf("Removed registration: %s. Job assignments are detached or safely handed off. Each execution selects an available account by priority. Login files, native login and conversations were preserved.\n", name)
+		fmt.Printf("Removed registration: %s. Login files, native default, conversations and historical job records were preserved.\n", name)
 		return nil
 	}
 	var result *os.File
@@ -126,7 +120,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		return e
 	}
 	defer lock.Close()
-	r, e := cr.Resolve(ctx, c)
+	r, e := nativecli.Resolver(c)
 	if e != nil {
 		return e
 	}
@@ -140,7 +134,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		cmd.Dir = filepath.Join(config.Expand(c.Runtime.AccountsDir), name)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if e := cmd.Run(); e != nil {
-			return errors.New("login did not complete; native default and worker order were preserved")
+			return errors.New("login did not complete; existing native authentication was preserved")
 		}
 		if e := r.Command(ctx, name, "login", "status").Run(); e != nil {
 			return errors.New("login completed without a usable named account; native default was preserved")
@@ -155,7 +149,7 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		if backup != "" {
 			fmt.Printf("Previous login backup: %s\n", backup)
 		}
-		fmt.Println("An explicit terminal selection was preserved. Running Codex/GUI/daemon connections keep cached authentication until restarted. Codexm worker settings and existing jobs were not changed.")
+		fmt.Println("An explicit terminal selection was preserved. Running Codex/GUI/daemon connections keep cached authentication until restarted. Existing Codex sessions were not changed.")
 		return nil
 	}
 	if e := accounts.ValidateNativeAccount(c, name); e != nil {

@@ -1,3 +1,5 @@
+> 이 문서는 이전 관리형 codexm의 기록입니다. 현재 공개 실행 경로는 채팅 목록·계정·공식 CLI 인계로 축약했습니다. [현재 설계](native-cli-core.md)와 [README](../README.md)를 따르세요.
+
 # 배포 준비
 
 제품 저장소는 `codeasy-digix/codexm`이며 현재는 소스와 로컬 설치만 준비한다.

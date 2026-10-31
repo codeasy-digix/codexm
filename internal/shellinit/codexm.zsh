@@ -35,7 +35,7 @@ function codexm() {
         export CODEX_ACCOUNT="$_codexm_name" CODEX_HOME="$_codexm_home" \
           CODEX_SQLITE_HOME="$_codexm_shared" CODEX_SHARED_HOME="$_codexm_shared" \
           CODEX_ACCOUNTS_DIR="${_codexm_home:h}"
-        print -r -- "Native Codex account for this terminal: $_codexm_name. Native default and codexm worker settings were preserved."
+        print -r -- "Native Codex account for this terminal: $_codexm_name. Native default and running Codex sessions were preserved."
       else
         print -ru2 -- 'codexm: could not apply shell account selection; the terminal environment was preserved.'
         _codexm_exit=1

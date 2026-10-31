@@ -85,7 +85,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		}
 		for range 100 {
 			if exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+spec.Session).Run() != nil {
-				fmt.Fprintln(out, "Local web and bridge stopped. Managed jobs keep running.")
+				fmt.Fprintln(out, "Local web and bridge stopped. Native CLI terminals keep running.")
 				return nil
 			}
 			time.Sleep(100 * time.Millisecond)

@@ -1,3 +1,5 @@
+> 이 문서는 이전 관리형 codexm의 기록입니다. 현재 공개 실행 경로는 채팅 목록·계정·공식 CLI 인계로 축약했습니다. [현재 설계](native-cli-core.md)와 [README](../README.md)를 따르세요.
+
 > 이 문서는 초기 설계 기록을 포함합니다. 0.3의 현재 서비스·플러그인 사용법은 [README](../README.md)와 [로컬 플러그인](local-plugin.md)을 따릅니다. 신규 supervisor/worker는 tmux를 사용하지 않습니다.
 
 # codexm 작업 관리자

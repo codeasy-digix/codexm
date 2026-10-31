@@ -1,63 +1,12 @@
-# codexm 설정 예시. 실제 설정은 Git 밖의 사용자별 파일이다.
-# 최초 설정 시 ~/.config/codexm/config.toml을 만들고 선택한 관리자 계정을 저장한다.
-schema_version = 1
-
-[manager]
-# 빈 값이면 최초 선택 필수. 추천 계정이 있어도 사용자 선택 없이 확정하지 않는다.
-account = ""
-invocation = "on_demand"
-# 모델을 지정하지 않으면 선택한 계정에서 검증한 기존 설정을 사용하고 실제 값을 기록한다.
-max_input_chars = 16000
-max_calls_per_incident = 1
-max_calls_per_hour = 12
-decision_timeout_seconds = 120
-failure_cooldown_seconds = 600
-automatic_account_fallback = false
-
-[worker_accounts]
-# 현재 사용자 환경의 예시. 다른 환경에서는 등록된 계정으로 바꾼다.
-priority = ["account-work", "account-secondary", "account-main", "account-backup"]
-# 관리 설정의 예비 계정 정책. native 계정 선택과 별개이며 기존 작업 계정을 유지한다.
-default_account = "account-work"
-fallback_account = "account-backup"
-fallback_requires_all_primary_exhausted = true
-preferred_recheck_seconds = 600
-unknown_is_exhausted = false
-
-[supervisor]
-reconcile_interval_seconds = 30
-tmux_session = "codexm-supervisor"
-worker_session_prefix = "codexm-job-"
-exit_when_no_clients_and_no_pending_work = true
-
-[execution]
-# 초기 동시 실행 수 예시. 전체 Job 수나 계정 수의 고정 제한이 아니다.
-max_parallel_jobs = 2
-max_child_depth = 3
-workspace_write_policy = "exclusive"
-preserve_thread_settings_on_account_switch = true
-
-[completion]
-chat_on_turn_end = "idle"
-task_without_criteria_on_turn_end = "result_ready"
-goal_completion_source = "codex_goal"
-
-[ui]
-initial_view = "agents"
-show_input_target = true
-quit_action = "detach"
-
+# Compact codexm. Official Codex owns model/effort/approval and chat execution.
 [runtime]
-transport = "unix"
 shared_codex_home = "~/.codex"
 accounts_dir = "~/.codex-accounts"
-# 최초 검증한 공식 실행 파일과 보조 엔진을 여기에 보관한다. 자동 업데이트는 하지 않는다.
-engines_dir = "~/.local/share/codexm/engines"
-# codex_binary = "/ABSOLUTE/PATH/TO/OFFICIAL/codex"
+# codex_binary = "/absolute/path/to/official/codex" # optional; installed CLI by default
+# web_node_binary = "/absolute/path/to/node24"     # optional web only
 
 [storage]
 state_dir = "~/.local/state/codexm"
 
-[logging]
-# 기존 app-server로 조회하는 계정 전체 한도. 모델 호출 없음.
-usage_sample_seconds = 60
+[account_registry]
+removed = [] # hidden registrations; authentication remains in accounts_dir

@@ -38,7 +38,7 @@ INSERT INTO threads VALUES('existing-cli','한국어 대화','cli',0,2),('existi
 			t.Fatal(e)
 		}
 		os.Stdout = w
-		e = Main(append([]string{"--config", c.Path, "session", "list"}, args...))
+		e = Main(append([]string{"--config", c.Path, "list"}, args...))
 		w.Close()
 		os.Stdout = old
 		b, _ := io.ReadAll(r)
@@ -48,17 +48,17 @@ INSERT INTO threads VALUES('existing-cli','한국어 대화','cli',0,2),('existi
 		}
 		return string(b)
 	}
-	if s := read(); !strings.Contains(s, "Codex conversations: 2") || !strings.Contains(s, "existing-cli") || !strings.Contains(s, "existing-app") || strings.Contains(s, "{\n") {
+	if s := read("--archived"); !strings.Contains(s, "Codex conversations: 2") || !strings.Contains(s, "existing-cli") || !strings.Contains(s, "existing-app") || strings.Contains(s, "{\n") {
 		t.Fatal(s)
 	}
-	if s := read("--active-only", "--json"); !strings.Contains(s, "existing-cli") || strings.Contains(s, "existing-app") {
+	if s := read("--json"); !strings.Contains(s, "existing-cli") || strings.Contains(s, "existing-app") {
 		t.Fatal(s)
 	}
 	if s := read("--search", "한국어"); !strings.Contains(s, "한국어 대화") || strings.Contains(s, "existing-app") {
 		t.Fatal(s)
 	}
-	if s := read("--managed"); !strings.Contains(s, "Codex conversations: 0") {
-		t.Fatal(s)
+	if err := Main([]string{"--config", c.Path, "manage", "existing-cli"}); err == nil {
+		t.Fatal("retired management command accepted")
 	}
 	if _, err := os.Stat(c.StateDir()); !os.IsNotExist(err) {
 		t.Fatal("listing created manager DB/supervisor state", err)

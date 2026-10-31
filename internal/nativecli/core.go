@@ -1,0 +1,313 @@
+// Package nativecli lists local chats and hands execution to the official CLI.
+// It never starts a worker, owns a model turn, or changes native database rows.
+package nativecli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/catalog"
+	"github.com/codeasy-digix/codexm/internal/config"
+	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/store"
+	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/sys/unix"
+)
+
+var threadID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// Load accepts only the compact runtime/storage options. Old scheduling policy
+// remains on disk for existing workers but cannot affect new native launches.
+func Load(filename string) (config.Config, error) {
+	c := config.Defaults()
+	if filename == "" {
+		filename = config.DefaultPath()
+	}
+	c.Path = config.Expand(filename)
+	var selected struct {
+		Runtime struct {
+			Shared   string `toml:"shared_codex_home"`
+			Accounts string `toml:"accounts_dir"`
+			Binary   string `toml:"codex_binary"`
+			Node     string `toml:"web_node_binary"`
+		} `toml:"runtime"`
+		Storage struct {
+			State string `toml:"state_dir"`
+		} `toml:"storage"`
+		Registry struct {
+			Removed []string `toml:"removed"`
+		} `toml:"account_registry"`
+	}
+	b, err := os.ReadFile(c.Path)
+	if err != nil && !os.IsNotExist(err) {
+		return c, err
+	}
+	if len(b) > 0 {
+		if err = toml.Unmarshal(b, &selected); err != nil {
+			return c, err
+		}
+	}
+	for dst, value := range map[*string]string{&c.Runtime.SharedCodexHome: selected.Runtime.Shared, &c.Runtime.AccountsDir: selected.Runtime.Accounts, &c.Runtime.CodexBinary: selected.Runtime.Binary, &c.Runtime.WebNodeBinary: selected.Runtime.Node, &c.Storage.StateDir: selected.Storage.State} {
+		if value != "" {
+			if !filepath.IsAbs(config.Expand(value)) {
+				return c, errors.New("runtime and storage paths must be absolute")
+			}
+			*dst = value
+		}
+	}
+	c.AccountRegistry.Removed = selected.Registry.Removed
+	return c, nil
+}
+
+// Resolver uses the currently installed official command, not a manager engine
+// pin. Resolving npm's official launcher is shared with the existing account code.
+func Resolver(c config.Config) (cr.Resolver, error) {
+	if c.Runtime.CodexBinary == "" {
+		if p, err := exec.LookPath("codex"); err == nil {
+			c.Runtime.CodexBinary = p
+		}
+	}
+	return cr.Locate(c)
+}
+
+type Account struct {
+	Name    string `json:"name"`
+	Default bool   `json:"default"`
+	Current bool   `json:"current"`
+}
+
+func Accounts(c config.Config) ([]Account, error) {
+	names, err := accounts.SavedLogins(c)
+	if os.IsNotExist(err) {
+		err = nil
+	}
+	result := []Account{}
+	def := accounts.CurrentNickname(c, config.Expand(c.Runtime.SharedCodexHome), "")
+	cur := accounts.CurrentNickname(c, os.Getenv("CODEX_HOME"), "")
+	for _, n := range names {
+		hidden := false
+		for _, x := range c.AccountRegistry.Removed {
+			if x == n {
+				hidden = true
+				break
+			}
+		}
+		if hidden {
+			continue
+		}
+		result = append(result, Account{n, n == def, n == cur})
+	}
+	return result, err
+}
+
+type Launch struct {
+	Thread  string `json:"thread_id"`
+	Account string `json:"account"`
+	Cwd     string `json:"cwd"`
+	Session string `json:"session,omitempty"`
+	Pane    string `json:"pane,omitempty"`
+	At      int64  `json:"at"`
+	Binary  string `json:"binary"`
+	Config  string `json:"config"`
+	Ready   bool   `json:"ready"`
+	Error   string `json:"error,omitempty"`
+}
+
+func root(c config.Config) string { return filepath.Join(c.StateDir(), "native-cli") }
+func receiptPath(c config.Config, id string) string {
+	return filepath.Join(root(c), "last", id+".json")
+}
+func writeReceipt(c config.Config, l Launch) error {
+	b, err := json.Marshal(l)
+	if err != nil {
+		return err
+	}
+	return config.AtomicWrite(receiptPath(c, l.Thread), b, 0600)
+}
+func List(ctx context.Context, c config.Config) (catalog.List, error) {
+	list, err := catalog.Read(ctx, config.Expand(c.Runtime.SharedCodexHome))
+	if err != nil {
+		return list, err
+	}
+	prior := map[string]string{}
+	if db, e := store.ReadOnly(c.StateDir()); e == nil {
+		defer db.DB.Close()
+		if jobs, e := db.Jobs(); e == nil {
+			for _, j := range jobs {
+				prior[j.ThreadID] = j.Account
+			}
+		}
+	}
+	for i := range list.Sessions {
+		e := &list.Sessions[i]
+		e.Account = prior[e.ID]
+		if !threadID.MatchString(e.ID) {
+			continue
+		}
+		var l Launch
+		if b, e2 := os.ReadFile(receiptPath(c, e.ID)); e2 == nil && json.Unmarshal(b, &l) == nil && l.Ready {
+			e.Account = l.Account
+		}
+	}
+	return list, nil
+}
+
+func Plan(ctx context.Context, c config.Config, id, account string) (Launch, error) {
+	l := Launch{Thread: id, Account: account, At: time.Now().UnixMilli(), Config: c.Path}
+	if !threadID.MatchString(id) {
+		return l, errors.New("a complete chat UUID is required")
+	}
+	if account != "default" && (!config.Nickname.MatchString(account) || account == "") {
+		return l, errors.New("choose a saved account or default")
+	}
+	list, err := List(ctx, c)
+	if err != nil {
+		return l, err
+	}
+	found := false
+	for _, e := range list.Sessions {
+		if e.ID == id {
+			l.Cwd = e.Cwd
+			found = true
+			break
+		}
+	}
+	if !found {
+		return l, errors.New("chat is not in this machine's local conversation index")
+	}
+	if !filepath.IsAbs(l.Cwd) {
+		return l, errors.New("chat working directory is missing; restore the project before resuming")
+	}
+	if i, e := os.Stat(l.Cwd); e != nil || !i.IsDir() {
+		return l, fmt.Errorf("chat working directory is unavailable: %s", l.Cwd)
+	}
+	if account != "default" {
+		if err = accounts.ValidateNativeAccount(c, account); err != nil {
+			return l, err
+		}
+		if err = cr.EnsureAccountHome(c, account); err != nil {
+			return l, err
+		}
+	}
+	r, err := Resolver(c)
+	if err != nil {
+		return l, err
+	}
+	l.Binary = r.Binary
+	return l, nil
+}
+
+func environment(c config.Config, account string) []string {
+	if account == "default" {
+		account = ""
+	}
+	all := cr.Env(c, account, "")
+	out := make([]string, 0, len(all))
+	for _, s := range all {
+		k, _, _ := strings.Cut(s, "=")
+		if k != "CODEX_THREAD_ID" && k != "CODEX_TURN_ID" && !strings.HasPrefix(k, "CODEXM_JOB_") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Prepare uses the official archive/unarchive cycle requested for a handoff.
+// unarchive is not idempotent in Codex: active rows must be archived first.
+// Never edit a native DB, delete a lock, terminate another writer, or fork.
+func Prepare(ctx context.Context, c config.Config, l Launch) error {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	if !threadID.MatchString(l.Thread) {
+		return errors.New("invalid chat UUID")
+	}
+	gate := filepath.Join(root(c), "handoffs", l.Thread+".lock")
+	if err := os.MkdirAll(filepath.Dir(gate), 0700); err != nil {
+		return err
+	}
+	fd, err := unix.Open(gate, unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	for {
+		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != unix.EWOULDBLOCK {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	defer unix.Flock(fd, unix.LOCK_UN)
+	list, err := List(ctx, c)
+	if err != nil {
+		return err
+	}
+	found, archived := false, false
+	for _, e := range list.Sessions {
+		if e.ID == l.Thread {
+			found, archived = true, e.Archived
+			break
+		}
+	}
+	if !found {
+		return errors.New("chat no longer exists in the local index")
+	}
+	actions := []string{"unarchive"}
+	if !archived {
+		actions = append([]string{"archive"}, actions...)
+	}
+	for _, action := range actions {
+		cmd := exec.CommandContext(ctx, l.Binary, "--no-daemon", action, l.Thread)
+		cmd.Env = environment(c, l.Account)
+		cmd.Dir = l.Cwd
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			note := ""
+			if action == "archive" {
+				note = "; if another CLI/GUI owns this chat, stop or archive it there before retrying"
+			}
+			if action == "unarchive" {
+				note = "; the chat remains archived, retry official unarchive before resuming"
+			}
+			return fmt.Errorf("official %s failed; resume was not started%s: %w: %s", action, note, err, cr.SafeText(strings.TrimSpace(string(b))))
+		}
+	}
+	return nil
+}
+func ResumeArgs(l Launch) []string {
+	return []string{l.Binary, "--no-daemon", "--no-alt-screen", "resume", l.Thread}
+}
+func Resume(ctx context.Context, c config.Config, l Launch) error {
+	if err := Prepare(ctx, c, l); err != nil {
+		return err
+	}
+	l.Ready = true
+	if err := writeReceipt(c, l); err != nil {
+		return err
+	}
+	if err := os.Chdir(l.Cwd); err != nil {
+		return err
+	}
+	// Replace codexm: the official CLI owns terminal input, signals and exit code.
+	err := syscall.Exec(l.Binary, ResumeArgs(l), environment(c, l.Account))
+	l.Ready = false
+	_ = writeReceipt(c, l)
+	return err
+}

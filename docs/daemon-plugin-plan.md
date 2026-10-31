@@ -1,3 +1,5 @@
+> 이 문서는 이전 관리형 codexm의 기록입니다. 현재 공개 실행 경로는 채팅 목록·계정·공식 CLI 인계로 축약했습니다. [현재 설계](native-cli-core.md)와 [README](../README.md)를 따르세요.
+
 # codexm 데몬·로컬 ChatGPT 플러그인 전환 계획
 
 > 과거 계획 기록입니다. 아래 `.home`의 revision pin·제품 설치 호출 방식은

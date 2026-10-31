@@ -1,3 +1,5 @@
+//go:build legacy
+
 package cli
 
 import (
@@ -33,7 +35,9 @@ import (
 	"golang.org/x/term"
 )
 
-func Main(args []string) error {
+// legacyMain is retained for migration tests and historical maintenance only.
+// The public executable dispatches exclusively through compact.go.
+func legacyMain(args []string) error {
 	global := flag.NewFlagSet("codexm", flag.ContinueOnError)
 	cfg := global.String("config", "", "configuration file")
 	version := global.Bool("version", false, "print version")

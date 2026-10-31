@@ -80,6 +80,10 @@ func accountFixture(t *testing.T) config.Config {
 	if e := os.WriteFile(binary, body, 0700); e != nil {
 		t.Fatal(e)
 	}
+	c.Runtime.CodexBinary = binary
+	if e := c.Save(); e != nil {
+		t.Fatal(e)
+	}
 	engine := cr.Engine{Binary: binary, Version: "fixture", ProtocolChecked: true, Files: map[string]string{"official-fixture": fmtHash(body)}}
 	b, _ := json.Marshal(engine)
 	if e := config.AtomicWrite(filepath.Join(c.StateDir(), "engine.json"), b, 0600); e != nil {

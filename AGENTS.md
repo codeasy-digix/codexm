@@ -1,37 +1,39 @@
 # codexm
 
-- codexm owns management, accounts, logs and recovery. Keep the official `codex`
-  command unmodified. A thin `codexm` zsh function may select the current terminal's
-  native account; never wrap `codex`, replace its binary, or require daemon RPC for
-  native help, version, login, or execution. Native selection leaves worker policy alone.
-- Retain existing credentials, thread IDs, goal budgets and settings. Auth/history,
-  binaries, sockets and logs stay outside Git. Never print credentials or goal text.
-- Native account selection changes authentication only. Preserve existing shared
-  model/effort/desktop preferences and each account's model cache and GUI state.
-  Do not copy account state or synchronize server preferences to make GUI options
-  match: that would affect the same account on other devices.
-- Normal supervision is deterministic and makes no model calls. `/manager` is an
-  explicit separate request. The official engine powers both native TUI and plugin UI.
-- Persistent product services use user launchd/systemd units. Temporary long-running
-  test processes use named tmux sessions. Preserve existing active legacy workers;
-  clean up only owned temporary services, sessions and workers.
-- CLI, service, local ChatGPT plugin panels and the Meteor local web in `web/`
-  are one product. Share management policy in Go through `codexm bridge --stdio`.
-  The web binds loopback, authenticates HTTP/DDP, and owns no conversation database.
-  Use React/TypeScript, native HTML and small plain CSS files. Do not patch the
-  ChatGPT application bundle. Preserve work when the web or bridge exits.
-- Run `go test -race ./...`, `go vet ./...`, and relevant isolated native integration
-  for runtime changes. Account/library failure must never break official Codex.
-- Distribution is on hold, including archive/formula preparation. Do not create
-  releases/tags, publish npm packages, or update a live tap without a later explicit
-  release instruction. Commit and push reviewed source changes.
-
-- This repository alone owns product source, build, installation, updates and
-  operational docs. `.home` may register an already-installed command and load
-  shell integration; it must not pin/clone/build/install/update codexm or copy
-  its binaries into utility artifacts. See docs/deployment.md.
-- Cross-machine history-sync is retired. Do not restore its engine, services,
-  compatibility links or automatic history writes. Retain native conversations,
-  authentication and archived sync data. A stale invocation must fail closed.
-- Homebrew and other distribution work is on hold until a separate user request.
-  Continue source maintenance and local-only installation/verification.
+- The active product is a local conversation catalog, account selector and official
+  Codex CLI launcher. Keep `codex` native: never wrap/replace its binary or update
+  command. `codexm account` may change the current shell or the explicit native default.
+- Public entrypoints are in internal/cli/compact.go and internal/nativecli. Do not
+  start the old supervisor, workers, manager model, scheduler, account rotation,
+  watchdog, notifications or management plugin from the compact path. Prior
+  implementation and tests remain migration references, not active commands.
+  Legacy CLI files require `-tags legacy`; they are excluded from normal builds.
+- Native conversations are read-only catalog data. The only handoff mutations are
+  the official archive/unarchive commands for the explicitly selected thread.
+  Fail before resume if they fail. Never delete native writer locks, edit native
+  SQLite/rollouts, kill an external GUI/CLI, silently fork, or assume unarchive
+  guarantees takeover of a live writer. Preserve IDs, credentials, goals and budgets.
+- Account selection changes authentication only. Preserve shared model/effort
+  preferences and each account's GUI state and model cache. Never synchronize
+  account-server preferences or copy one account's state onto another.
+- The foreground launcher replaces itself with the installed official CLI. The
+  web launches that CLI in named codexm-cli-* tmux terminals, reads their output,
+  and forwards literal input. It does not interpret chat turns or run model logic.
+  Closing a web viewer must not stop the CLI. Never replay uncertain input.
+- The Meteor web stays authenticated and loopback-only. Its compact bridge methods
+  are an explicit allowlist. Render user/native output as text. No shell evaluation
+  of thread IDs, account names, input, directory names or terminal keys.
+- Keep running work and old metadata. During migration retire only verified idle
+  legacy product services; do not stop official Codex, GUI or unrelated tmux jobs.
+  Test processes use named tmux sessions and are cleaned up after verification.
+- Run Go race tests/vet, relevant isolated official-CLI tests, web typecheck/tests
+  and browser interaction checks. Use synthetic accounts/chats for handoff tests.
+  Report unsupported ownership cases instead of hiding failures.
+- This repository alone owns source, builds, installation, updates and product docs.
+  `.home` only registers an installed command and loads personal shell settings.
+  Never restore product cloning/pins/build/install/update helpers there.
+- Cross-machine history-sync is retired. Do not restore engines, service entries,
+  compatibility links or automatic history writes. Preserve archival data.
+- Installation and verification are local-Mac-only. Homebrew, archives/formula
+  preparation, releases/tags/npm and other-host codexm deployment are on hold.
+  Commit and push reviewed source changes; preserve concurrent edits and secrets.

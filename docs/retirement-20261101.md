@@ -42,23 +42,14 @@ CLI 표기 버전은 `0.6.2`이며 새 소스 빌드는 바이너리 해시별 �
 | 장비 | 확인한 상태 |
 |---|---|
 | Ubuntu `server` | 서비스 중지·정의 삭제·mask 완료, PID 0, inactive/dead |
-| 로컬 Mac | relay 프로세스 없음, 공개 실행 파일 없음, config disabled; root LaunchDaemon 제거 대기 |
-| `mac-secondary` | relay 프로세스 없음, 공개 실행 파일 없음, config disabled; root LaunchDaemon 제거 대기 |
+| 로컬 Mac | relay 프로세스 없음, 공개 실행 파일 없음, config disabled; root LaunchDaemon 정의 삭제·job 해제·자동 시작 비활성화 확인 |
+| `mac-secondary` | relay 프로세스 없음, 공개 실행 파일 없음, config disabled; root LaunchDaemon 정의 삭제·job 해제·자동 시작 비활성화 확인 |
 
-두 Mac에서는 기존 root job이 실행 파일을 찾지 못해 `spawn scheduled` / exit 78로
-남아 있었다. 이는 OS 서비스 제거 완료를 의미하지 않는다. 비대화형 sudo가 관리자
-인증을 요구하므로 아래 두 명령의 사용자 실행을 요청했다. 스크립트는 해당 job만
-bootout/disable하고 해당 plist만 삭제하며 대화 DB에 접근하지 않는다.
-
-```sh
-sudo ~/.local/state/codexm/migrations/20261101-remove-history-sync/remove-system-service.sh
-ssh -t mac-secondary 'sudo ~/.local/state/codexm/migrations/20261101-remove-history-sync/remove-system-service.sh'
-```
-
-실행 후 각 Mac에서 `launchctl print system/kr.digix.codex-history-sync`가 job을
-찾지 못하고, `/Library/LaunchDaemons/kr.digix.codex-history-sync.plist`가 없으며,
-`launchctl print-disabled system`에 해당 label이 disabled로 표시되는지 확인한다.
-이 확인 전에는 전체 서비스 제거를 완료했다고 보고하지 않는다.
+두 Mac의 root 서비스 삭제는 사용자 관리자 인증 후 확인했다.
+`launchctl print`에서 해당 job이 없고, root plist가 삭제됐으며,
+`launchctl print-disabled system`에서 해당 label이 disabled다.
+`nginx`도 추가로 점검했으며 동기화 서비스·설치 경로·실행 프로세스가 없었다.
+관리자 단계는 완료 상태다. 백업 스크립트와 영수증은 아래 위치에 보존한다.
 
 개별 장비의 config와 실행 경로는 해제했지만 원격 `.home` 전체 적용이나 codexm
 업데이트는 수행하지 않았다. 기존 동기화·인증·대화 저장소는 복구용으로 보존한다.

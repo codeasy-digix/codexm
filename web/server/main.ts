@@ -5,7 +5,7 @@ import { join, isAbsolute } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { LocalAuth } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
-import { bridgeContract } from "../imports/contracts/generated";
+import { bridgeContract } from "../imports/contracts/native";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
 const state = process.env.CODEXM_WEB_STATE;
@@ -22,10 +22,6 @@ const bridge = new BridgeClient(
 const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
 let capabilities: any;
-let watched = "";
-bridge.on("notification", (notice) => {
-  if (notice.method === "resync") watched = "";
-});
 const owner = (id?: string) => {
   try {
     return auth.require(id || "");
@@ -154,9 +150,6 @@ Meteor.onConnection((connection) => {
   connection.onClose(() => {
     connections.delete(connection.id);
     auth.disconnect(connection.id);
-    void bridge
-      .call("viewer.detach", { client_id: "web-" + connection.id })
-      .catch(() => {});
   });
 });
 Meteor.methods({
@@ -177,8 +170,6 @@ Meteor.methods({
     operation: string,
   ) {
     const browser = owner(this.connection?.id);
-    if (method === "viewer.heartbeat" || method === "viewer.detach")
-      params = { ...params, client_id: "web-" + this.connection!.id };
     if (
       typeof method !== "string" ||
       !params ||
@@ -238,21 +229,7 @@ Meteor.publish("codexm.state", function () {
         this.ready();
         ready = true;
       }
-      if (snapshot.state?.instance) {
-        const target = `${caps.generation}:${snapshot.state.instance}`;
-        if (watched !== target) {
-          watched = target;
-          try {
-            await bridge.call("watch", {
-              instance: snapshot.state.instance,
-              after: snapshot.state.sequence,
-            });
-          } catch (error) {
-            watched = "";
-            throw error;
-          }
-        }
-      }
+
     } catch (error) {
       if (!stopped) {
         if ((error as any).error === "authentication_required")

@@ -6,12 +6,12 @@
 
 | 항목 | 담당 |
 |---|---|
-| 계정·작업·웹·플러그인 구현 | codexm 소스의 `internal/`, `web/`, `plugin/` |
+| 채팅 목록·계정·공식 CLI 인계·웹 | codexm 소스의 `internal/cli/compact.go`, `internal/nativecli/`, `web/` |
 | 빌드·설치·업데이트 | codexm 소스의 `build.sh`, `build-web.sh`, `install.sh` |
 | CLI 셸 함수 | 제품의 `internal/shellinit/`; `codexm shell-init zsh`로 출력 |
 | 이미 설치된 명령과 의존성 목록 | `.home/manifests/home.json`의 외부 도구 등록 |
 | 개인 zsh 로드 설정 | `.home/config/codexm/shell.zsh`; 제품 함수를 로드하는 짧은 설정 |
-| 제품 서비스 | codexm의 사용자 launchd/systemd 관리 기능 |
+| 실행 생명주기 | 공식 CLI 직접 실행; 웹과 별도 CLI는 이름 있는 tmux 세션 |
 | 장비 간 history-sync | 제거. 코드·서비스·활성 환경 등록 없음 |
 
 `.home`에는 codexm source clone, revision pin, build/install/update 호출, 제품
@@ -39,9 +39,9 @@ codexm --version
 | `~/.local/bin/codexm` | 제품 설치기가 만드는 실행 링크 |
 | `~/.local/share/codexm/versions/…` | immutable Go 실행 파일·선택적 웹 번들 |
 | `~/.local/share/codexm/bin/codexm` | 선택된 설치 버전 링크 |
-| `~/.config/codexm/config.toml` | 사용자별 관리·계정 정책, Git 밖 |
+| `~/.config/codexm/config.toml` | 로컬 경로·계정 등록 설정, Git 밖; 이전 실행 정책은 읽지 않음 |
 | `~/.config/codexm/shell.zsh` | 개인 환경에서 사용하는 선택적 셸 로더 |
-| `~/.local/state/codexm/` | 관리 DB·로그·서비스 영수증·private 백업 |
+| `~/.local/state/codexm/` | native-cli 실행 영수증·웹 상태·과거 관리 DB·private 백업 |
 | `~/.codex/` | 공식 Codex 대화·공통 설정·기본 인증 연결 |
 | `~/.codex-accounts/<name>/` | 계정별 실제 인증; 역사적인 경로 이름을 유지 |
 | `~/.codex-history-sync/`, `~/.codex-sync/` | 제거한 기능의 기존 보관 자료; 자동 적용하지 않음 |
@@ -67,5 +67,10 @@ codexm --version
 relay 통합·`.home` pin/build 설명은 현재 정책이 아니다. 제거한 기능의 데이터 경계는
 [history-sync 제거](history-sync.md)를 따른다.
 
-소스 분리·로컬 설치·서비스 제거의 실제 확인 결과와 남은 관리자 단계는
+소스 분리·로컬 설치·서비스 제거의 실제 확인 결과는
 [2026-11-01 검증 기록](retirement-20261101.md)에 남긴다.
+
+현재 기능은 [공식 CLI 인계 구조](native-cli-core.md)다. 이전 supervisor/watchdog와
+관리 플러그인은 현재 설치의 구성 요소가 아니며 새 CLI에서 생성하거나 시작하지 않는다.
+과거 작업 DB와 설정 백업은 유지한다. 서비스는 실행 중인 작업이 없는 것을 확인한 뒤
+현재 로컬에서만 해제하고, 공식 Codex와 GUI는 재시작하지 않는다.
