@@ -6,6 +6,10 @@
   native help, version, login, or execution. Native selection leaves worker policy alone.
 - Retain existing credentials, thread IDs, goal budgets and settings. Auth/history,
   binaries, sockets and logs stay outside Git. Never print credentials or goal text.
+- Native account selection changes authentication only. Preserve existing shared
+  model/effort/desktop preferences and each account's model cache and GUI state.
+  Do not copy account state or synchronize server preferences to make GUI options
+  match: that would affect the same account on other devices.
 - Normal supervision is deterministic and makes no model calls. `/manager` is an
   explicit separate request. The official engine powers both native TUI and plugin UI.
 - Persistent product services use user launchd/systemd units. Temporary long-running

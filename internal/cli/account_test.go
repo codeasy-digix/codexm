@@ -171,6 +171,68 @@ func TestExplicitAccountDefaultFormsChangeNativeOnlyAcrossReloads(t *testing.T) 
 	}
 }
 
+func TestAccountSwitchPreservesSharedPreferencesAndEachAccountsState(t *testing.T) {
+	for _, mode := range []string{"terminal", "--set-default", "default"} {
+		t.Run(mode, func(t *testing.T) {
+			c := accountFixture(t)
+			files := map[string][]byte{
+				filepath.Join(c.Runtime.SharedCodexHome, "config.toml"):              []byte("# machine preferences\nmodel = 'gpt-6.1-sol'\nmodel_reasoning_effort = 'max'\ncli_auth_credentials_store = 'file'\n[desktop]\nenabled-reasoning-efforts = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']\n"),
+				filepath.Join(c.Runtime.SharedCodexHome, ".codex-global-state.json"): []byte(`{"electron-persisted-atom-state":{"composer-recent-model-configurations-v1":[{"model":"gpt-6.1-sol","reasoningEffort":"max"}]}}`),
+				filepath.Join(c.Runtime.SharedCodexHome, "models_cache.json"):        []byte(`{"identity":"native-default","models":[]}`),
+			}
+			for _, name := range []string{"account-secondary", "account-main"} {
+				accountHome := filepath.Join(c.Runtime.AccountsDir, name)
+				files[filepath.Join(accountHome, "models_cache.json")] = []byte(`{"identity":"` + name + `","models":[]}`)
+				files[filepath.Join(accountHome, ".codex-global-state.json")] = []byte(`{"account-specific-state":"` + name + `"}`)
+			}
+			for p, b := range files {
+				if err := os.WriteFile(p, b, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, p := range []string{c.Path, filepath.Join(c.Runtime.AccountsDir, "account-secondary", "auth.json"), filepath.Join(c.Runtime.AccountsDir, "account-main", "auth.json")} {
+				b, err := os.ReadFile(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				files[p] = b
+			}
+			assertPreserved := func() {
+				t.Helper()
+				for p, want := range files {
+					got, err := os.ReadFile(p)
+					if err != nil || !bytes.Equal(got, want) {
+						t.Fatalf("account selection changed existing preferences, account state or credentials: %s (%v)", p, err)
+					}
+				}
+				for _, name := range []string{"account-secondary", "account-main"} {
+					got, err := os.Readlink(filepath.Join(c.Runtime.AccountsDir, name, "config.toml"))
+					if err != nil || got != filepath.Join(c.Runtime.SharedCodexHome, "config.toml") {
+						t.Fatal("account selection split shared machine preferences", err)
+					}
+				}
+			}
+			for _, name := range []string{"account-secondary", "account-main", "account-secondary"} {
+				args := []string{"--config", c.Path, "account", name}
+				if mode == "terminal" {
+					prepareShellResult(t)
+				} else {
+					args = append(args, mode)
+				}
+				if err := Main(args); err != nil {
+					t.Fatal(err)
+				}
+				assertPreserved()
+			}
+			prepareShellResult(t)
+			if err := Main([]string{"--config", c.Path, "account", "cancelled", "--login", "--device"}); err == nil {
+				t.Fatal("cancelled login unexpectedly succeeded")
+			}
+			assertPreserved()
+		})
+	}
+}
+
 func TestInvalidAccountArgumentsFailBeforeLoginOrSettingsChange(t *testing.T) {
 	for _, test := range []struct {
 		name string
