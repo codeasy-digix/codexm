@@ -1,3 +1,7 @@
+> Superseded intermediate record: later on 2026-11-01 the user removed history-sync
+> and all `.home` product build/install integration. Current policy is in
+> [deployment](deployment.md) and [history-sync retirement](history-sync.md).
+
 # 2026-11-01 제품 소스·설치 통합 검증
 
 제품 구현 기준은 `c1de7d9`이다. 계정·작업 관리와 선택적 history relay가 한 저장소와

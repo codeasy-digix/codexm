@@ -10,13 +10,11 @@ case "$target_arch" in aarch64) target_arch=arm64 ;; x86_64) target_arch=amd64 ;
 case "$target_os/$target_arch" in darwin/arm64|darwin/amd64|linux/arm64|linux/amd64) ;; *) echo 'Unsupported platform' >&2; exit 2 ;; esac
 build=false
 web_bundle=
-history_sync_compat=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --build) build=true ;;
     --web) shift; web_bundle=${1:?--web needs an absolute built bundle directory} ;;
-    --history-sync-compat) history_sync_compat=true ;;
-    *) echo 'Usage: ./install.sh [--build] [--web /absolute/bundle] [--history-sync-compat]' >&2; exit 2 ;;
+    *) echo 'Usage: ./install.sh [--build] [--web /absolute/bundle]' >&2; exit 2 ;;
   esac
   shift
 done
@@ -43,10 +41,8 @@ mkdir -p "$install_root/versions" "$install_root/bin" "$link_dir"
 stage=$(mktemp -d "$install_root/.install-XXXXXX")
 old_current=
 old_public=
-old_compat=
 switched=false
 public_switched=false
-compat_switched=false
 complete=false
 restore_link() {
   restore_target=$1
@@ -58,7 +54,6 @@ restore_link() {
 }
 cleanup() {
   if ! $complete; then
-    if $compat_switched; then restore_link "$link_dir/codex-history-sync" "$old_compat"; fi
     if $public_switched; then restore_link "$link_dir/codexm" "$old_public"; fi
   fi
   if $switched && ! $complete; then
@@ -67,7 +62,7 @@ cleanup() {
       case "$target_os" in darwin) mv -fh "$install_root/bin/.rollback-$$" "$install_root/bin/codexm" ;; *) mv -fT "$install_root/bin/.rollback-$$" "$install_root/bin/codexm" ;; esac
     else rm -f "$install_root/bin/codexm"; fi
   fi
-  rm -f "$install_root/bin/.codexm-$$" "$link_dir/.codexm-$$" "$link_dir/.codex-history-sync-$$"
+  rm -f "$install_root/bin/.codexm-$$" "$link_dir/.codexm-$$"
   rm -rf "$stage"
 }
 trap cleanup EXIT HUP INT TERM
@@ -107,13 +102,6 @@ fi
 for entry in "$install_root/bin/codexm" "$link_dir/codexm"; do
   if [ -e "$entry" ] && [ ! -L "$entry" ]; then echo "Preserved non-symlink entrypoint: $entry" >&2; exit 1; fi
 done
-if $history_sync_compat; then
-  if [ -e "$link_dir/codex-history-sync" ] && [ ! -L "$link_dir/codex-history-sync" ]; then
-    echo "Preserved existing history relay binary: $link_dir/codex-history-sync (back it up before opting into the compatibility link)." >&2
-    exit 1
-  fi
-  if [ -L "$link_dir/codex-history-sync" ]; then old_compat=$(readlink "$link_dir/codex-history-sync"); fi
-fi
 if [ -L "$install_root/bin/codexm" ]; then old_current=$(readlink "$install_root/bin/codexm"); fi
 if [ -L "$link_dir/codexm" ]; then old_public=$(readlink "$link_dir/codexm"); fi
 # A failed migration must not switch either public entrypoint.
@@ -124,10 +112,5 @@ switched=true
 ln -s "$install_root/bin/codexm" "$link_dir/.codexm-$$"
 case "$target_os" in darwin) mv -fh "$link_dir/.codexm-$$" "$link_dir/codexm" ;; *) mv -fT "$link_dir/.codexm-$$" "$link_dir/codexm" ;; esac
 public_switched=true
-if $history_sync_compat; then
-  ln -s "$link_dir/codexm" "$link_dir/.codex-history-sync-$$"
-  case "$target_os" in darwin) mv -fh "$link_dir/.codex-history-sync-$$" "$link_dir/codex-history-sync" ;; *) mv -fT "$link_dir/.codex-history-sync-$$" "$link_dir/codex-history-sync" ;; esac
-  compat_switched=true
-fi
 complete=true
 printf 'Installed codexm %s: %s\n' "$version" "$link_dir/codexm"

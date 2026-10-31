@@ -9,9 +9,8 @@ go run ./cmd/package
 
 이 명령은 네 플랫폼(macOS/Linux × ARM64/AMD64)의 `codexm`만 빌드하고
 `dist/prepared/`에 압축 파일, `SHA256SUMS`, Homebrew 공식과 npm 디렉터리를 만든다.
-history-sync Go 엔진은 같은 `codexm` 바이너리의 선택적 하위 명령으로 포함한다.
-공식 Codex 실행 파일·인증·대화·개인 relay 설정은 패키지에 포함하지 않는다.
-설치 시 동기화·서비스 시작은 없으며 옛 `codex-history-sync` 호환 이름은 명시적 옵션이다.
+history-sync는 제거되어 코드나 실행 파일에 포함하지 않는다.
+공식 Codex 실행 파일·인증·대화도 패키지에 포함하지 않는다.
 준비된 모든 진입점의 이름은 `codexm`이다. `codex` 파일이나 셸 함수를 설치하지 않는다.
 
 Homebrew 공식은 검증한 실제 빌드 해시를 사용한다. 공식이 가리키는 GitHub Release는
@@ -28,8 +27,11 @@ release/tap은 이 준비 작업에서 삭제하지 않는다. 공식 `@openai/c
 독립 설치는 `./install.sh --build`를 사용한다. 정식 release 이후 `./install.sh`는
 GitHub archive의 SHA-256을 검사한 다음 버전을 선택한다. 실패한 다운로드나 충돌은
 현재 설치를 보존한다. 로컬 소스 빌드는 실행 파일 hash가 포함된 별도 immutable 경로를
-사용해 다음 개발 빌드와 정식 Release가 충돌하지 않는다. `.home`은 Git revision을
-고정해 이 저장소의 설치기를 호출한다.
+사용해 다음 개발 빌드와 정식 Release가 충돌하지 않는다. `.home`은 이 과정에 관여하지 않는다.
+제품 소스의 빌드·설치기는 이 저장소에서만 실행한다.
 
-소스/배치 소유권과 기존 시스템 서비스 전환은 [배포 관리](deployment.md)를 따른다.
-`.home`은 제품 바이너리를 자체 home-tools artifact로 복제하거나 구형 계정 도구를 복구하지 않는다.
+소스/설치 소유권은 [환경 관리](deployment.md)를 따른다.
+`.home`은 제품 소스 pin/clone/build/install/update나 바이너리 배포를 수행하지 않는다.
+
+2026-11-01 사용자 지시: Homebrew 등 배포 작업은 정리가 끝난 뒤 별도 요청 전까지
+진행하지 않는다. 현재 작업은 소스 정리와 로컬 설치·검증에 한정한다.

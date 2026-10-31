@@ -22,14 +22,16 @@
   ChatGPT application bundle. Preserve work when the web or bridge exits.
 - Run `go test -race ./...`, `go vet ./...`, and relevant isolated native integration
   for runtime changes. Account/library failure must never break official Codex.
-- Distribution is preparation only. Build local archives with `go run ./cmd/package`;
-  do not create releases/tags, publish npm packages, or update a live tap without
-  a later explicit release instruction. Commit and push reviewed source changes.
+- Distribution is on hold, including archive/formula preparation. Do not create
+  releases/tags, publish npm packages, or update a live tap without a later explicit
+  release instruction. Commit and push reviewed source changes.
 
-- This repository is the single owner of history-sync, shell integration, product
-  installation, services and operational documentation. `.home` only pins a
-  revision and declares personal machine settings; never copy product source or
-  relay binaries into its utility artifacts. See docs/deployment.md.
-- History sync is opt-in and independent of account/worker startup. Preserve its
-  fail-closed schema and writer guards; a source migration does not authorize
-  applying pending history. Never run a second service beside a legacy system unit.
+- This repository alone owns product source, build, installation, updates and
+  operational docs. `.home` may register an already-installed command and load
+  shell integration; it must not pin/clone/build/install/update codexm or copy
+  its binaries into utility artifacts. See docs/deployment.md.
+- Cross-machine history-sync is retired. Do not restore its engine, services,
+  compatibility links or automatic history writes. Retain native conversations,
+  authentication and archived sync data. A stale invocation must fail closed.
+- Homebrew and other distribution work is on hold until a separate user request.
+  Continue source maintenance and local-only installation/verification.

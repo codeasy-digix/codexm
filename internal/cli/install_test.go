@@ -177,37 +177,18 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 	if target, _ := os.Readlink(entry); target != current {
 		t.Fatal("failed link replacement changed public entry", target)
 	}
-	// Existing system relays are only adopted explicitly, after a backup.
+	// A removed option cannot recreate a legacy relay entrypoint.
 	if err := os.Remove(filepath.Join(bin, "mv")); err != nil {
 		t.Fatal(err)
 	}
-	compat := filepath.Join(repo, "entrypoint", "codex-history-sync")
-	write(compat, []byte("legacy relay preserved"), 0700)
+	before, _ := os.Readlink(current)
 	if err := runSource("--history-sync-compat"); err == nil {
-		t.Fatal("old relay binary was overwritten")
+		t.Fatal("retired install option accepted")
 	}
-	if b, _ := os.ReadFile(compat); string(b) != "legacy relay preserved" {
-		t.Fatal("old relay changed")
+	if target, _ := os.Readlink(current); target != before {
+		t.Fatal("rejected option changed installed product")
 	}
-	if err := os.Remove(compat); err != nil {
-		t.Fatal(err)
-	}
-	if err := runSource("--history-sync-compat"); err != nil {
-		t.Fatal(err)
-	}
-	if target, _ := os.Readlink(compat); target != entry {
-		t.Fatalf("relay does not use the product binary: %s", target)
-	}
-	beforeCompat, _ := os.Readlink(current)
-	write(local, append(binary, []byte("# yet another development build\n")...), 0700)
-	write(filepath.Join(bin, "mv"), []byte("#!/bin/sh\ncase \"$*\" in *entrypoint/.codex-history-sync-*) exit 7 ;; esac\nexec "+realMV+" \"$@\"\n"), 0700)
-	if err := runSource("--history-sync-compat"); err == nil {
-		t.Fatal("failed compatibility replacement accepted")
-	}
-	if target, _ := os.Readlink(current); target != beforeCompat {
-		t.Fatal("compatibility failure did not roll back product")
-	}
-	if target, _ := os.Readlink(compat); target != entry {
-		t.Fatal("compatibility failure damaged previous link")
+	if _, err := os.Lstat(filepath.Join(repo, "entrypoint", "codex-history-sync")); !os.IsNotExist(err) {
+		t.Fatal("legacy entrypoint recreated")
 	}
 }

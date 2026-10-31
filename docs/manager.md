@@ -302,17 +302,17 @@ TUI 창이 닫혔다는 사실만으로 app-server와 실행 중인 턴이 종�
 ## home 저장소와 로컬 상태
 
 제품 소스와 빌드·설치 절차는 독립 `codeasy-digix/codexm` 저장소가 원본이다.
-`~/.home`은 고정한 소스 revision의 복구와 설치 호출, 환경 설명과 설정 예시를
-관리한다. `manifests/home.json`이 의존성·설정·상태·doctor 검사를 등록하며,
+`~/.home`은 이미 설치한 명령의 등록과 개인 셸 로더만 관리한다.
+`manifests/home.json`이 의존성·설정·상태·doctor 검사를 등록하며,
 `~/.local/bin/codexm` 실행 링크는 독립 설치기가 소유한다.
 
 | 경로 | 용도 | Git 추적 |
 | --- | --- | --- |
 | `codeasy-digix/codexm` | Go 소스, 상태 스키마, 빌드·설치·배포 준비 | 예 |
-| `~/.home/tools/codexm/` | 독립 소스 복구·빌드·설치 호출 | 예 |
-| `~/.home/docs/codexm.md` | 동작과 개발 설계 | 예 |
-| `~/.home/docs/infos/info-codexm.md` | 환경 복구와 설치 계약 | 예 |
-| `~/.home/templates/codexm/config.example.toml` | 계정 정책과 최초 설정 예시 | 예 |
+| `~/.home/config/codexm/shell.zsh` | 설치된 제품의 셸 함수 로드 | 예 |
+| `~/.home/docs/codexm.md` | 제품 문서를 가리키는 안내 | 예 |
+| `~/.home/docs/infos/info-codexm.md` | 개인 셸 연결과 제품 문서 안내 | 예 |
+| `codeasy-digix/codexm/config.example.toml` | 계정 정책과 최초 설정 예시 | 예 |
 | `~/.local/share/codexm/versions/<version>/<platform>/codexm` | 설치된 실행 파일 | 아니오 |
 | `~/.local/share/codexm/engines/<hash>/` | 보관한 공식 Codex와 보조 엔진, SHA-256 영수증 | 아니오 |
 | `~/.local/bin/codexm` | 선택한 설치 버전을 가리키는 진입점 | 아니오 |
@@ -341,10 +341,9 @@ codexm/
 `~/.config/codexm` 전체를 `.managed-paths`로 연결하지 않는다. 최초 선택과 장비별
 실행 설정이 의도치 않게 저장소 파일을 수정하지 않도록 설정 예시에서 별도로 생성한다.
 사용자가 공통 정책을 백업하려면 인증과 실행 상태를 제외한 명시적인 내보내기를 제공한다.
-독립 소스는 `./install.sh --build`로 설치한다. `.home`은
-`config/home/codexm-revision.txt`의 Git commit을 고정해 그 설치기를 호출한다.
-현재는 배포 준비만 하므로 새 Release/tap/npm 게시가 없다. `.home`은 설치된
-codexm을 보존하며 실행 파일의 선택·업데이트는 독립 설치기가 소유한다.
+독립 소스는 `./install.sh --build`로 설치한다. `.home`은 제품 소스를 다운로드하거나
+revision을 고정하지 않으며 빌드·설치·업데이트를 호출하지 않는다.
+현재 배포 작업은 보류 상태다. 실행 파일의 선택·업데이트는 제품 설치기가 소유한다.
 진행 중인 supervisor·작업은 실행 경로와 엔진을 유지한다.
 
 ## Codex 업데이트와 버전 보관

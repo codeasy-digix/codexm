@@ -1,7 +1,0 @@
-{
-  "node": "my-machine",
-  "home": "~/.codex",
-  "store": "~/.codex-history-sync/v2",
-  "interval_seconds": 120,
-  "enabled": false
-}

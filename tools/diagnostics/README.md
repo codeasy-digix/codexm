@@ -7,6 +7,6 @@ installed public command. Snapshots remain outside Git in the selected native
 home's `auth-switch-audit/`. Do not commit account data or generated snapshots.
 
 The account helper and Python history/archive implementation were retired.
-Use `codexm account`, official `codex resume`, and `codexm history-sync` for current
-commands. Historical code can be recovered from the pre-consolidation Git refs;
+Use `codexm account` and official `codex resume` for current commands.
+Cross-machine history-sync is removed. Historical code can be recovered from the pre-consolidation Git refs;
 do not restore old shell wrappers to the executable path.
