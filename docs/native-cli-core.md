@@ -85,3 +85,26 @@ Go 전체 race/vet, 공식 CLI 격리 테스트, 계정 설정 보존 회귀, �
 
 테스트용 tmux 세션은 검증 후 종료한다. 실제 사용자 채팅의 archive/resume을 실행하지
 않았다. 웹 화면은 터미널의 텍스트 뷰이며 모든 터미널 단축키를 구현한 에뮬레이터는 아니다.
+
+## 로컬 적용 기록
+
+구현 커밋 `c0ded48`을 main에 반영하고 제품의 `install.sh --build --web ...`로 설치했다.
+설치된 바이너리는 같은 소스의 재빌드와 바이트 단위로 일치했다. 표기 버전은 0.6.2를
+유지하며 공개 배포 버전으로 발행하지 않았다.
+
+- 로컬 supervisor/watchdog에 실행 중인 worker가 없음을 확인한 뒤 두 user LaunchAgent를
+  해제·비활성화하고 정의 파일은 백업으로 옮겼다. 공식 Codex·GUI는 종료하지 않았다.
+- 공식 `codex --no-daemon plugin remove codexm@local-personal --json`으로 옛 관리 플러그인
+  캐시를 제거하고, 이전 제품의 uninstall로 개인 marketplace 등록만 제거했다.
+- codexm 설정은 필요한 runtime/storage 값만 남겼다. 이전 설정·설치 경로·서비스·플러그인
+  등록은 private migration 폴더에 보존했다. 기존 관리 DB는 그대로 둔다.
+- 기본/이름별 인증 파일의 대상·내용과 공식 설정의 플러그인 외 항목이 유지됐음을
+  확인했다. 실행 중 공식 프로그램이 갱신하는 모델 캐시는 과거 파일로 덮어쓰지 않았다.
+- 설치된 `doctor/status/list`, 보관 목록, 구형 명령 거부와 prompt hook no-op을 확인했다.
+  확인 당시 로컬 채팅은 638개(보관 90개)였으며 조회 전후 관리 DB 내용은 동일했다.
+- `codex`는 공식 실행 파일, `codexm`은 제품 셸 함수로 새 zsh에서도 구분됐다.
+  기존 `.home`의 SSH·에디터 미커밋 변경은 보존했다. 테스트용 tmux는 모두 종료했다.
+
+설치 바이너리 SHA-256: `6bac903f5ef2ad3ad9d75c235d9c1e890c075e7c5417a1a38034c80a08023dbe`.
+웹 번들 digest: `8cadcccf9ff906d1c75dd992363f98f58fdeb53709d1251d538d22b83d529a84`.
+다른 장비의 codexm 설치·Homebrew·release/tag/npm 배포는 하지 않았다.
