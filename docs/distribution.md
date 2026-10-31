@@ -9,7 +9,9 @@ go run ./cmd/package
 
 이 명령은 네 플랫폼(macOS/Linux × ARM64/AMD64)의 `codexm`만 빌드하고
 `dist/prepared/`에 압축 파일, `SHA256SUMS`, Homebrew 공식과 npm 디렉터리를 만든다.
-공식 Codex 실행 파일·인증·대화·history-sync는 패키지에 포함하지 않는다.
+history-sync Go 엔진은 같은 `codexm` 바이너리의 선택적 하위 명령으로 포함한다.
+공식 Codex 실행 파일·인증·대화·개인 relay 설정은 패키지에 포함하지 않는다.
+설치 시 동기화·서비스 시작은 없으며 옛 `codex-history-sync` 호환 이름은 명시적 옵션이다.
 준비된 모든 진입점의 이름은 `codexm`이다. `codex` 파일이나 셸 함수를 설치하지 않는다.
 
 Homebrew 공식은 검증한 실제 빌드 해시를 사용한다. 공식이 가리키는 GitHub Release는
@@ -28,3 +30,6 @@ GitHub archive의 SHA-256을 검사한 다음 버전을 선택한다. 실패한 
 현재 설치를 보존한다. 로컬 소스 빌드는 실행 파일 hash가 포함된 별도 immutable 경로를
 사용해 다음 개발 빌드와 정식 Release가 충돌하지 않는다. `.home`은 Git revision을
 고정해 이 저장소의 설치기를 호출한다.
+
+소스/배치 소유권과 기존 시스템 서비스 전환은 [배포 관리](deployment.md)를 따른다.
+`.home`은 제품 바이너리를 자체 home-tools artifact로 복제하거나 구형 계정 도구를 복구하지 않는다.

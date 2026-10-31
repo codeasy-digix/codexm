@@ -18,6 +18,7 @@ import (
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/daemon"
 	"github.com/codeasy-digix/codexm/internal/display"
+	"github.com/codeasy-digix/codexm/internal/historysynccli"
 	"github.com/codeasy-digix/codexm/internal/jobs"
 	"github.com/codeasy-digix/codexm/internal/panelcommand"
 	"github.com/codeasy-digix/codexm/internal/plugin"
@@ -53,6 +54,16 @@ func Main(args []string) error {
 	if len(args) > 0 {
 		command = args[0]
 		args = args[1:]
+	}
+	// The optional relay has its own JSON configuration and lifecycle. Account
+	// configuration, the manager daemon and native Codex are not prerequisites.
+	if command == "history-sync" {
+		if *cfg != "" {
+			return errors.New("use codexm history-sync --config PATH for the relay configuration")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return historysynccli.Run(ctx, args, os.Stdin, os.Stdout)
 	}
 	// Shell startup must not depend on a valid manager config or any daemon.
 	if command == "shell-init" {
@@ -516,6 +527,8 @@ func help() {
 codexm [--config FILE]                  Interactive task list / first-run setup
 codexm web [status|stop|logs]            Local browser management (loopback only)
 codexm bridge --stdio                  Versioned local web connection
+codexm history-sync status|plan|conflicts  Optional history relay (explicit only)
+codexm history-sync service --help      Independent OS service lifecycle
 codexm account [NAME] [--login]         Native terminal account / new-terminal default
 codexm shell-init zsh                  Parent-shell adapter (source its output)
 codexm daemon watch|unwatch|status     Token-free official daemon recovery

@@ -8,6 +8,38 @@ import (
 	"testing"
 )
 
+func TestReloadRetiresOnlyLegacyCodexWrapper(t *testing.T) {
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("requires zsh")
+	}
+	dir := t.TempDir()
+	adapter := filepath.Join(dir, "shell.zsh")
+	if err := os.WriteFile(adapter, []byte(Zsh), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\nprintf 'native:<%s>\\n' \"$1\"\nexit 17\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	script := `
+codex() { command codex-accounts __native "$@"; }
+codex_account() { return 93; }
+export CODEX_HOME=/existing/account CODEX_ACCOUNT=chosen
+source "$ADAPTER"
+(( ! $+functions[codex] && ! $+functions[codex_account] )) || exit 71
+[[ "$CODEX_HOME:$CODEX_ACCOUNT" == /existing/account:chosen ]] || exit 72
+codex 'preserve spaces'
+[[ $? -eq 17 ]] || exit 73
+codex() { print -r -- custom-user-function; }
+source "$ADAPTER"
+[[ "$(codex)" == custom-user-function ]] || exit 74
+`
+	cmd := exec.Command("zsh", "-f", "-c", script)
+	cmd.Env = append(os.Environ(), "ADAPTER="+adapter, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("legacy retirement: %v: %s", err, out)
+	}
+}
+
 func TestResultRefusesCollisionsAndUnsafeParents(t *testing.T) {
 	dir := t.TempDir()
 	os.Chmod(dir, 0700)

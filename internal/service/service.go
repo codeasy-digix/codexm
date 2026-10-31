@@ -48,6 +48,9 @@ type Status struct {
 }
 
 func (m Manager) kind() string {
+	if m.Kind == "history-sync" {
+		return "history-sync"
+	}
 	if m.Kind == "watchdog" {
 		return "watchdog"
 	}
@@ -131,6 +134,9 @@ func (m Manager) Definition(platform string) ([]byte, error) {
 		mode = "__daemon-watchdog"
 	}
 	args := []string{m.Self, "--config", m.Config.Path, mode}
+	if m.kind() == "history-sync" {
+		args = []string{m.Self, "history-sync", "--config", m.Config.Path, "daemon"}
+	}
 	if platform == "darwin" {
 		var a strings.Builder
 		for _, v := range args {

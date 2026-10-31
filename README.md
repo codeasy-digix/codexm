@@ -44,7 +44,7 @@ codexm                            # 작업 목록 TUI
 
 부모 환경은 Go 자식만으로 바꿀 수 없으므로 얇은 **codexm** zsh 함수가 필요합니다.
 공식 **codex** 실행 파일·인수·출력·종료 코드는 그대로 사용합니다. `.home` 설치에서는
-새 터미널에 자동 로드되며, 이미 열린 터미널은 `source ~/.codex_rc` 한 번이면 됩니다.
+새 터미널에 자동 로드되며, 이미 열린 터미널은 `source <(command codexm shell-init zsh)` 한 번이면 됩니다.
 일반 설치에서는 위 `source <(...)`를 `.zshrc`에 넣으세요. 셸 통합이 없으면 성공한
 전환처럼 표시하지 않고 로드 방법을 안내합니다. 현재 지원하는 셸은 zsh입니다.
 
@@ -207,7 +207,7 @@ codexm web stop                    # 웹·브리지만 종료, 작업 유지
 
 codexm 실행 파일을 업데이트한 뒤 `codexm service upgrade`로 관리 서비스만 교체합니다. 기존 worker를 보존하며 실패 시 이전 서비스 정의로 돌아갑니다. 플러그인은 `codexm plugin install` 후 공식 플러그인 설치/새로고침을 다시 수행합니다.
 
-설정은 `~/.config/codexm/config.toml`, 작업 DB와 로그는 `~/.local/state/codexm`입니다. 인증·대화·실행 상태는 Git에 보관하지 않습니다. `~/.home`은 독립 저장소의 고정 설치 버전과 로컬 셸 통합만 관리합니다.
+설정은 `~/.config/codexm/config.toml`, 작업 DB와 로그는 `~/.local/state/codexm`입니다. 인증·대화·실행 상태는 Git에 보관하지 않습니다. `~/.home`은 고정 설치 버전·셸 로더·장비별 배치 선언을 관리합니다. 제품 구현과 운영 문서의 원본은 이 저장소입니다.
 
 ```sh
 go test -race ./...
@@ -217,3 +217,15 @@ codexm doctor --json
 
 현재는 배포 준비 단계입니다. Brew 공식·npm 패키지·네 플랫폼 압축 파일은 로컬에서
 생성하며 게시하지 않습니다. [배포 구조](docs/distribution.md)를 참고하세요.
+
+## 소스와 설치 관리
+
+계정·작업 관리뿐 아니라 선택적 `codexm history-sync`와 서비스 관리도 이 저장소가
+소유합니다. `.home`과 옛 `codex-accounts` 프로젝트 없이 설치·실행할 수 있습니다.
+소스, XDG 설치 경로, 장비 설정과 Git 밖 데이터의 경계는
+[배포·환경 관리](docs/deployment.md), 동기화 명령·기존 서비스 호환·현재 제한은
+[history-sync](docs/history-sync.md)를 기준으로 관리합니다.
+
+`~/.codex-accounts`는 실제 인증 데이터를 보존하기 위해 유지하는 경로입니다.
+퇴역한 프로그램의 설치 폴더가 아닙니다. 대화 DB·토큰·GUI 설정은 이번 정리에서
+이동하거나 삭제하지 않습니다. 설치만으로 sync를 시작하거나 실패 중인 대화를 적용하지 않습니다.

@@ -1,4 +1,4 @@
-# codexm 0.2 설정 예시. 실제 설정은 Git 밖의 사용자별 파일이다.
+# codexm 설정 예시. 실제 설정은 Git 밖의 사용자별 파일이다.
 # 최초 설정 시 ~/.config/codexm/config.toml을 만들고 선택한 관리자 계정을 저장한다.
 schema_version = 1
 
@@ -17,7 +17,7 @@ automatic_account_fallback = false
 [worker_accounts]
 # 현재 사용자 환경의 예시. 다른 환경에서는 등록된 계정으로 바꾼다.
 priority = ["account-work", "account-secondary", "account-main", "account-backup"]
-# codexm account NAME으로 저장. 기존 작업 계정은 유지한다.
+# 관리 설정의 예비 계정 정책. native 계정 선택과 별개이며 기존 작업 계정을 유지한다.
 default_account = "account-work"
 fallback_account = "account-backup"
 fallback_requires_all_primary_exhausted = true

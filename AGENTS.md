@@ -25,3 +25,11 @@
 - Distribution is preparation only. Build local archives with `go run ./cmd/package`;
   do not create releases/tags, publish npm packages, or update a live tap without
   a later explicit release instruction. Commit and push reviewed source changes.
+
+- This repository is the single owner of history-sync, shell integration, product
+  installation, services and operational documentation. `.home` only pins a
+  revision and declares personal machine settings; never copy product source or
+  relay binaries into its utility artifacts. See docs/deployment.md.
+- History sync is opt-in and independent of account/worker startup. Preserve its
+  fail-closed schema and writer guards; a source migration does not authorize
+  applying pending history. Never run a second service beside a legacy system unit.

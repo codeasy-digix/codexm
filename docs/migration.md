@@ -1,3 +1,6 @@
+> 2026-10-12의 역사 기록입니다. 이후 계정 선택 기능과 history-sync 소유권이 변경되었습니다.
+> 현재 구조는 [배포 관리](deployment.md), [history-sync](history-sync.md), README를 따릅니다.
+
 # codexm 독립 제품 이동 점검 (2026-10-12)
 
 `.home`의 `73ba838:tools/codexm`을 subtree split하여 원본 이력을 보존했다.

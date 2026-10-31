@@ -115,8 +115,8 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 	write(filepath.Join(repo, "build.sh"), []byte("#!/bin/sh\ncp \"$CODEXM_TEST_LOCAL_BINARY\" \"$3\"\n"), 0700)
 	local := filepath.Join(repo, "local-binary")
 	write(local, binary, 0700)
-	runSource := func() error {
-		cmd := exec.Command("sh", script, "--build")
+	runSource := func(extra ...string) error {
+		cmd := exec.Command("sh", append([]string{script, "--build"}, extra...)...)
 		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEXM_INSTALL_ROOT="+installRoot, "CODEXM_LINK_DIR="+filepath.Join(repo, "entrypoint"), "CODEXM_TEST_LOCAL_BINARY="+local)
 		if out, e := cmd.CombinedOutput(); e != nil {
 			return fmt.Errorf("%w: %s", e, out)
@@ -176,5 +176,38 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 	}
 	if target, _ := os.Readlink(entry); target != current {
 		t.Fatal("failed link replacement changed public entry", target)
+	}
+	// Existing system relays are only adopted explicitly, after a backup.
+	if err := os.Remove(filepath.Join(bin, "mv")); err != nil {
+		t.Fatal(err)
+	}
+	compat := filepath.Join(repo, "entrypoint", "codex-history-sync")
+	write(compat, []byte("legacy relay preserved"), 0700)
+	if err := runSource("--history-sync-compat"); err == nil {
+		t.Fatal("old relay binary was overwritten")
+	}
+	if b, _ := os.ReadFile(compat); string(b) != "legacy relay preserved" {
+		t.Fatal("old relay changed")
+	}
+	if err := os.Remove(compat); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSource("--history-sync-compat"); err != nil {
+		t.Fatal(err)
+	}
+	if target, _ := os.Readlink(compat); target != entry {
+		t.Fatalf("relay does not use the product binary: %s", target)
+	}
+	beforeCompat, _ := os.Readlink(current)
+	write(local, append(binary, []byte("# yet another development build\n")...), 0700)
+	write(filepath.Join(bin, "mv"), []byte("#!/bin/sh\ncase \"$*\" in *entrypoint/.codex-history-sync-*) exit 7 ;; esac\nexec "+realMV+" \"$@\"\n"), 0700)
+	if err := runSource("--history-sync-compat"); err == nil {
+		t.Fatal("failed compatibility replacement accepted")
+	}
+	if target, _ := os.Readlink(current); target != beforeCompat {
+		t.Fatal("compatibility failure did not roll back product")
+	}
+	if target, _ := os.Readlink(compat); target != entry {
+		t.Fatal("compatibility failure damaged previous link")
 	}
 }
