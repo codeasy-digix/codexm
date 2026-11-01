@@ -3,6 +3,7 @@ import { Meteor } from "meteor/meteor";
 import { WebApp } from "meteor/webapp";
 import { join, isAbsolute } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { LocalAuth, LoginError } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
 import { bridgeContract } from "../imports/contracts/native";
@@ -117,7 +118,13 @@ async function body(req: import("node:http").IncomingMessage) {
         if (req.url === "/auth/ticket")
           res.end(JSON.stringify({ ticket: auth.ticket(session) }));
         else if (req.url === "/auth/logout") {
-          auth.logout(session);
+          const browser = auth.logout(session);
+          // Revoke web access immediately; cancel only this browser's owned
+          // pending auth helper, never a conversation or another browser's login.
+          if (browser) void bridge.call("login.status", {}, browser).then(result => {
+            if (result.status === "pending" || result.status === "verifying")
+              return bridge.call("login.cancel", { login_id: result.login_id }, browser, randomUUID(), true);
+          }).catch(() => { /* Bridge exit also cleans owned login helpers. */ });
           res.setHeader(
             "Set-Cookie",
             auth.cookie("", true),

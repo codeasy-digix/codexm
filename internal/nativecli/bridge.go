@@ -25,7 +25,7 @@ type Method struct {
 	Model    bool   `json:"model"`
 }
 
-var Methods = []Method{{"capabilities", false, false}, {"snapshot", false, false}, {"accounts.refresh", false, false}, {"terminal.open", true, false}, {"terminal.read", false, false}, {"terminal.input", true, false}, {"terminal.close", true, false}}
+var Methods = []Method{{"capabilities", false, false}, {"snapshot", false, false}, {"accounts.refresh", false, false}, {"accounts.remove", true, false}, {"accounts.setDefault", true, false}, {"login.start", true, false}, {"login.status", false, false}, {"login.cancel", true, false}, {"terminal.open", true, false}, {"terminal.read", false, false}, {"terminal.input", true, false}, {"terminal.close", true, false}}
 
 type Request struct {
 	Version   int             `json:"protocolVersion"`
@@ -47,6 +47,8 @@ type Params struct {
 	Session string `json:"session"`
 	Text    string `json:"text"`
 	Key     string `json:"key"`
+	Mode    string `json:"mode"`
+	LoginID string `json:"login_id"`
 }
 
 func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any, error) {
@@ -103,6 +105,20 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 			s := accounts.New(r).Read(quotaContext, p.Account)
 			s.AccountID = ""
 			return s, nil
+		case "accounts.remove", "accounts.setDefault":
+			if err := requireRegisteredAccount(c, p.Account); err != nil {
+				return nil, err
+			}
+			lock, err := cr.AccountLoginLock(c, p.Account)
+			if err != nil {
+				return nil, err
+			}
+			defer lock.Close()
+			if r.Method == "accounts.remove" {
+				return true, RemoveAccount(c, p.Account)
+			}
+			_, err = accounts.SetNativeDefault(c, p.Account)
+			return true, err
 		case "terminal.open":
 			return Open(ctx, c, self, p.Thread, p.Account)
 		case "terminal.read":
@@ -117,6 +133,10 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 	if !spec.Mutation {
 		return call()
 	}
+	return mutate(c, r, call, true)
+}
+
+func mutate(c config.Config, r Request, call func() (any, error), persistResult bool) (any, error) {
 	if r.Owner == "" || !regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`).MatchString(r.Operation) {
 		return nil, errors.New("authenticated owner and operation id required")
 	}
@@ -143,6 +163,9 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 		if saved.Error != "" {
 			return nil, errors.New(saved.Error)
 		}
+		if !persistResult {
+			return nil, errors.New("sign-in outcome is no longer in memory; inspect status before starting a new request")
+		}
 		return saved.Result, nil
 	}
 	if e != nil {
@@ -160,7 +183,7 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 	op.Done = true
 	if e != nil {
 		op.Error = cr.SafeText(e.Error())
-	} else {
+	} else if persistResult {
 		op.Result, e = json.Marshal(result)
 		if e != nil {
 			op.Error = e.Error()
@@ -174,6 +197,8 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 }
 
 func Serve(ctx context.Context, c config.Config, self string, in io.Reader, out io.Writer) error {
+	logins := newLoginSession(ctx)
+	defer logins.Close()
 	s := bufio.NewScanner(in)
 	s.Buffer(make([]byte, 4096), 512*1024)
 	encoder := json.NewEncoder(out)
@@ -182,7 +207,21 @@ func Serve(ctx context.Context, c config.Config, self string, in io.Reader, out 
 		if e := json.Unmarshal(s.Bytes(), &r); e != nil {
 			return e
 		}
-		result, e := Dispatch(ctx, c, self, r)
+		current := c
+		var e error
+		if _, statErr := os.Stat(c.Path); statErr == nil {
+			current, e = Load(c.Path)
+		} else if !os.IsNotExist(statErr) {
+			e = statErr
+		}
+		var result any
+		if e == nil {
+			if r.Method == "login.start" || r.Method == "login.status" || r.Method == "login.cancel" {
+				result, e = logins.Dispatch(current, r)
+			} else {
+				result, e = Dispatch(ctx, current, self, r)
+			}
+		}
 		reply := map[string]any{"protocolVersion": 1, "id": r.ID, "result": result}
 		if e != nil {
 			delete(reply, "result")

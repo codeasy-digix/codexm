@@ -1,10 +1,14 @@
 # Manual metadata diagnostic
 
-`python3 tools/diagnostics/codex_state_audit.py --help` exposes the existing
-filesystem-metadata snapshot/diff helper previously kept in `.home`.
-It is a developer-only, optional Python tool, not a CLI runtime dependency or an
-installed public command. Snapshots remain outside Git in the selected native
-home's `auth-switch-audit/`. Do not commit account data or generated snapshots.
+The former `codex_state_audit.py` is replaced by the Rust library and CLI in
+`crates/state-audit`. Use `cargo build --release --locked -p codexm-state-audit`,
+then `./target/release/codexm-state-audit --help` from the repository root.
+No Python runtime is needed. It remains an explicit developer diagnostic, not
+automatic account/sync logic or an installed public product command.
+
+Snapshots default to XDG state outside the native Codex home. Old schema-1 JSON
+is still accepted for explicit diff. Do not commit snapshots or native data.
+Build, usage and migration boundaries are in [Rust development](../../docs/rust.md).
 
 The account helper and Python history/archive implementation were retired.
 Use `codexm account` and official `codex resume` for current commands.

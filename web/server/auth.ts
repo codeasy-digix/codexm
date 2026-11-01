@@ -209,6 +209,7 @@ export class LocalAuth {
     this.connections.delete(connection);
   }
   logout(session: string) {
+    const browser = this.sessions.get(session)?.owner;
     this.sessions.delete(session);
     this.save();
     for (const [id, c] of this.connections)
@@ -216,5 +217,6 @@ export class LocalAuth {
         this.connections.delete(id);
         c.close();
       }
+    return browser;
   }
 }

@@ -55,6 +55,7 @@ type LoginBroker struct {
 	closeOnce sync.Once
 	timeout   time.Duration
 	start     func(context.Context, config.Config, string) (loginTransport, error)
+	publish   func(config.Config, string, string, []byte) error
 }
 
 type loginSession struct {
@@ -82,7 +83,7 @@ type authFingerprint struct {
 
 func NewLoginBroker(ctx context.Context, c config.Config) *LoginBroker {
 	ctx, cancel := context.WithCancel(ctx)
-	b := &LoginBroker{ctx: ctx, cancel: cancel, config: c, sessions: map[string]*loginSession{}, timeout: 15 * time.Minute, start: startLoginTransport}
+	b := &LoginBroker{ctx: ctx, cancel: cancel, config: c, sessions: map[string]*loginSession{}, timeout: 15 * time.Minute, start: startLoginTransport, publish: publishLogin}
 	go func() { <-ctx.Done(); b.Close() }()
 	return b
 }
@@ -401,7 +402,7 @@ func (b *LoginBroker) verify(s *loginSession) {
 		message = "named account home changed during sign-in; existing credentials were preserved"
 	} else if e != nil || now != s.before {
 		message = "saved credentials changed during sign-in; refresh and try again"
-	} else if e = publishLogin(b.config, s.status.Account, s.target, data); e != nil {
+	} else if e = b.publish(b.config, s.status.Account, s.target, data); e != nil {
 		message = "new credentials could not be saved; existing credentials were preserved"
 	}
 	if message == "" {
@@ -576,6 +577,10 @@ func startLoginTransport(ctx context.Context, c config.Config, home string) (log
 	} else {
 		return nil, e
 	}
+	return startResolvedLoginTransport(ctx, r, home)
+}
+
+func startResolvedLoginTransport(ctx context.Context, r cr.Resolver, home string) (loginTransport, error) {
 	// Keep the process alive long enough to acknowledge account/login/cancel
 	// after the broker's session context is canceled. Initialization still uses
 	// the session context; Close is the sole owner of this detached child.

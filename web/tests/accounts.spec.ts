@@ -1,0 +1,81 @@
+import { test, expect } from "@playwright/test";
+import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+const url = process.env.CODEXM_WEB_TEST_URL!;
+const root = process.env.CODEXM_WEB_ACCOUNT_FIXTURE;
+const passwordFile = process.env.CODEXM_WEB_TEST_PASSWORD_FILE!;
+test.skip(!root || !passwordFile, "isolated account management fixture required");
+
+test("web account add, isolated authentication, default, removal and cancellation", async ({page}) => {
+  await page.goto(url);
+  await page.getByLabel("아이디",{exact:true}).fill("fixture");
+  await page.getByLabel("비밀번호",{exact:true}).fill(readFileSync(passwordFile,"utf8").trim());
+  await page.getByRole("button",{name:"로그인",exact:true}).click();
+  await page.getByRole("button",{name:"계정",exact:true}).click();
+  await page.getByLabel("계정 닉네임").fill("gamma");
+  await page.getByRole("button",{name:"추가 / 로그인",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"gamma 로그인"})).toBeVisible();
+  await expect(page.getByText("FIXTURE-CODE")).toBeVisible();
+  expect(existsSync(join(root!,"accounts/gamma/auth.json"))).toBe(false);
+  writeFileSync(join(root!,"complete-login"),"fixture");
+  const gamma=page.getByRole("region",{name:"gamma 계정",exact:true});
+  await expect(gamma).toBeVisible({timeout:20000});
+  await expect(page.getByRole("status")).toContainText("gamma 계정 로그인이 완료");
+  const credential=readFileSync(join(root!,"accounts/gamma/auth.json"));
+  const nativeConfig=readFileSync(join(root!,"shared/config.toml"));
+  const history=readFileSync(join(root!,"shared/state_5.sqlite"));
+  page.once("dialog",d=>d.accept());
+  await gamma.getByRole("button",{name:"기본 계정으로 지정",exact:true}).click();
+  await expect(gamma.getByRole("button",{name:"기본 계정으로 지정",exact:true})).toBeDisabled();
+  expect(readFileSync(join(root!,"shared/auth.json"))).toEqual(credential);
+  page.once("dialog",d=>d.accept());
+  await gamma.getByRole("button",{name:"등록 해제",exact:true}).click();
+  await expect(gamma).toHaveCount(0);
+  expect(readFileSync(join(root!,"accounts/gamma/auth.json"))).toEqual(credential);
+  expect(readFileSync(join(root!,"shared/auth.json"))).toEqual(credential);
+  expect(readFileSync(join(root!,"shared/config.toml"))).toEqual(nativeConfig);
+  expect(readFileSync(join(root!,"shared/state_5.sqlite"))).toEqual(history);
+  // Same nickname can be restored through verified login, without worker policy.
+  await page.getByRole("button",{name:"추가 / 로그인",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"gamma 로그인"})).toBeVisible();
+  writeFileSync(join(root!,"complete-login"),"fixture");
+  await expect(gamma).toBeVisible({timeout:20000});
+  await expect(page.getByRole("heading",{name:"gamma 로그인"})).toHaveCount(0);
+  await page.getByLabel("인증 방식").selectOption("browser");
+  await gamma.getByRole("button",{name:"재로그인",exact:true}).click();
+  await expect(page.getByRole("link",{name:"공식 로그인 페이지 열기"})).toHaveAttribute("href",/auth.openai.com\/oauth/);
+  await page.getByRole("button",{name:"로그인 취소",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"gamma 로그인"})).toHaveCount(0);
+  expect(readFileSync(join(root!,"accounts/gamma/auth.json"))).toEqual(credential);
+  await gamma.getByRole("button",{name:"재로그인",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"gamma 로그인"})).toBeVisible();
+  await page.getByRole("button",{name:"로그아웃",exact:true}).click();
+  await expect.poll(()=>readdirSync(join(root!,"accounts")).filter(n=>n.startsWith(".codexm-login-")).length).toBe(0);
+  const receipts=join(root!,"state/native-cli/operations");
+  for(const file of readdirSync(receipts)) expect(readFileSync(join(receipts,file),"utf8")).not.toMatch(/FIXTURE-CODE|auth.openai.com/);
+});
+
+test("failed archive displays cause and preserves explicit retry and disabled input",async({page})=>{
+  await page.goto(url);
+  await page.getByLabel("아이디",{exact:true}).fill("fixture");
+  await page.getByLabel("비밀번호",{exact:true}).fill(readFileSync(passwordFile,"utf8").trim());
+  await page.getByRole("button",{name:"로그인",exact:true}).click();
+  await page.getByRole("button",{name:/한글 프로젝트 계획/}).click();
+  writeFileSync(join(root!,"fail-archive"),"fixture");
+  try {
+    await page.getByRole("button",{name:"Codex CLI로 이어가기"}).click();
+    const alert=page.getByRole("alert");
+    await expect(alert).toContainText("보관 단계 실패",{timeout:20000});
+    await expect(alert).toContainText("원래 화면");
+    await expect(page.getByRole("button",{name:"CLI에 전달",exact:true})).toBeDisabled();
+    await alert.getByText("오류 상세",{exact:true}).click();
+    await expect(alert).toContainText("official archive failed;");
+    rmSync(join(root!,"fail-archive"));
+    await page.getByRole("button",{name:"다시 시도",exact:true}).click();
+    await expect(page.getByRole("log")).toContainText("Official CLI fixture history",{timeout:20000});
+    await expect(alert).toHaveCount(0);
+    page.once("dialog",d=>d.accept());
+    await page.getByRole("button",{name:"터미널 종료",exact:true}).click();
+    await page.getByRole("button",{name:"로그아웃",exact:true}).click();
+  } finally {rmSync(join(root!,"fail-archive"),{force:true});}
+});

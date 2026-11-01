@@ -576,11 +576,12 @@ func TestOfficialLoginBrokerPreviewAndCancelUseOnlyEmptyIsolatedAuth(t *testing.
 	c.Runtime.CodexBinary = os.Getenv("CODEXM_TEST_ENGINE")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	b := NewLoginBroker(ctx, c)
+	b := NewNativeLoginBroker(ctx, c)
 	defer b.Close()
 	var observed *observedLoginTransport
+	start := b.start
 	b.start = func(ctx context.Context, c config.Config, home string) (loginTransport, error) {
-		transport, e := startLoginTransport(ctx, c, home)
+		transport, e := start(ctx, c, home)
 		if e != nil {
 			return nil, e
 		}

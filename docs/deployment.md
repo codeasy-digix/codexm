@@ -30,6 +30,8 @@ codexm --version
 ```
 
 소스 빌드에는 Go가 필요하다. 빌드한 CLI 실행에는 Python/Node/`.home`이 필요 없다.
+수동 메타데이터 진단 도구는 별도 [Rust workspace](rust.md)에서 빌드한다. 제품 설치기에
+진단용 컴파일러나 Python 의존성을 추가하지 않는다. Rust 소스·빌드도 이 저장소가 소유한다.
 공식 Codex는 별도 선행 도구다. 선택적 Meteor 웹의 빌드·실행에는 해당 Node가 필요하다.
 웹을 사용 중인 로컬 설치를 갱신할 때는 검증한 번들을 `--web /absolute/bundle`로 함께
 지정한다. 제품 설치기는 공식 `codex` 파일·업데이트·GUI 번들을 변경하지 않는다.

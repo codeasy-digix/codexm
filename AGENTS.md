@@ -16,6 +16,11 @@
 - Account selection changes authentication only. Preserve shared model/effort
   preferences and each account's GUI state and model cache. Never synchronize
   account-server preferences or copy one account's state onto another.
+- Preselect a chat's last known registered account, or native `default` when
+  unknown/removed. Never overwrite an explicit selection during polling. Web
+  account management may use a temporary isolated official auth server for
+  add/re-login; never start conversation workers or restore retired policy.
+  Keep login URLs/codes browser-owner-scoped and out of logs/durable receipts.
 - The foreground launcher replaces itself with the installed official CLI. The
   web launches that CLI in named codexm-cli-* tmux terminals, reads their output,
   and forwards literal input. It does not interpret chat turns or run model logic.
@@ -34,6 +39,14 @@
 - This repository alone owns source, builds, installation, updates and product docs.
   `.home` only registers an installed command and loads personal shell settings.
   Never restore product cloning/pins/build/install/update helpers there.
+- Prefer Rust for new native modules and standalone data/file processing tools.
+  Reuse the root Cargo workspace, locked dependencies, and `crates/` libraries.
+  Keep TypeScript for Meteor/React; do not add Go/Rust subprocesses or FFI to a hot
+  path solely to change languages. Replace an old implementation in a bounded,
+  tested unit; measure before claiming speedups. Existing active Go code remains
+  until its replacement passes behavior and installation checks. See docs/rust.md.
+- Run cargo fmt/check, locked workspace tests and clippy for Rust changes. The
+  state audit is manual developer diagnostics, not automatic account/sync logic.
 - Cross-machine history-sync is retired. Do not restore engines, service entries,
   compatibility links or automatic history writes. Preserve archival data.
 - Installation and verification are local-Mac-only. Homebrew, archives/formula

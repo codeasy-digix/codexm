@@ -51,7 +51,7 @@ test("one-time local access, origin checks, ticket replay, owner continuity and 
     const late = auth.ticket(session);
     now += 31_000;
     assert.throws(() => auth.authenticate("late", late, () => {}));
-    auth.logout(session);
+    assert.equal(auth.logout(session), first);
     assert.throws(() => auth.require("reconnected"));
     now += 8 * 3600000;
     assert.equal(restored.session("codexm_session=" + cookie), null);

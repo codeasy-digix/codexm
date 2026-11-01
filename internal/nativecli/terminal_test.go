@@ -55,3 +55,21 @@ func TestClosedSessionReceiptDoesNotUseTmuxCurrentPane(t *testing.T) {
 		t.Fatalf("closed terminal resolved to another tmux pane: %+v %v", screen, err)
 	}
 }
+
+func TestDeadOwnedPaneExposesExitCodeAndHandoffError(t *testing.T) {
+	c := fixture(t)
+	h := os.Getenv("HOME")
+	l := Launch{Session: "codexm-cli-0123456789abcdef", Thread: fixtureID, Account: "default", Pane: "%123", Error: "official archive failed; resume was not started"}
+	if err := saveSession(c, l); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\nhas-session) exit 0 ;;\ndisplay-message) printf 'codexm-cli-0123456789abcdef|1|1\\n' ;;\ncapture-pane) printf 'Pane is dead (status 1)\\n\\n\\n' ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", h+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := Screen(context.Background(), c, l.Session)
+	if err != nil || got.Alive || got.ExitCode == nil || *got.ExitCode != 1 || got.Launch.Error != l.Error || got.Text != "Pane is dead (status 1)" {
+		t.Fatalf("lost native failure metadata: %+v %v", got, err)
+	}
+}

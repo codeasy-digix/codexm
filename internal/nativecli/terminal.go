@@ -167,10 +167,11 @@ func RunSession(ctx context.Context, c config.Config, filename string) error {
 }
 
 type Terminal struct {
-	Launch Launch `json:"launch"`
-	Alive  bool   `json:"alive"`
-	Text   string `json:"text"`
-	Attach string `json:"attach"`
+	Launch   Launch `json:"launch"`
+	Alive    bool   `json:"alive"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Text     string `json:"text"`
+	Attach   string `json:"attach"`
 }
 
 func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
@@ -184,7 +185,7 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 	if _, e = tmux(ctx, "has-session", "-t", "="+s); e != nil {
 		return t, nil
 	}
-	value, e := tmux(ctx, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_dead}")
+	value, e := tmux(ctx, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_dead}|#{pane_dead_status}")
 	if e != nil {
 		if _, exists := tmux(ctx, "has-session", "-t", "="+s); exists == nil {
 			return t, errors.New("recorded native pane is missing from an existing session; inspect it manually")
@@ -192,10 +193,15 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 		return t, nil
 	}
 	parts := strings.Split(strings.TrimSpace(value), "|")
-	if len(parts) != 2 || parts[0] != s {
+	if (len(parts) != 2 && len(parts) != 3) || parts[0] != s {
 		return t, errors.New("native pane no longer belongs to the recorded session")
 	}
 	t.Alive = parts[1] == "0"
+	if !t.Alive && len(parts) == 3 {
+		if code, err := strconv.Atoi(parts[2]); err == nil {
+			t.ExitCode = &code
+		}
+	}
 	t.Text, e = tmux(ctx, "capture-pane", "-p", "-J", "-t", l.Pane, "-S", "-1500")
 	// capture-pane pads short output with the empty viewport rows. Do not scroll
 	// the browser past all visible text just to display those blank rows.

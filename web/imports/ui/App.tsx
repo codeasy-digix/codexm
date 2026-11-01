@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
-import { shouldSend, remaining, type SessionEntry } from "../contracts/types";
+import { shouldSend, type SessionEntry } from "../contracts/types";
+import { preferredAccount, terminalFailure } from "../contracts/selection";
+import { Accounts } from "./Accounts";
 import "./styles/native.css";
 
 export function App() {
@@ -13,20 +15,25 @@ export function App() {
   const [account, setAccount] = useState(""), [session, setSession] = useState("");
   const [terminal, setTerminal] = useState<any>(null), [message, setMessage] = useState("");
   const [error, setError] = useState(""), [busy, setBusy] = useState(false);
-  const [usage, setUsage] = useState<Record<string, any>>({});
   const epoch = useRef(0), log = useRef<HTMLPreElement>(null), stick = useRef(true);
   const list = useRef<HTMLDivElement>(null), listOffset = useRef(0);
   const drafts = useRef<Record<string, string>>({});
   const accounts: any[] = snapshot.accounts || [];
+  const failure = terminalFailure(terminal);
   const chats: SessionEntry[] = (snapshot.sessions || []).filter((x: SessionEntry) =>
     (archived || !x.archived) && `${x.title} ${x.id} ${x.cwd} ${x.account || ""}`.toLowerCase().includes(query.toLowerCase()));
   function choose(chat: SessionEntry) {
     if (selected) drafts.current[selected.id] = message;
     listOffset.current = list.current?.scrollTop || 0;
-    epoch.current++; setSelected(chat); setAccount(""); setSession(""); setTerminal(null);
+    epoch.current++; setSelected(chat); setAccount(preferredAccount(chat.account, accounts)); setSession(""); setTerminal(null);
     setMessage(drafts.current[chat.id] || ""); setError(""); setDetails(true); stick.current = true;
   }
   useEffect(() => { if (!details && list.current) list.current.scrollTop = listOffset.current; }, [details]);
+  useEffect(() => {
+    if (snapshot.accounts && account && account !== "default" && !accounts.some(a => a.name === account)) {
+      epoch.current++; setAccount("default"); setSession(""); setTerminal(null);
+    }
+  }, [snapshot.accounts, account]);
   useEffect(() => {
     if (!session || !access.ready) return;
     let stopped = false, timer: ReturnType<typeof setTimeout>;
@@ -48,7 +55,7 @@ export function App() {
     finally { setBusy(false); }
   }
   async function input(key?: string) {
-    if (!session || busy || (!key && !message.trim())) return;
+    if (!session || busy || !terminal?.alive || !terminal?.launch?.ready || (!key && !message.trim())) return;
     const generation = epoch.current, sent = message;
     setBusy(true); setError("");
     try {
@@ -77,11 +84,7 @@ export function App() {
     <button aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>계정</button>
   </nav><span>공식 Codex CLI</span><button onClick={() => { void logout().then(() => { epoch.current++; setSelected(null); setTerminal(null); setSession(""); setMessage(""); setDetails(false); drafts.current = {}; setError(""); }).catch(e => setError(e.message)); }}>로그아웃</button></header>
   {(error || data.connectionError) && <p role="alert" className="error">{error || data.connectionError}</p>}
-  {view === "accounts" ? <main className="account-page"><h1>계정</h1><p>로그인과 기본 계정 변경은 <code>codexm account</code>를 사용합니다. 자동 계정 교체는 사용하지 않습니다.</p>
-    {accounts.map(a => <section key={a.name}><strong>{a.name}</strong> {a.default && <span>기본 계정</span>} {a.current && <span>현재 환경</span>}
-      <button disabled={busy} onClick={async () => { setBusy(true); try { const result = await call("accounts.refresh", { account: a.name }); setUsage(v => ({ ...v, [a.name]: result })); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>사용량 확인</button>
-      {usage[a.name] && <p>{usage[a.name].plan || ""} · 5h {remaining(usage[a.name].rateLimits?.primary)} · week {remaining(usage[a.name].rateLimits?.secondary)} {usage[a.name].error}</p>}
-    </section>)}<pre>codexm account NAME{`\n`}codexm account NAME --login --browser{`\n`}codexm account NAME --set-default</pre></main> : <main className={`workspace${details ? " show-details" : ""}`}>
+  {view === "accounts" ? <Accounts accounts={accounts} /> : <main className={`workspace${details ? " show-details" : ""}`}>
     <aside><label>채팅 검색<input value={query} onChange={e => setQuery(e.target.value)} placeholder="제목, 프로젝트, 계정, ID" /></label>
       <label className="checkbox"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} />보관된 채팅 포함</label>
       <p>{chats.length}개 · 모든 프로젝트</p><div className="chat-list" ref={list} aria-label="채팅 목록">{chats.map(chat => <button key={chat.id} className={selected?.id === chat.id ? "selected" : ""} onClick={() => choose(chat)}>
@@ -90,11 +93,12 @@ export function App() {
     <section className="chat"><button className="mobile-back" onClick={() => setDetails(false)}>← 채팅 목록</button><h1>{selected?.title || "채팅을 선택하세요"}</h1>
       {selected ? <><p className="metadata">{selected.id} · 이전 계정: {selected.account || "기록 없음"}<br />{selected.cwd}</p>
         <div className="launch"><label>이번에 사용할 계정<select value={account} onChange={e => { epoch.current++; setAccount(e.target.value); setSession(""); setTerminal(null); }}>
-          <option value="">계정 선택</option><option value="default">기본 계정</option>{accounts.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
+          <option value="default">기본 계정</option>{accounts.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
         </select></label><button disabled={!account || busy} onClick={() => void open()}>Codex CLI로 이어가기</button></div>
         {!session && <p>계정을 선택하면 보관·복원 후 같은 채팅 ID로 공식 CLI를 엽니다. 다른 GUI·CLI가 계속 소유 중이면 인계 오류를 표시합니다.</p>}
       </> : <p>채팅을 고른 다음 사용할 계정을 선택하세요.</p>}
-      {session && <><div className="terminal-status"><code>{terminal?.attach || `tmux attach -t ${session}`}</code><span>{terminal?.alive ? terminal?.launch?.ready ? "CLI 실행 중" : "CLI 준비 중" : "CLI 종료됨"}</span><button disabled={busy} onClick={() => void close()}>터미널 종료</button></div>
+      {session && <><div className="terminal-status"><code>{terminal?.attach || `tmux attach -t ${session}`}</code><span>{failure ? "CLI 인계 또는 실행 실패" : terminal?.alive ? terminal?.launch?.ready ? "CLI 실행 중" : "CLI 준비 중" : "CLI 종료됨"}</span><button disabled={busy} onClick={() => void close()}>터미널 종료</button></div>
+        {failure && <div role="alert" className="terminal-error"><strong>{failure.title}</strong><p>{failure.help}</p>{failure.detail && <details><summary>오류 상세</summary><pre>{failure.detail}</pre></details>}<button disabled={busy} onClick={() => void open()}>다시 시도</button></div>}
         <pre role="log" aria-label="공식 Codex CLI 화면" ref={log} className="terminal" onScroll={() => { const el = log.current!; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>{terminal?.text || terminal?.launch?.error || "공식 CLI를 여는 중…"}</pre>
         <div className="keys">{[["Up", "↑"], ["Down", "↓"], ["Enter", "Enter"], ["Escape", "Esc"], ["C-c", "Ctrl+C"], ["Tab", "Tab"]].map(([key, label]) => <button key={key} disabled={busy || !terminal?.alive || !terminal?.launch?.ready} onClick={() => void input(key)}>{label}</button>)}</div>
         <label>CLI에 전달할 입력<textarea value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (shouldSend({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode })) { e.preventDefault(); void input(); } }} placeholder="메시지 또는 /명령 · Shift+Enter 줄바꿈" /></label>

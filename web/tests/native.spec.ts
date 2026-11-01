@@ -16,8 +16,11 @@ test("compact chat selection, native terminal, literal input and persisted CLI",
     await page.getByRole("button", { name: "연결", exact: true }).click();
   }
   await page.getByRole("button", { name: /한글 프로젝트 계획/ }).click();
-  await expect(page.getByRole("button", { name: "Codex CLI로 이어가기" })).toBeDisabled();
+  await expect(page.getByLabel("이번에 사용할 계정")).toHaveValue("default");
+  await expect(page.getByRole("button", { name: "Codex CLI로 이어가기" })).toBeEnabled();
   await page.getByLabel("이번에 사용할 계정").selectOption("alpha");
+  await page.waitForTimeout(1500);
+  await expect(page.getByLabel("이번에 사용할 계정")).toHaveValue("alpha");
   await page.getByRole("button", { name: "Codex CLI로 이어가기" }).click();
   const terminal = page.getByRole("log");
   await expect(terminal).toContainText("Selected account: alpha", { timeout: 20000 });
@@ -33,13 +36,13 @@ test("compact chat selection, native terminal, literal input and persisted CLI",
   await page.screenshot({ path: process.env.CODEXM_WEB_SCREENSHOT || "/tmp/codexm-native-web.png", fullPage: true });
   await page.reload();
   await page.getByRole("button", { name: /한글 프로젝트 계획/ }).click();
-  await page.getByLabel("이번에 사용할 계정").selectOption("alpha");
+  await expect(page.getByLabel("이번에 사용할 계정")).toHaveValue("alpha");
   await page.getByRole("button", { name: "Codex CLI로 이어가기" }).click();
   await expect(terminal).toContainText("Received: 한글 확인");
   await page.getByLabel("보관된 채팅 포함").check();
   await expect(page.getByRole("button", { name: /보관된 작업 기록/ })).toBeVisible();
   await page.getByRole("button", { name: "계정", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "계정", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "계정 관리", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "관리자", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "채팅", exact: true }).click();
   page.once("dialog", dialog => dialog.accept());

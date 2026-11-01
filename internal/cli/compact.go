@@ -134,7 +134,9 @@ func Main(args []string) error {
 		if len(args) != 1 || args[0] != "--stdio" {
 			return errors.New("usage: codexm bridge --stdio")
 		}
-		return nativecli.Serve(ctx, c, self, os.Stdin, os.Stdout)
+		bridgectx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+		return nativecli.Serve(bridgectx, c, self, os.Stdin, os.Stdout)
 	case "doctor", "status":
 		f := flag.NewFlagSet(command, flag.ContinueOnError)
 		jsonOutput := f.Bool("json", false, "JSON summary")
@@ -216,7 +218,18 @@ func Main(args []string) error {
 			if !term.IsTerminal(int(os.Stdin.Fd())) {
 				return errors.New("--account NAME is required without an interactive terminal")
 			}
-			*name, e = chooseAccount(c, bufio.NewScanner(os.Stdin))
+			list, listErr := nativecli.List(ctx, c)
+			if listErr != nil {
+				return listErr
+			}
+			previous := ""
+			for _, chat := range list.Sessions {
+				if chat.ID == id {
+					previous = chat.Account
+					break
+				}
+			}
+			*name, e = chooseAccount(c, bufio.NewScanner(os.Stdin), previous)
 			if e != nil {
 				return e
 			}
@@ -279,21 +292,28 @@ func compactLine(s string) string {
 		return r
 	}, s)
 }
-func chooseAccount(c config.Config, s *bufio.Scanner) (string, error) {
+func chooseAccount(c config.Config, s *bufio.Scanner, previous string) (string, error) {
 	a, e := nativecli.Accounts(c)
 	if e != nil {
 		return "", e
 	}
 	fmt.Println("\nResume with account: 0. native default")
+	selected, selectedName := 0, "default"
 	for i, x := range a {
 		fmt.Printf("%d. %s\n", i+1, x.Name)
+		if x.Name == previous {
+			selected, selectedName = i+1, x.Name
+		}
 	}
 	for {
-		fmt.Print("Account number (q: cancel): ")
+		fmt.Printf("Account number [Enter: %d · %s, q: cancel]: ", selected, selectedName)
 		if !s.Scan() {
 			return "", errors.New("cancelled")
 		}
 		v := strings.TrimSpace(s.Text())
+		if v == "" {
+			return selectedName, nil
+		}
 		if v == "q" {
 			return "", errors.New("cancelled")
 		}
@@ -356,7 +376,7 @@ func pickChat(ctx context.Context, c config.Config) error {
 			fmt.Println("Choose a chat number.")
 			continue
 		}
-		name, e := chooseAccount(c, s)
+		name, e := chooseAccount(c, s, all[n-1].Account)
 		if e != nil {
 			continue
 		}
