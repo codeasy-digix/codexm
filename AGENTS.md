@@ -12,8 +12,12 @@
   implementation and tests remain migration references, not active commands.
   Legacy CLI files require `-tags legacy`; they are excluded from normal builds.
 - Native conversations are read-only catalog data. The only handoff mutations are
-  the official archive/unarchive commands for the explicitly selected thread.
-  Fail before resume if they fail. Never delete native writer locks, edit native
+  official archive/unarchive commands or owner-side RPC for the explicitly selected
+  thread. Skip archive/unarchive for unlocked, unarchived chats. A reachable shared
+  daemon must list the selected thread as loaded before sending archive; confirm
+  writer release before unarchive/resume. Never start/restart the daemon or change
+  its authentication for a handoff. Fail before resume if mutations fail, and never
+  replay uncertain archive requests. Never delete native writer locks, edit native
   SQLite/rollouts, kill an external GUI/CLI, silently fork, or assume unarchive
   guarantees takeover of a live writer. Preserve IDs, credentials, goals and budgets.
 - Account selection changes authentication only. Preserve shared model/effort
@@ -36,7 +40,8 @@
   after verifying the receipt, pane/process and that process's open thread-writer
   file. Preserve running authentication, including old default sessions. Refuse
   an account mismatch instead of silently reusing a different selection. A GUI
-  owner still needs archive through that GUI; do not claim CLI archive can do it.
+  stdio owner still needs archive through that GUI; do not claim CLI archive can
+  do it. The desktop's optional shared-daemon mode is not enabled by codexm.
 - Keep the TUI event reader separate from the main signal/shutdown loop. Test
   PTY loss and SIGTERM, including disappearance of owned frontend/bridge PIDs,
   not only disappearance of a tmux session.

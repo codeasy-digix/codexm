@@ -222,8 +222,8 @@ func environment(c config.Config, account string) []string {
 	return out
 }
 
-// Prepare uses the official archive/unarchive cycle requested for a handoff.
-// unarchive is not idempotent in Codex: active rows must be archived first.
+// Prepare leaves resumable chats alone. Only archived chats need unarchive;
+// a live writer must release ownership before a new native CLI can take over.
 // Never edit a native DB, delete a lock, terminate another writer, or fork.
 func Prepare(ctx context.Context, c config.Config, l Launch) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
@@ -255,42 +255,61 @@ func Prepare(ctx context.Context, c config.Config, l Launch) error {
 		}
 	}
 	defer unix.Flock(fd, unix.LOCK_UN)
-	list, err := List(ctx, c)
+	archived, err := archivedState(ctx, c, l.Thread)
 	if err != nil {
 		return err
 	}
-	found, archived := false, false
-	for _, e := range list.Sessions {
-		if e.ID == l.Thread {
-			found, archived = true, e.Archived
-			break
+	if cr.WriterBusy(config.Expand(c.Runtime.SharedCodexHome), l.Thread) {
+		// A separate --no-daemon archive cannot release a GUI/CLI's writer.
+		// Ask the existing shared server only if it actually has this thread.
+		released, err := archiveOnSharedDaemon(ctx, c, l)
+		if err != nil {
+			return fmt.Errorf("handoff for chat %s was not completed: %w", l.Thread, err)
+		}
+		if !released {
+			if cr.WriterBusy(config.Expand(c.Runtime.SharedCodexHome), l.Thread) {
+				return fmt.Errorf("chat %s still has an active writer; automatic handoff from this GUI/standalone CLI is unavailable. Archive this chat in its owning GUI or exit its CLI, then retry; resume was not started", l.Thread)
+			}
+			// Its owner may have exited while the read-only daemon probe ran.
+			archived, err = archivedState(ctx, c, l.Thread)
+			if err != nil {
+				return err
+			}
+		} else {
+			wait, stopWaiting := context.WithTimeout(ctx, 5*time.Second)
+			err = cr.WaitWriterRelease(wait, config.Expand(c.Runtime.SharedCodexHome), l.Thread)
+			stopWaiting()
+			if err != nil {
+				return fmt.Errorf("chat %s was archived but its writer is still busy; resume was not started: %w", l.Thread, err)
+			}
+			archived = true
 		}
 	}
-	if !found {
-		return errors.New("chat no longer exists in the local index")
-	}
-	actions := []string{"unarchive"}
-	if !archived {
-		actions = append([]string{"archive"}, actions...)
-	}
-	for _, action := range actions {
-		cmd := exec.CommandContext(ctx, l.Binary, "--no-daemon", action, l.Thread)
+	if archived {
+		cmd := exec.CommandContext(ctx, l.Binary, "--no-daemon", "unarchive", l.Thread)
 		cmd.Env = environment(c, l.Account)
 		cmd.Dir = l.Cwd
 		b, err := cmd.CombinedOutput()
 		if err != nil {
-			note := ""
-			if action == "archive" {
-				note = "; if another CLI/GUI owns this chat, stop or archive it there before retrying"
-			}
-			if action == "unarchive" {
-				note = "; the chat remains archived, retry official unarchive before resuming"
-			}
-			return fmt.Errorf("official %s failed; resume was not started%s: %w: %s", action, note, err, cr.SafeText(strings.TrimSpace(string(b))))
+			return fmt.Errorf("official unarchive failed; resume was not started; retry unarchive for chat %s: %w: %s", l.Thread, err, cr.SafeText(strings.TrimSpace(string(b))))
 		}
 	}
 	return nil
 }
+
+func archivedState(ctx context.Context, c config.Config, id string) (bool, error) {
+	list, err := List(ctx, c)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range list.Sessions {
+		if e.ID == id {
+			return e.Archived, nil
+		}
+	}
+	return false, errors.New("chat no longer exists in the local index")
+}
+
 func ResumeArgs(l Launch) []string {
 	return []string{l.Binary, "--no-daemon", "--no-alt-screen", "resume", l.Thread}
 }

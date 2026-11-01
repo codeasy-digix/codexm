@@ -41,7 +41,7 @@ func fixture(t *testing.T) config.Config {
 	}
 	return c
 }
-func TestNativeHandoffUsesOfficialArgumentsAndNoEngineOrManager(t *testing.T) {
+func TestUnlockedChatSkipsArchiveAndKeepsNativeResumeArguments(t *testing.T) {
 	c := fixture(t)
 	ctx := context.Background()
 	l, e := Plan(ctx, c, fixtureID, "default")
@@ -51,13 +51,8 @@ func TestNativeHandoffUsesOfficialArgumentsAndNoEngineOrManager(t *testing.T) {
 	if e = Prepare(ctx, c, l); e != nil {
 		t.Fatal(e)
 	}
-	b, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), "argv"))
-	if string(b) != "--no-daemon\nunarchive\n"+fixtureID+"\n" {
-		t.Fatalf("wrong arguments: %q", b)
-	}
-	b, _ = os.ReadFile(filepath.Join(os.Getenv("HOME"), "selected-home"))
-	if string(b) != c.Runtime.SharedCodexHome {
-		t.Fatal("wrong native home")
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "argv")); !os.IsNotExist(err) {
+		t.Fatal("unlocked chat unnecessarily invoked archive/unarchive")
 	}
 	if !reflect.DeepEqual(ResumeArgs(l), []string{l.Binary, "--no-daemon", "--no-alt-screen", "resume", fixtureID}) {
 		t.Fatal("resume settings were overridden")
@@ -83,6 +78,14 @@ func TestUnarchiveFailureDoesNotEraseLocksOrClaimLaunch(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	db, e := sql.Open("sqlite", filepath.Join(c.Runtime.SharedCodexHome, "state_5.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.Exec("UPDATE threads SET archived=1 WHERE id=?", fixtureID); e != nil {
+		t.Fatal(e)
+	}
+	db.Close()
 	lock := filepath.Join(c.Runtime.SharedCodexHome, "writer.lock")
 	os.WriteFile(lock, []byte("external owner"), 0600)
 	os.WriteFile(l.Binary, []byte("#!/bin/sh\necho writer-busy >&2\nexit 9\n"), 0700)

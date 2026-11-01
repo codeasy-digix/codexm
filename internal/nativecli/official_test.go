@@ -32,6 +32,7 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	t.Setenv("HOME", h)
 	var requests []string
 	var requestMu sync.Mutex
+	active := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		requestMu.Lock()
@@ -39,6 +40,15 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 		requestMu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"fixture-response\"}}\n\n")
+		if strings.Contains(string(body), "hold active fixture") && !strings.Contains(string(body), "follow-up fixture instruction") {
+			w.(http.Flusher).Flush()
+			select {
+			case active <- struct{}{}:
+			default:
+			}
+			<-r.Context().Done()
+			return
+		}
 		fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fixture-message\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"fixture complete\"}]}}\n\n")
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
 	}))
@@ -65,7 +75,15 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer client.Close()
+	defer func() {
+		client.Close()
+		select {
+		case <-client.ProcessDone:
+		case <-time.After(3 * time.Second):
+			_ = cmd.Process.Kill()
+			<-client.ProcessDone
+		}
+	}()
 	var started struct {
 		Thread cr.Thread `json:"thread"`
 	}
@@ -91,18 +109,47 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	liveCtx, liveCancel := context.WithTimeout(ctx, 8*time.Second)
 	e = Prepare(liveCtx, c, l)
 	liveCancel()
-	if e != nil {
-		t.Logf("Live owner rejected the official archive cycle; locks are preserved: %v", e)
-	} else {
-		t.Log("Official cycle accepted by this version with a connected owner")
+	if e == nil || !strings.Contains(e.Error(), "active writer") || !cr.WriterBusy(c.Runtime.SharedCodexHome, l.Thread) {
+		t.Fatal("unreachable owner must remain intact and cannot be claimed as handed off", e)
 	}
-	client.Close()
+	var control struct {
+		Thread cr.Thread `json:"thread"`
+	}
+	if e = client.Call(ctx, "thread/start", map[string]any{"cwd": h, "sandbox": "read-only", "approvalPolicy": "never"}, &control); e != nil {
+		t.Fatal(e)
+	}
+	if e = client.Call(ctx, "thread/goal/set", map[string]any{"threadId": l.Thread, "objective": "preserve fixture goal", "status": "paused", "origin": "user", "tokenBudget": 100000}, nil); e != nil {
+		t.Fatal(e)
+	}
+	goalBefore, e := client.Goal(ctx, l.Thread)
+	if e != nil || goalBefore == nil {
+		t.Fatal("fixture goal", e)
+	}
+	if e = client.Call(ctx, "turn/start", map[string]any{"threadId": l.Thread, "input": []map[string]string{{"type": "text", "text": "hold active fixture"}}}, nil); e != nil {
+		t.Fatal(e)
+	}
 	select {
-	case <-client.ProcessDone:
-	case <-time.After(3 * time.Second):
-		_ = cmd.Process.Kill()
-		<-client.ProcessDone
+	case <-active:
+	case <-ctx.Done():
+		t.Fatal("fixture turn did not become active")
 	}
+	released, e := archiveLoadedThread(ctx, client, l.Thread)
+	if e != nil || !released {
+		t.Fatal("owner-side archive failed", e)
+	}
+	waitCtx, stopWait := context.WithTimeout(ctx, 3*time.Second)
+	e = cr.WaitWriterRelease(waitCtx, c.Runtime.SharedCodexHome, l.Thread)
+	stopWait()
+	if e != nil {
+		t.Fatal("owner did not release the selected active chat", e)
+	}
+	if !cr.WriterBusy(c.Runtime.SharedCodexHome, control.Thread.ID) {
+		t.Fatal("handoff released a different chat")
+	}
+	if e = Prepare(ctx, c, l); e != nil {
+		t.Fatal("unarchive after owner-side archive", e)
+	}
+	// The owner's other chat remains loaded while the target is resumed elsewhere.
 	archive := exec.CommandContext(ctx, binary, "--no-daemon", "archive", l.Thread)
 	archive.Env = environment(c, "default")
 	archive.Dir = h
@@ -124,6 +171,13 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	if _, e = second.Resume(ctx, l.Thread); e != nil {
 		second.Close()
 		t.Fatal("immediate official resume after the cycle", e)
+	}
+	if !cr.WriterBusy(c.Runtime.SharedCodexHome, control.Thread.ID) {
+		t.Fatal("other owner lost its writer during resume")
+	}
+	goalAfter, e := second.Goal(ctx, l.Thread)
+	if e != nil || goalAfter == nil || goalAfter.Objective != goalBefore.Objective || goalAfter.Status != goalBefore.Status || goalAfter.TokenBudget == nil || goalBefore.TokenBudget == nil || *goalAfter.TokenBudget != *goalBefore.TokenBudget {
+		t.Fatal("native goal or budget changed", e)
 	}
 	if e = second.Call(ctx, "turn/start", map[string]any{"threadId": l.Thread, "input": []map[string]string{{"type": "text", "text": "follow-up fixture instruction"}}}, nil); e != nil {
 		t.Fatal(e)
@@ -154,7 +208,13 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(list.Sessions) != 1 || list.Sessions[0].ID != l.Thread || list.Sessions[0].Archived {
+	targetFound := false
+	for _, s := range list.Sessions {
+		if s.ID == l.Thread && !s.Archived {
+			targetFound = true
+		}
+	}
+	if !targetFound {
 		t.Fatal("native identity or archive state was not preserved")
 	}
 }
