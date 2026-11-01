@@ -1,21 +1,30 @@
-import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual, pbkdf2 } from "node:crypto";
+import { promisify } from "node:util";
 import {
   readFileSync,
   writeFileSync,
   renameSync,
   mkdirSync,
   unlinkSync,
+  statSync,
 } from "node:fs";
 import { join } from "node:path";
 
 const digest = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 const secret = () => randomBytes(32).toString("base64url");
-type Session = { owner: string; expires: number };
+const derive = promisify(pbkdf2);
+type Login = { username: string; algorithm: string; iterations: number; salt: string; hash: string };
+type Session = { owner: string; expires: number; credential?: string };
+export class LoginError extends Error {
+  constructor(message: string, readonly status = 401) { super(message); }
+}
 export class LocalAuth {
   private sessions = new Map<string, Session>();
   private tickets = new Map<string, { session: string; expires: number }>();
   private attempts = new Map<string, { count: number; until: number }>();
+  private inFlight = 0;
+  readonly secure: boolean;
   readonly connections = new Map<
     string,
     { session: string; close: () => void }
@@ -26,13 +35,14 @@ export class LocalAuth {
     private now = Date.now,
   ) {
     const url = new URL(origin);
+    this.secure = url.protocol === "https:";
     if (
-      url.protocol !== "http:" ||
-      !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
-      url.pathname !== "/"
+      (!this.secure && (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))) ||
+      url.origin !== origin || url.pathname !== "/" || url.username || url.password || url.search || url.hash
     )
-      throw new Error("loopback origin required");
+      throw new Error("an exact HTTPS or local HTTP origin is required");
     mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (this.secure && !this.loginRecord()) throw new Error("public HTTPS requires a configured web login");
     try {
       const stored: [string, Session][] = JSON.parse(
         readFileSync(join(dir, "sessions.json"), "utf8"),
@@ -48,7 +58,54 @@ export class LocalAuth {
     } catch {
       /* First launch or expired local sessions. */
     }
-    this.rotateAccess();
+    if (!this.passwordEnabled()) this.rotateAccess();
+  }
+  private loginRecord(): Login | null {
+    const filename = join(this.dir, "login.json");
+    let text: string;
+    try {
+      const info = statSync(filename);
+      if (!info.isFile() || (info.mode & 0o077) !== 0 || info.size > 4096) throw new Error("invalid web login file permissions");
+      text = readFileSync(filename, "utf8");
+    } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
+    const row = JSON.parse(text) as Login;
+    if (typeof row.username !== "string" || !/^[A-Za-z0-9_.@-]{1,64}$/.test(row.username) || row.algorithm !== "pbkdf2-sha256" || row.iterations !== 600000 || !/^[a-f0-9]{64}$/.test(row.salt) || !/^[a-f0-9]{64}$/.test(row.hash)) throw new Error("invalid web login configuration");
+    return row;
+  }
+  passwordEnabled() { return !!this.loginRecord(); }
+  private credential() {
+    const row = this.loginRecord();
+    if (this.secure && !row) throw new Error("web login is unavailable");
+    return row ? digest(JSON.stringify(row)) : "";
+  }
+  private validSession(session: Session | undefined) {
+    return !!session && session.expires > this.now() && (session.credential || "") === this.credential();
+  }
+  private throttle(remote: string) {
+    const now = this.now();
+    for (const [key, row] of this.attempts) if (row.until <= now) this.attempts.delete(key);
+    if (this.attempts.size >= 2048) throw new LoginError("로그인 요청이 너무 많습니다. 잠시 후 다시 시도하세요.", 429);
+    for (const [key, max] of [["global", 60], ["remote:" + remote, 10]] as const) {
+      const row = this.attempts.get(key) || { count: 0, until: now + 60000 };
+      row.count++; this.attempts.set(key, row);
+      if (row.count > max) throw new LoginError("로그인 요청이 너무 많습니다. 잠시 후 다시 시도하세요.", 429);
+    }
+  }
+  async login(username: unknown, password: unknown, remote: string) {
+    this.throttle(remote);
+    const row = this.loginRecord();
+    const denied = () => new LoginError("아이디 또는 비밀번호가 올바르지 않습니다.");
+    if (!row || typeof username !== "string" || typeof password !== "string" || username.length > 64 || Buffer.byteLength(password) > 1024) throw denied();
+    if (this.inFlight >= 2) throw new LoginError("로그인 요청이 처리 중입니다. 잠시 후 다시 시도하세요.", 429);
+    this.inFlight++;
+    try {
+      const hash = await derive(password, Buffer.from(row.salt, "hex"), row.iterations, 32, "sha256");
+      if (!timingSafeEqual(hash, Buffer.from(row.hash, "hex")) || !timingSafeEqual(Buffer.from(digest(username)), Buffer.from(digest(row.username))) || digest(JSON.stringify(row)) !== this.credential()) throw denied();
+      return this.createSession();
+    } finally { this.inFlight--; }
+  }
+  cookie(token: string, expire = false) {
+    return `codexm_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${expire ? 0 : 28800}${this.secure ? "; Secure" : ""}`;
   }
   private save() {
     const path = join(this.dir, "sessions.json");
@@ -74,15 +131,8 @@ export class LocalAuth {
     );
   }
   exchange(token: string, remote: string) {
-    const now = this.now();
-    for (const [key, row] of this.attempts)
-      if (row.until <= now) this.attempts.delete(key);
-    const attempt = this.attempts.get(remote) ?? {
-      count: 0,
-      until: now + 60_000,
-    };
-    attempt.count++;
-    this.attempts.set(remote, attempt);
+    if (this.passwordEnabled() || this.secure) throw new LoginError("아이디와 비밀번호로 로그인하세요.");
+    this.throttle(remote);
     // The local launcher can rotate this private file for a second browser.
     // Reading and consuming it are synchronous: only one exchange can win.
     let bootstrap = "";
@@ -90,7 +140,6 @@ export class LocalAuth {
       bootstrap = readFileSync(join(this.dir, "access"), "utf8").trim();
     } catch {}
     if (
-      attempt.count > 10 ||
       !bootstrap ||
       token.length > 256 ||
       !timingSafeEqual(
@@ -101,15 +150,19 @@ export class LocalAuth {
       throw new Error(
         "접속 코드가 만료되었거나 올바르지 않습니다. codexm web을 다시 실행하세요.",
       );
-    const cookie = secret();
+    unlinkSync(join(this.dir, "access"));
+    return this.createSession();
+  }
+  private createSession() {
+    const now = this.now(), cookie = secret();
     for (const [key, s] of this.sessions)
-      if (s.expires <= now) this.sessions.delete(key);
+      if (!this.validSession(s)) this.sessions.delete(key);
     if (this.sessions.size >= 64)
       throw new Error("브라우저 세션 한도를 초과했습니다.");
-    unlinkSync(join(this.dir, "access"));
     this.sessions.set(digest(cookie), {
       owner: secret(),
       expires: now + 8 * 60 * 60 * 1000,
+      credential: this.credential(),
     });
     this.save();
     return cookie;
@@ -123,10 +176,10 @@ export class LocalAuth {
     if (!token || token.length > 128) return null;
     const key = digest(token),
       s = this.sessions.get(key);
-    return s && s.expires > this.now() ? key : null;
+    return this.validSession(s) ? key : null;
   }
   ticket(session: string) {
-    if (!this.sessions.has(session)) throw new Error("인증이 필요합니다.");
+    if (!this.validSession(this.sessions.get(session))) throw new Error("인증이 필요합니다.");
     for (const [key, value] of this.tickets)
       if (value.expires <= this.now()) this.tickets.delete(key);
     if (this.tickets.size >= 128) throw new Error("접속 요청이 너무 많습니다.");
@@ -140,7 +193,7 @@ export class LocalAuth {
     const key = digest(ticket),
       row = this.tickets.get(key);
     this.tickets.delete(key);
-    if (!row || row.expires <= this.now() || !this.sessions.has(row.session))
+    if (!row || row.expires <= this.now() || !this.validSession(this.sessions.get(row.session)))
       throw new Error("접속 인증이 만료되었습니다.");
     this.connections.set(connection, { session: row.session, close });
     return this.require(connection);
@@ -148,9 +201,9 @@ export class LocalAuth {
   require(connection: string) {
     const row = this.connections.get(connection),
       session = row && this.sessions.get(row.session);
-    if (!session || session.expires <= this.now())
+    if (!this.validSession(session))
       throw new Error("authentication_required");
-    return session.owner;
+    return session!.owner;
   }
   disconnect(connection: string) {
     this.connections.delete(connection);

@@ -74,3 +74,8 @@ relay 통합·`.home` pin/build 설명은 현재 정책이 아니다. 제거한 
 관리 플러그인은 현재 설치의 구성 요소가 아니며 새 CLI에서 생성하거나 시작하지 않는다.
 과거 작업 DB와 설정 백업은 유지한다. 서비스는 실행 중인 작업이 없는 것을 확인한 뒤
 현재 로컬에서만 해제하고, 공식 Codex와 GUI는 재시작하지 않는다.
+
+선택적인 외부 웹 접속은 제품의 [HTTPS 설치 안내](public-web.md)와
+[로컬 적용 검증](public-web-validation-20261101.md)을 따른다. Caddy의 실제 설정과
+인증 데이터는 로컬 config/state에 두고, 소스의 `deploy/Caddyfile.example`만 Git에서
+관리한다. `.home`에 웹 빌드·설치 책임을 추가하지 않는다.

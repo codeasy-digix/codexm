@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { call, exchange, useAccess, useStateData } from "../../client/data";
+import { call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
 import { shouldSend, remaining, type SessionEntry } from "../contracts/types";
 import "./styles/native.css";
 
 export function App() {
   const access = useAccess(), data = useStateData(), snapshot = data.snapshot || {};
   const [token, setToken] = useState(""), [view, setView] = useState("chats");
+  const [username, setUsername] = useState(""), [password, setPassword] = useState("");
   const [query, setQuery] = useState(""), [archived, setArchived] = useState(false);
   const [selected, setSelected] = useState<SessionEntry | null>(null);
   const [account, setAccount] = useState(""), [session, setSession] = useState("");
@@ -60,14 +61,17 @@ export function App() {
     try { await call("terminal.close", { session }, crypto.randomUUID()); if (generation === epoch.current) { setSession(""); setTerminal(null); } }
     catch (e) { if (generation === epoch.current) setError((e as Error).message); } finally { setBusy(false); }
   }
-  if (!access.ready) return <main className="login"><h1>codexm</h1><p>이 Mac의 채팅과 Codex CLI</p>
-    <form onSubmit={e => { e.preventDefault(); void exchange(token).then(() => setToken("")).catch(e => setError(e.message)); }}>
-      <label>로컬 접속 코드<input type="password" value={token} onChange={e => setToken(e.target.value)} /></label>
-      <button>연결</button></form><p role="alert">{error || access.message}</p></main>;
+  if (!access.ready) return <main className="login"><h1>codexm</h1><p>로그인 후 채팅과 Codex CLI를 사용할 수 있습니다.</p>
+    <form onSubmit={e => { e.preventDefault(); if (busy || !access.modeReady) return; setBusy(true); setError("");
+      void (access.password ? login(username, password) : exchange(token)).then(() => { setToken(""); setPassword(""); }).catch(e => setError(e.message)).finally(() => setBusy(false)); }}>
+      {access.password ? <><label>아이디<input name="username" autoComplete="username" required maxLength={64} value={username} onChange={e => setUsername(e.target.value)} /></label>
+        <label>비밀번호<input name="password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} /></label></>
+        : <label>로컬 접속 코드<input type="password" value={token} onChange={e => setToken(e.target.value)} /></label>}
+      <button disabled={busy || !access.modeReady}>{busy ? "로그인 중…" : access.password ? "로그인" : "연결"}</button></form><p role="alert">{error || access.message}</p></main>;
   return <div className="app"><header><strong>codexm</strong><nav>
     <button aria-pressed={view === "chats"} onClick={() => setView("chats")}>채팅</button>
     <button aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>계정</button>
-  </nav><span>로컬 · 공식 Codex CLI</span></header>
+  </nav><span>공식 Codex CLI</span><button onClick={() => { void logout().then(() => { epoch.current++; setSelected(null); setTerminal(null); setSession(""); setMessage(""); drafts.current = {}; setError(""); }).catch(e => setError(e.message)); }}>로그아웃</button></header>
   {(error || data.connectionError) && <p role="alert" className="error">{error || data.connectionError}</p>}
   {view === "accounts" ? <main className="account-page"><h1>계정</h1><p>로그인과 기본 계정 변경은 <code>codexm account</code>를 사용합니다. 자동 계정 교체는 사용하지 않습니다.</p>
     {accounts.map(a => <section key={a.name}><strong>{a.name}</strong> {a.default && <span>기본 계정</span>} {a.current && <span>현재 환경</span>}
@@ -84,7 +88,7 @@ export function App() {
         <div className="launch"><label>이번에 사용할 계정<select value={account} onChange={e => { epoch.current++; setAccount(e.target.value); setSession(""); setTerminal(null); }}>
           <option value="">계정 선택</option><option value="default">기본 계정</option>{accounts.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
         </select></label><button disabled={!account || busy} onClick={() => void open()}>Codex CLI로 이어가기</button></div>
-        {!session && <p>계정을 선택하면 공식 CLI에서 이 채팅의 기록을 열고 이어갑니다.</p>}
+        {!session && <p>계정을 선택하면 보관·복원 후 같은 채팅 ID로 공식 CLI를 엽니다. 다른 GUI·CLI가 계속 소유 중이면 인계 오류를 표시합니다.</p>}
       </> : <p>채팅을 고른 다음 사용할 계정을 선택하세요.</p>}
       {session && <><div className="terminal-status"><code>{terminal?.attach || `tmux attach -t ${session}`}</code><span>{terminal?.alive ? terminal?.launch?.ready ? "CLI 실행 중" : "CLI 준비 중" : "CLI 종료됨"}</span><button disabled={busy} onClick={() => void close()}>터미널 종료</button></div>
         <pre role="log" aria-label="공식 Codex CLI 화면" ref={log} className="terminal" onScroll={() => { const el = log.current!; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>{terminal?.text || terminal?.launch?.error || "공식 CLI를 여는 중…"}</pre>

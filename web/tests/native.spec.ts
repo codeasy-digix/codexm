@@ -7,8 +7,14 @@ test("compact chat selection, native terminal, literal input and persisted CLI",
   await page.goto(url);
   const denied = await page.evaluate(() => new Promise(resolve => (window as any).Meteor.call("codexm.call", "terminal.open", { thread_id: "invalid", account: "default" }, "operation-fixture-1234", (error: any) => resolve(error?.error))));
   expect(denied).toBe("authentication_required");
-  await page.getByLabel("로컬 접속 코드").fill(readFileSync(state + "/access", "utf8").trim());
-  await page.getByRole("button", { name: "연결", exact: true }).click();
+  if (process.env.CODEXM_WEB_TEST_PASSWORD_FILE) {
+    await page.getByLabel("아이디", { exact: true }).fill("fixture");
+    await page.getByLabel("비밀번호", { exact: true }).fill(readFileSync(process.env.CODEXM_WEB_TEST_PASSWORD_FILE, "utf8").trim());
+    await page.getByRole("button", { name: "로그인", exact: true }).click();
+  } else {
+    await page.getByLabel("로컬 접속 코드").fill(readFileSync(state + "/access", "utf8").trim());
+    await page.getByRole("button", { name: "연결", exact: true }).click();
+  }
   await page.getByRole("button", { name: /한글 프로젝트 계획/ }).click();
   await expect(page.getByRole("button", { name: "Codex CLI로 이어가기" })).toBeDisabled();
   await page.getByLabel("이번에 사용할 계정").selectOption("alpha");
@@ -45,4 +51,8 @@ test("compact chat selection, native terminal, literal input and persisted CLI",
   page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "터미널 종료", exact: true }).click();
   await expect(terminal).toHaveCount(0);
+  await page.getByRole("button", { name: "로그아웃", exact: true }).click();
+  await expect(page.getByRole("button", { name: /한글 프로젝트 계획/ })).toHaveCount(0);
+  const deniedAfterLogout = await page.evaluate(() => fetch("/auth/ticket", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.status));
+  expect(deniedAfterLogout).toBe(401);
 });

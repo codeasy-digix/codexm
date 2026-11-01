@@ -33,7 +33,9 @@ codexm resume THREAD --account NAME --terminal  Open a named tmux terminal
 codexm account [NAME] [--login|--set-default]  Native account selection (unchanged)
 codexm accounts                              Saved local account information
 codexm terminal SESSION                     Attach to a CLI opened from the web
-codexm web [status|stop|logs]                 Local web: chat list and native terminal
+codexm web [status|stop|logs]                 Web: chat list and native terminal
+codexm web user --username NAME              Configure the independent web login
+codexm web --public-origin https://HOST      Use an authenticated HTTPS reverse proxy
 codexm doctor                               Check native CLI and local paths
 codexm shell-init zsh                        Shell integration
 

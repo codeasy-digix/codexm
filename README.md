@@ -78,7 +78,15 @@ codexm terminal codexm-cli-SESSION_ID
 ```
 
 웹/별도 터미널 실행에는 tmux가 필요합니다. 현재 터미널에서 바로 재개하는 CLI에는
-tmux가 필요 없습니다. 웹은 인증된 loopback 접근만 허용합니다.
+tmux가 필요 없습니다. Meteor는 loopback에서 실행합니다. 외부 접근은 별도 웹 로그인과
+HTTPS 프록시를 명시적으로 설정한 경우에만 사용합니다.
+
+```sh
+codexm web user --username YOUR_USERNAME  # 비밀번호를 숨겨서 입력; Codex 로그인과 별개
+codexm web --public-origin https://YOUR_HOST --no-open
+```
+
+HTTPS 프록시 구성·재시작·중지 방법은 [외부 접속 안내](docs/public-web.md)를 따릅니다.
 
 ## 설치와 범위
 

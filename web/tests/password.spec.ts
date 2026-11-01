@@ -1,0 +1,26 @@
+import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+const url = process.env.CODEXM_WEB_TEST_URL || "http://127.0.0.1:14317";
+const filename = process.env.CODEXM_WEB_TEST_PASSWORD_FILE;
+test.skip(!filename, "isolated HTTPS password fixture required");
+test("HTTPS login denies anonymous/incorrect/foreign-origin requests and uses a secure cookie", async ({ page, context, request }) => {
+  const denied = await request.post(url + "/auth/login", { headers: { Origin: "https://evil.example" }, data: { username: "fixture", password: "wrong" } });
+  expect(denied.status()).toBe(403);
+  await page.goto(url);
+  await expect(page.getByLabel("아이디", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("채팅 검색")).toHaveCount(0);
+  expect(await page.evaluate(() => fetch("/auth/ticket", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.status))).toBe(401);
+  const blocked = await page.evaluate(() => new Promise(resolve => (window as any).Meteor.call("codexm.call", "snapshot", {}, "", (error: any) => resolve(error?.error))));
+  expect(blocked).toBe("authentication_required");
+  await page.getByLabel("아이디", { exact: true }).fill("fixture");
+  await page.getByLabel("비밀번호", { exact: true }).fill("wrong-password");
+  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("아이디 또는 비밀번호");
+  await page.getByLabel("비밀번호", { exact: true }).fill(readFileSync(filename!, "utf8").trim());
+  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  await expect(page.getByLabel("채팅 검색")).toBeVisible();
+  const cookie = (await context.cookies()).find(c => c.name === "codexm_session")!;
+  expect(cookie.httpOnly).toBe(true); expect(cookie.secure).toBe(true); expect(cookie.sameSite).toBe("Strict");
+  await page.getByRole("button", { name: "로그아웃", exact: true }).click();
+  await expect(page.getByLabel("채팅 검색")).toHaveCount(0);
+});

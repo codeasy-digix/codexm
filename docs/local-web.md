@@ -7,6 +7,10 @@
 유지한다. Go bridge의 허용 메서드는 capabilities, snapshot, accounts.refresh,
 terminal.open/read/input/close뿐이다. 작업 등록·재배정·관리자 모델 호출은 없다.
 
+외부 접속은 [HTTPS와 웹 로그인](public-web.md)을 추가해 사용한다. Meteor 리스너는
+계속 loopback에 있고 공개 Origin과 Host를 정확히 비교한다. 웹 로그인은 네이티브
+Codex 로그인과 별개이며, 로그인 전에는 목록·터미널·계정 정보를 조회할 수 없다.
+
 선택한 채팅은 `codexm-cli-<id>` tmux 세션에서 공식 CLI로 실행한다. 웹은 그 화면과
 스크롤백을 읽고 입력을 붙여넣는다. ANSI 앱을 별도 채팅 데이터로 변환하거나 공식 DB에
 메시지를 쓰지 않는다. 화면은 마지막 1,500줄을 표시하며 전체 터미널 조작·추가 기록

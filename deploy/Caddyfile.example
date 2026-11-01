@@ -1,0 +1,21 @@
+{
+	admin off
+	persist_config off
+	default_sni {$CODEXM_PUBLIC_HOST}
+	storage file_system {
+		root {$CODEXM_TLS_STORAGE}
+	}
+}
+
+https://{$CODEXM_PUBLIC_HOST} {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+			profile shortlived
+			email {$CODEXM_CERT_EMAIL}
+		}
+	}
+	reverse_proxy 127.0.0.1:4317 {
+		header_up X-Codexm-Client-IP {remote_host}
+	}
+}

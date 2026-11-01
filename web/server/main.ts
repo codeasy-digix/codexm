@@ -3,7 +3,7 @@ import { Meteor } from "meteor/meteor";
 import { WebApp } from "meteor/webapp";
 import { join, isAbsolute } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { LocalAuth } from "./auth";
+import { LocalAuth, LoginError } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
 import { bridgeContract } from "../imports/contracts/native";
 
@@ -28,7 +28,7 @@ const owner = (id?: string) => {
   } catch {
     throw new Meteor.Error(
       "authentication_required",
-      "로컬 접속 인증이 필요합니다.",
+      "로그인이 필요합니다.",
     );
   }
 };
@@ -78,12 +78,17 @@ async function body(req: import("node:http").IncomingMessage) {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("X-Frame-Options", "DENY");
+    if (auth.secure) res.setHeader("Strict-Transport-Security", "max-age=86400");
     if (!isAuth) {
       next();
       return;
     }
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "application/json");
+    if (req.url === "/auth/mode" && req.method === "GET") {
+      res.end(JSON.stringify({ password: auth.passwordEnabled() }));
+      return;
+    }
     if (
       req.method !== "POST" ||
       req.headers["content-type"] !== "application/json"
@@ -93,29 +98,29 @@ async function body(req: import("node:http").IncomingMessage) {
       return;
     }
     try {
-      if (req.url === "/auth/exchange") {
+      if (req.url === "/auth/login" || req.url === "/auth/exchange") {
         const data = await body(req);
-        if (typeof data.token !== "string")
+        if (req.url === "/auth/exchange" && typeof data.token !== "string")
           throw new Error("접속 코드가 필요합니다.");
-        const cookie = auth.exchange(
-          data.token,
-          req.socket.remoteAddress || "local",
-        );
+        // The listener is loopback-only. The documented proxy overwrites this
+        // header, rather than trusting the Internet client's forwarded headers.
+        const remote = auth.secure ? String(req.headers["x-codexm-client-ip"] || "proxy") : (req.socket.remoteAddress || "local");
+        const cookie = req.url === "/auth/login" ? await auth.login(data.username, data.password, remote) : auth.exchange(data.token, remote);
         res.setHeader(
           "Set-Cookie",
-          `codexm_session=${cookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`,
+          auth.cookie(cookie),
         );
         res.end("{}");
       } else {
         const session = auth.session(req.headers.cookie);
-        if (!session) throw new Error("로컬 접속 인증이 필요합니다.");
+        if (!session) throw new Error("로그인이 필요합니다.");
         if (req.url === "/auth/ticket")
           res.end(JSON.stringify({ ticket: auth.ticket(session) }));
         else if (req.url === "/auth/logout") {
           auth.logout(session);
           res.setHeader(
             "Set-Cookie",
-            "codexm_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
+            auth.cookie("", true),
           );
           res.end("{}");
         } else {
@@ -124,8 +129,10 @@ async function body(req: import("node:http").IncomingMessage) {
         }
       }
     } catch (error) {
-      res.writeHead(401);
-      res.end(JSON.stringify({ error: (error as Error).message }));
+      const code = error instanceof LoginError ? error.status : 401;
+      if (code === 429) res.setHeader("Retry-After", "60");
+      res.writeHead(code);
+      res.end(JSON.stringify({ error: error instanceof SyntaxError ? "잘못된 요청입니다." : (error as Error).message }));
     }
   },
 );

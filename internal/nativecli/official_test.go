@@ -3,11 +3,14 @@ package nativecli
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +30,13 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	}
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	var requests []string
+	var requestMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requestMu.Lock()
+		requests = append(requests, string(body))
+		requestMu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"fixture-response\"}}\n\n")
 		fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fixture-message\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"fixture complete\"}]}}\n\n")
@@ -83,7 +92,7 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	e = Prepare(liveCtx, c, l)
 	liveCancel()
 	if e != nil {
-		t.Log("Live owner rejected the official archive cycle; the launcher must report it without altering locks")
+		t.Logf("Live owner rejected the official archive cycle; locks are preserved: %v", e)
 	} else {
 		t.Log("Official cycle accepted by this version with a connected owner")
 	}
@@ -115,6 +124,24 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	if _, e = second.Resume(ctx, l.Thread); e != nil {
 		second.Close()
 		t.Fatal("immediate official resume after the cycle", e)
+	}
+	if e = second.Call(ctx, "turn/start", map[string]any{"threadId": l.Thread, "input": []map[string]string{{"type": "text", "text": "follow-up fixture instruction"}}}, nil); e != nil {
+		t.Fatal(e)
+	}
+	completed = false
+	for !completed {
+		select {
+		case event := <-second.Events:
+			completed = event.Method == "turn/completed"
+		case <-ctx.Done():
+			t.Fatal("resumed chat did not complete its follow-up instruction")
+		}
+	}
+	requestMu.Lock()
+	lastRequest := requests[len(requests)-1]
+	requestMu.Unlock()
+	if !strings.Contains(lastRequest, "fixture input") || !strings.Contains(lastRequest, "follow-up fixture instruction") {
+		t.Fatal("official resume did not retain history and deliver the follow-up instruction")
 	}
 	second.Close()
 	select {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 
 type Spec struct {
 	Session, Origin, Directory, Program, Config, Binary, State string
+	Listen                                                     string
 	Args                                                       []string
 	PID                                                        int
 }
@@ -41,6 +43,9 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	bundle := f.String("bundle", "", "built Meteor bundle directory")
 	port := f.Int("port", 4317, "loopback port")
 	noOpen := f.Bool("no-open", false, "print the local URL without opening a browser")
+	publicOrigin := f.String("public-origin", "", "HTTPS origin served by a loopback reverse proxy")
+	username := f.String("username", "", "web login username (web user)")
+	passwordStdin := f.Bool("password-stdin", false, "read web password from stdin (web user)")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -51,6 +56,12 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		*bundle = filepath.Join(filepath.Dir(self), "web", "bundle")
 	}
 	state := filepath.Join(c.StateDir(), "web")
+	if action == "user" {
+		return configureLogin(state, *username, *passwordStdin, out)
+	}
+	if *username != "" || *passwordStdin {
+		return errors.New("login options require codexm web user")
+	}
 	path := filepath.Join(state, "launch.json")
 	var spec Spec
 	b, _ := os.ReadFile(path)
@@ -93,7 +104,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		return errors.New("web shutdown did not finish; inspect its named tmux session")
 	case "start":
 	default:
-		return errors.New("usage: codexm web [status|stop|logs] [--dev WEB_DIR|--bundle BUNDLE_DIR] [--no-open]")
+		return errors.New("usage: codexm web [status|stop|logs|user] [--public-origin https://HOST] [--no-open]")
 	}
 	if alive {
 		if !ready(state, spec.Origin) {
@@ -123,6 +134,16 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	}
 	probe.Close()
 	spec = Spec{Session: "codexm-web", Origin: "http://" + address, Config: c.Path, Binary: self, State: state}
+	spec.Listen = address
+	if *publicOrigin != "" {
+		spec.Origin, err = httpsOrigin(*publicOrigin)
+		if err != nil {
+			return err
+		}
+		if _, err = os.Stat(filepath.Join(state, "login.json")); err != nil {
+			return errors.New("configure codexm web user before enabling a public origin")
+		}
+	}
 	if *dev != "" {
 		spec.Session = "codexm-web-dev"
 		spec.Directory = config.Expand(*dev)
@@ -212,7 +233,16 @@ func ready(state, origin string) bool {
 	if err != nil || json.Unmarshal(b, &status) != nil || status.PID <= 0 || status.Origin != origin || syscall.Kill(status.PID, 0) != nil {
 		return false
 	}
-	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(origin, "http://"), 100*time.Millisecond)
+	var spec Spec
+	b, err = os.ReadFile(filepath.Join(state, "launch.json"))
+	if err != nil || json.Unmarshal(b, &spec) != nil {
+		return false
+	}
+	address, err := listenAddress(spec)
+	if err != nil {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
 	if err != nil {
 		return false
 	}
@@ -220,6 +250,13 @@ func ready(state, origin string) bool {
 	return true
 }
 func open(ctx context.Context, state, origin string, noOpen bool, out io.Writer) error {
+	if _, err := os.Stat(filepath.Join(state, "login.json")); err == nil {
+		fmt.Fprintln(out, origin)
+		if noOpen {
+			return nil
+		}
+		return openBrowser(ctx, origin)
+	}
 	// Each local invocation grants one new browser session. Existing cookies
 	// remain valid; a consumed code must not strand a second browser.
 	code := make([]byte, 32)
@@ -235,11 +272,14 @@ func open(ctx context.Context, state, origin string, noOpen bool, out io.Writer)
 		fmt.Fprintf(out, "Local access code file: %s\n", filepath.Join(state, "access"))
 		return nil
 	}
+	return openBrowser(ctx, origin+"#"+token)
+}
+func openBrowser(ctx context.Context, target string) error {
 	opener := "open"
 	if _, err := exec.LookPath(opener); err != nil {
 		opener = "xdg-open"
 	}
-	return exec.CommandContext(ctx, opener, origin+"#"+token).Run()
+	return exec.CommandContext(ctx, opener, target).Run()
 }
 func Run(ctx context.Context, c config.Config, path string) error {
 	b, err := os.ReadFile(path)
@@ -253,6 +293,11 @@ func Run(ctx context.Context, c config.Config, path string) error {
 	if s.Config != c.Path || s.State != filepath.Join(c.StateDir(), "web") {
 		return errors.New("web launch configuration mismatch")
 	}
+	address, err := listenAddress(s)
+	if err != nil {
+		return err
+	}
+	_, port, _ := net.SplitHostPort(address)
 	lock, err := os.OpenFile(filepath.Join(s.State, "process.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
@@ -269,7 +314,7 @@ func Run(ctx context.Context, c config.Config, path string) error {
 	cmd := exec.Command(s.Program, s.Args...)
 	cmd.Dir = s.Directory
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = append(os.Environ(), "BIND_IP=127.0.0.1", "ROOT_URL="+s.Origin, "PORT="+strings.TrimPrefix(s.Origin, "http://127.0.0.1:"), "CODEXM_BINARY="+s.Binary, "CODEXM_CONFIG="+s.Config, "CODEXM_WEB_STATE="+s.State, "DO_NOT_TRACK=1", "RSPACK_DEVSERVER_PORT="+strconv.Itoa(func() int { p, _ := strconv.Atoi(strings.TrimPrefix(s.Origin, "http://127.0.0.1:")); return p + 3 }()))
+	cmd.Env = append(os.Environ(), "BIND_IP=127.0.0.1", "ROOT_URL="+s.Origin, "PORT="+port, "CODEXM_BINARY="+s.Binary, "CODEXM_CONFIG="+s.Config, "CODEXM_WEB_STATE="+s.State, "DO_NOT_TRACK=1", "RSPACK_DEVSERVER_PORT="+strconv.Itoa(func() int { p, _ := strconv.Atoi(port); return p + 3 }()))
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if err = cmd.Start(); err != nil {
@@ -290,4 +335,35 @@ func Run(ctx context.Context, c config.Config, path string) error {
 	}
 	_ = os.Remove(filepath.Join(s.State, "ready.json"))
 	return err
+}
+
+func httpsOrigin(value string) (string, error) {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("public origin must be an HTTPS origin without credentials, paths or query strings")
+	}
+	if p := u.Port(); p != "" {
+		n, e := strconv.Atoi(p)
+		if e != nil || n < 1 || n > 65535 {
+			return "", errors.New("invalid HTTPS port")
+		}
+	}
+	return "https://" + strings.ToLower(strings.TrimSuffix(u.Host, ":443")), nil
+}
+func listenAddress(s Spec) (string, error) {
+	address := s.Listen
+	if address == "" {
+		address = strings.TrimPrefix(s.Origin, "http://")
+	}
+	host, port, err := net.SplitHostPort(address)
+	n, numberErr := strconv.Atoi(port)
+	if err != nil || host != "127.0.0.1" || numberErr != nil || n < 1024 || n > 65532 {
+		return "", errors.New("Meteor listener must remain on 127.0.0.1:1024–65532")
+	}
+	if s.Origin != "http://"+address {
+		if _, err := httpsOrigin(s.Origin); err != nil {
+			return "", err
+		}
+	}
+	return address, nil
 }

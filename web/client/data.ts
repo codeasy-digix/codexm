@@ -3,7 +3,7 @@ import { Tracker } from "meteor/tracker";
 import { useSyncExternalStore } from "react";
 import type { Data } from "../imports/contracts/types";
 let state: Data = {},
-  access = { ready: false, message: "" };
+  access = { ready: false, message: "", password: true, modeReady: false };
 const listeners = new Set<() => void>(),
   authListeners = new Set<() => void>();
 const documents = new Map<string, Data>();
@@ -49,7 +49,7 @@ export const useAccess = () =>
     () => access,
   );
 function setAccess(ready: boolean, message = "") {
-  access = { ready, message };
+  access = { ...access, ready, message };
   for (const listener of authListeners) listener();
 }
 export function method<T = any>(name: string, args: any[]): Promise<T> {
@@ -103,13 +103,36 @@ export async function exchange(token: string) {
   if (!response.ok) throw new Error(data.error);
   await authenticate();
 }
+export async function login(username: string, password: string) {
+  const response = await fetch("/auth/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error);
+  await authenticate();
+}
+export async function logout() {
+  const response = await fetch("/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  if (!response.ok) throw new Error("로그아웃하지 못했습니다. 다시 시도하세요.");
+  subscription?.stop(); subscription = undefined;
+  documents.clear(); state = {};
+  for (const listener of listeners) listener();
+  setAccess(false, "로그아웃했습니다.");
+}
 Meteor.startup(() => {
+  void fetch("/auth/mode").then(async response => {
+    if (!response.ok) throw new Error("로그인 설정을 읽을 수 없습니다.");
+    const mode = await response.json();
+    access = { ...access, password: mode.password !== false, modeReady: true };
+    for (const listener of authListeners) listener();
+  }).catch(e => setAccess(false, e.message));
   let token = location.hash.slice(1);
   history.replaceState(null, "", location.pathname);
   Tracker.autorun(() => {
     if (Meteor.status().connected) {
       if (!token) void authenticate();
-    } else setAccess(false, "로컬 서버 연결 중…");
+    } else setAccess(false, "서버 연결 중…");
   });
   if (token) {
     const initial = decodeURIComponent(token);

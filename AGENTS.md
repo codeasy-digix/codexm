@@ -20,7 +20,9 @@
   web launches that CLI in named codexm-cli-* tmux terminals, reads their output,
   and forwards literal input. It does not interpret chat turns or run model logic.
   Closing a web viewer must not stop the CLI. Never replay uncertain input.
-- The Meteor web stays authenticated and loopback-only. Its compact bridge methods
+- The Meteor listener stays authenticated and loopback-only. Explicit public access
+  requires a configured password and an HTTPS reverse proxy with an exact origin;
+  never expose the native listener or retain plaintext passwords. Its bridge methods
   are an explicit allowlist. Render user/native output as text. No shell evaluation
   of thread IDs, account names, input, directory names or terminal keys.
 - Keep running work and old metadata. During migration retire only verified idle
