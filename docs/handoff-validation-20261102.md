@@ -107,3 +107,9 @@ GUI 전체 재시작을 제품의 fallback으로 사용할지는 다른 GUI 작�
 사용자에게 별도로 동작 방식을 확인 중이다. 현재 제품에는 자동 GUI 종료가 없다.
 
 공식 프로토콜 참고: [App Server API](https://learn.chatgpt.com/docs/app-server#api-overview).
+
+### 후속 사용자 결정과 적용
+
+위 검증 이후 사용자는 GUI 전체 재시작을 **매 실행마다 확인**하는 방식으로 선택했다.
+현재 구현·지원 범위는 [GUI 인계](gui-handoff.md), local/mac-secondary/mac-mobile 적용과
+실행한 검사/미검증 범위는 [후속 검증 기록](gui-tmux-validation-20261102.md)을 따른다.
