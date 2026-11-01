@@ -32,6 +32,14 @@
   web launches that CLI in named codexm-cli-* tmux terminals, reads their output,
   and forwards literal input. It does not interpret chat turns or run model logic.
   Closing a web viewer must not stop the CLI. Never replay uncertain input.
+- Before a fresh foreground resume, reuse a matching live codexm tmux CLI only
+  after verifying the receipt, pane/process and that process's open thread-writer
+  file. Preserve running authentication, including old default sessions. Refuse
+  an account mismatch instead of silently reusing a different selection. A GUI
+  owner still needs archive through that GUI; do not claim CLI archive can do it.
+- Keep the TUI event reader separate from the main signal/shutdown loop. Test
+  PTY loss and SIGTERM, including disappearance of owned frontend/bridge PIDs,
+  not only disappearance of a tmux session.
 - The Meteor listener stays authenticated and loopback-only. Explicit public access
   requires a configured password and an HTTPS reverse proxy with an exact origin;
   never expose the native listener or retain plaintext passwords. Its bridge methods

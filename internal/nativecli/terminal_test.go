@@ -5,8 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/codeasy-digix/codexm/internal/config"
 )
 
 func TestStalePaneDoesNotKillOrReplaceAnotherSession(t *testing.T) {
@@ -36,6 +40,131 @@ func TestStalePaneDoesNotKillOrReplaceAnotherSession(t *testing.T) {
 			}
 		})
 	}
+}
+
+func reconnectFixture(t *testing.T, mode string) (config.Config, Launch) {
+	t.Helper()
+	c := fixture(t)
+	h := os.Getenv("HOME")
+	l := Launch{Session: terminalName(c, fixtureID, "default"), Thread: fixtureID, Account: "default", Pane: "%123", Ready: true, Binary: "/official/codex", Cwd: h}
+	if err := os.MkdirAll(filepath.Join(c.Runtime.SharedCodexHome, "thread-writer-locks"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	lockDir, err := filepath.EvalSymlinks(filepath.Join(c.Runtime.SharedCodexHome, "thread-writer-locks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSession(c, l); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+case "$1" in
+has-session) ` + map[bool]string{true: "exit 1", false: "exit 0"}[mode == "closed"] + ` ;;
+display-message)
+  case "$*" in
+    *pane_current_command*) printf '` + l.Session + `|734567|codex\n' ;;
+    *) printf '` + l.Session + `|0|\n' ;;
+  esac ;;
+capture-pane) printf 'existing Codex\n' ;;
+attach-session|switch-client) printf '%s\n' "$@" > "$HOME/attached" ;;
+*) printf '%s\n' "$@" > "$HOME/unexpected-tmux"; exit 8 ;;
+esac
+`
+	lockPID := "734567"
+	if mode == "different-owner" {
+		lockPID = "999999"
+	}
+	lsof := "#!/bin/sh\nprintf 'p" + lockPID + "\\nn" + filepath.Join(lockDir, fixtureID+".lock") + "\\n'\n"
+	if mode == "multiple-chats" {
+		lsof += "printf 'n" + filepath.Join(lockDir, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.lock") + "\\n'\n"
+	}
+	if mode == "closed" {
+		lsof = "#!/bin/sh\nexit 9\n"
+	}
+	for name, body := range map[string]string{"tmux": script, "lsof": lsof} {
+		if err := os.WriteFile(filepath.Join(h, name), []byte(body), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", h+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return c, l
+}
+
+func TestReusableTerminalRequiresCurrentThreadOwnerAndAccount(t *testing.T) {
+	for _, mode := range []string{"live", "closed", "different-owner", "different-account", "multiple-chats"} {
+		t.Run(mode, func(t *testing.T) {
+			c, l := reconnectFixture(t, mode)
+			selected := "default"
+			if mode == "different-account" {
+				selected = "other"
+			}
+			got, err := ReusableTerminal(context.Background(), c, l.Thread, selected)
+			if mode == "different-account" {
+				if err == nil || !strings.Contains(err.Error(), "selected account other was not applied") {
+					t.Fatalf("account switch was hidden: %v", err)
+				}
+			} else if mode == "multiple-chats" {
+				if err == nil || !strings.Contains(err.Error(), "multiple loaded chats") {
+					t.Fatalf("ambiguous chat was attached: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if (got != nil) != (mode == "live") {
+				t.Fatalf("wrong reconnect decision: %+v %v", got, err)
+			}
+			if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "argv")); !os.IsNotExist(err) {
+				t.Fatal("reconnect attempted archive/resume")
+			}
+			if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "unexpected-tmux")); !os.IsNotExist(err) {
+				t.Fatal("reconnect changed a terminal")
+			}
+		})
+	}
+}
+
+func TestForegroundResumeReconnectsWithoutArchive(t *testing.T) {
+	c, l := reconnectFixture(t, "live")
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	for _, nested := range []bool{false, true} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestResumeReconnectionHelper$")
+		tmuxEnv := ""
+		if nested {
+			tmuxEnv = "fixture-tmux"
+		}
+		cmd.Env = append(os.Environ(), "CODEXM_RECONNECT_HELPER="+c.Path, "TMUX="+tmuxEnv)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("reconnect: %v %s", err, out)
+		}
+		want := "attach-session"
+		if nested {
+			want = "switch-client"
+		}
+		data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "attached"))
+		if err != nil || string(data) != want+"\n-t\n="+l.Session+"\n" {
+			t.Fatalf("wrong attach args: %q %v", data, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "argv")); !os.IsNotExist(err) {
+		t.Fatal("resume attempted an archive")
+	}
+}
+
+func TestResumeReconnectionHelper(t *testing.T) {
+	file := os.Getenv("CODEXM_RECONNECT_HELPER")
+	if file == "" {
+		return
+	}
+	c, err := Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = Resume(context.Background(), c, Launch{Thread: fixtureID, Account: "default"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Fatal("reconnect did not exec")
 }
 
 func TestClosedSessionReceiptDoesNotUseTmuxCurrentPane(t *testing.T) {

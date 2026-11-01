@@ -57,6 +57,111 @@ func readSession(c config.Config, s string) (Launch, error) {
 	return l, e
 }
 
+func terminalName(c config.Config, id, account string) string {
+	h := sha256.Sum256([]byte(config.Expand(c.Runtime.SharedCodexHome) + "\x00" + id + "\x00" + account))
+	return "codexm-cli-" + hex.EncodeToString(h[:8])
+}
+
+// ReusableTerminal finds an already-running CLI without acquiring its writer,
+// archiving the chat or sending input. A receipt alone is not proof: the exact
+// live pane must still run Codex and hold this chat's writer-lock file open.
+func ReusableTerminal(ctx context.Context, c config.Config, id, account string) (*Launch, error) {
+	for _, l := range Sessions(c) {
+		if l.Thread != id || l.Session != terminalName(c, l.Thread, l.Account) {
+			continue
+		}
+		screen, err := Screen(ctx, c, l.Session)
+		if err != nil {
+			return nil, err
+		}
+		if !screen.Alive {
+			continue
+		}
+		if !l.Ready {
+			return nil, fmt.Errorf("existing CLI is still preparing this chat; inspect with codexm terminal %s", l.Session)
+		}
+		info, err := tmux(ctx, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_pid}|#{pane_current_command}")
+		if err != nil {
+			return nil, err
+		}
+		parts := strings.Split(strings.TrimSpace(info), "|")
+		if len(parts) != 3 || parts[0] != l.Session || parts[2] != filepath.Base(l.Binary) {
+			return nil, fmt.Errorf("recorded terminal no longer identifies the expected Codex process; inspect with codexm terminal %s", l.Session)
+		}
+		pid, err := strconv.Atoi(parts[1])
+		if err != nil || pid <= 0 {
+			return nil, errors.New("invalid native terminal process")
+		}
+		lsof, err := exec.LookPath("lsof")
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify the existing chat owner without lsof; reconnect explicitly with codexm terminal %s", l.Session)
+		}
+		lockDir, err := filepath.EvalSymlinks(filepath.Join(config.Expand(c.Runtime.SharedCodexHome), "thread-writer-locks"))
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify the existing writer directory; reconnect explicitly with codexm terminal %s", l.Session)
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		cmd := exec.CommandContext(probeCtx, lsof, "-nP", "-a", "-p", strconv.Itoa(pid), "-F", "pn")
+		data, err := cmd.Output()
+		cancel()
+		if err != nil {
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				return nil, fmt.Errorf("cannot verify existing chat ownership; inspect with codexm terminal %s", l.Session)
+			}
+			continue // No open lock: this CLI may have switched to another chat.
+		}
+		owner := false
+		loaded := map[string]bool{}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "p") {
+				owner = line == "p"+strconv.Itoa(pid)
+			}
+			if owner && strings.HasPrefix(line, "n") {
+				file := strings.TrimPrefix(line, "n")
+				if filepath.Dir(file) != lockDir {
+					continue
+				}
+				name := filepath.Base(file)
+				if strings.HasSuffix(name, ".lock") && threadID.MatchString(strings.TrimSuffix(name, ".lock")) {
+					loaded[strings.TrimSuffix(name, ".lock")] = true
+				}
+			}
+		}
+		if !loaded[id] {
+			continue
+		}
+		if len(loaded) != 1 {
+			return nil, fmt.Errorf("existing CLI has multiple loaded chats; its current view cannot be verified. Connect explicitly with codexm terminal %s", l.Session)
+		}
+		if l.Account != account {
+			return nil, fmt.Errorf("this chat is already running under account %s in %s; selected account %s was not applied. Reconnect with codexm terminal %s, or exit that CLI before changing accounts", l.Account, l.Session, account, l.Session)
+		}
+		return &l, nil
+	}
+	return nil, nil
+}
+
+// Attach never detaches another client or stops the existing CLI. Inside tmux,
+// switch the current client instead of nesting another tmux terminal.
+func Attach(ctx context.Context, c config.Config, session string) error {
+	if _, err := Screen(ctx, c, session); err != nil {
+		return err
+	}
+	if _, err := tmux(ctx, "has-session", "-t", "="+session); err != nil {
+		return err
+	}
+	bin, err := exec.LookPath("tmux")
+	if err != nil {
+		return err
+	}
+	command := "attach-session"
+	if os.Getenv("TMUX") != "" {
+		command = "switch-client"
+	}
+	return syscall.Exec(bin, []string{bin, command, "-t", "=" + session}, os.Environ())
+}
+
 // Open creates a named terminal only. There is no supervisor, RPC worker or model
 // request. Reopening the same live thread/account attaches to its existing CLI.
 func Open(ctx context.Context, c config.Config, self, id, account string) (Launch, error) {
@@ -67,8 +172,7 @@ func Open(ctx context.Context, c config.Config, self, id, account string) (Launc
 	if _, e = exec.LookPath("tmux"); e != nil {
 		return l, errors.New("tmux is required for web/native terminal sessions")
 	}
-	h := sha256.Sum256([]byte(config.Expand(c.Runtime.SharedCodexHome) + "\x00" + id + "\x00" + account))
-	l.Session = "codexm-cli-" + hex.EncodeToString(h[:8])
+	l.Session = terminalName(c, id, account)
 	if e = os.MkdirAll(root(c), 0700); e != nil {
 		return l, e
 	}

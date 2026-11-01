@@ -18,7 +18,7 @@ codexm resume THREAD_ID --account ACCOUNT_NAME
 | 키 | 동작 |
 |---|---|
 | ↑ / ↓, PageUp / PageDown | 채팅 선택 |
-| Enter | 직전 등록 계정으로 공식 CLI 재개. 기록이 없거나 등록 해제됐으면 `default` |
+| Enter | 직전 등록 계정으로 CLI 재개 또는 기존 터미널 재연결. 기록이 없으면 `default` |
 | → | 오른쪽 상세 패널에서 채팅 정보 확인·이번 실행 계정 선택 |
 | 상세 패널의 Enter / ← | 계정 선택을 적용하고 목록으로 / 적용 없이 목록으로 |
 | F2 | 전역 설정·전체 계정 관리. Mac 키보드 설정에 따라 Fn+F2 |
@@ -30,7 +30,14 @@ codexm resume THREAD_ID --account ACCOUNT_NAME
 이번 TUI 실행에만 적용하고, 실제 재개한 계정은 다음 실행의 이전 계정으로 남깁니다.
 자동 새로고침은 선택한 채팅과 계정을 유지합니다. 자동 실행·자동 계정 교체는 하지 않습니다.
 
-선택 후에는 계정별 `CODEX_HOME`과 같은 머신의 공용 대화 저장소를 준비하고,
+같은 대화·계정의 codexm CLI가 tmux에 이미 있으면 보관/복원 없이 그 터미널로
+재연결합니다. 저장된 기록뿐 아니라 실제 pane·Codex 프로세스·해당 대화의 writer 파일을
+열고 있는 PID까지 확인합니다. 다른 계정을 선택하면 기존 계정을 조용히 재사용하지 않고
+안내합니다. 기존 CLI를 `/exit`로 닫은 뒤 새 계정으로 재개하세요. `default` 터미널에
+재연결할 때도 실행 중 인증이 유지되며, 이후 바꾼 기본 인증으로 교체되는 것은 아닙니다.
+한 CLI가 여러 대화를 열어둔 경우에는 현재 화면을 확정할 수 없어 명시적인 연결 명령을 안내합니다.
+
+재사용할 터미널이 없으면 계정별 `CODEX_HOME`과 같은 머신의 공용 대화 저장소를 준비하고,
 공식 CLI의 보관/복원 명령을 거쳐 `codex --no-daemon --no-alt-screen resume ID`로
 프로세스를 교체합니다. 이후 입출력·종료 코드·작업 처리는 공식 CLI 그대로입니다.
 이미 보관된 채팅에는 `unarchive`만 실행합니다. 일반 채팅에는
@@ -38,6 +45,8 @@ codexm resume THREAD_ID --account ACCOUNT_NAME
 
 **아직 다른 CLI/GUI가 소유한 채팅은 공식 명령 자체가 거부할 수 있습니다.**
 이 경우 원래 화면에서 해당 채팅을 보관하거나 CLI를 종료한 뒤 다시 선택하세요.
+새 CLI의 `archive`와 원래 소유 GUI의 보관은 다릅니다. 현재 codexm에는 GUI에
+보관 요청을 보내는 자동 연결이 없으며, 기존 CLI 재연결을 GUI 인계 완료로 간주하지 않습니다.
 보관한 채팅은 목록의 `a`로 찾습니다.
 잠금 파일 삭제·DB 직접 수정·외부 프로세스 강제 종료·새 ID fork는 하지 않습니다.
 보관 해제 단계가 실패하면 채팅은 보관 상태일 수 있으며 원래 ID로 다시 복원합니다.
@@ -104,6 +113,9 @@ codexm terminal codexm-cli-SESSION_ID
 웹/별도 터미널 실행에는 tmux가 필요합니다. 현재 터미널에서 바로 재개하는 CLI에는
 tmux가 필요 없습니다. Meteor는 loopback에서 실행합니다. 외부 접근은 별도 웹 로그인과
 HTTPS 프록시를 명시적으로 설정한 경우에만 사용합니다.
+
+기존 tmux CLI의 자동 재연결 검사에는 `lsof`가 필요합니다(macOS 기본 제공).
+없는 환경에서는 자동 판정 대신 `codexm terminal SESSION`으로 명시적으로 연결합니다.
 
 ```sh
 codexm web user --username YOUR_USERNAME  # 비밀번호를 숨겨서 입력; Codex 로그인과 별개

@@ -1,11 +1,12 @@
 mod bridge;
+mod events;
 mod input;
 mod model;
 #[cfg(test)]
 mod tests;
 mod ui;
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{Event, KeyEventKind};
 use model::{Action, App, Preferences, View};
 use serde_json::json;
 use std::env;
@@ -70,6 +71,7 @@ fn run() -> io::Result<()> {
     let mut resume = None;
     let mut pending: Option<(&'static str, serde_json::Value)> = None;
     let result = ratatui::run(|terminal| -> io::Result<()> {
+        let events = events::Events::start();
         loop {
             if terminated.load(Ordering::Relaxed) {
                 break;
@@ -92,8 +94,8 @@ fn run() -> io::Result<()> {
                 ));
             }
             terminal.draw(|f| ui::draw(f, &app))?;
-            let action = if event::poll(Duration::from_millis(100))? {
-                match event::read()? {
+            let action = if let Some(event) = events.next()? {
+                match event {
                     Event::Key(key) if key.kind != KeyEventKind::Release => app.key(key),
                     _ => Action::None,
                 }

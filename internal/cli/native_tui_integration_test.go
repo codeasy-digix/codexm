@@ -216,4 +216,48 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 			t.Fatal("owned login staging was leaked")
 		}
 	}
+	// Closing a terminal while Crossterm is waiting must not leave the UI or
+	// bridge spinning in the background. Only these synthetic children are used.
+	for _, closePTY := range []bool{false, true} {
+		tmux("respawn-pane", "-k", "-t", pane, binary, "--config", c.Path)
+		waitText("한글 진행 작업")
+		uiPIDText := strings.TrimSpace(tmux("display-message", "-p", "-t", pane, "#{pane_pid}"))
+		uiPID, err := strconv.Atoi(uiPIDText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned, err := exec.Command("pgrep", "-P", uiPIDText).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownedPID, err := strconv.Atoi(strings.TrimSpace(string(owned)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cleanupNeeded := true
+		t.Cleanup(func() {
+			if !cleanupNeeded {
+				return
+			}
+			for _, owned := range []int{uiPID, ownedPID} {
+				args, err := exec.Command("ps", "-p", strconv.Itoa(owned), "-o", "args=").Output()
+				if err == nil && strings.Contains(string(args), c.Path) {
+					_ = syscall.Kill(owned, syscall.SIGKILL)
+				}
+			}
+		})
+		if closePTY {
+			tmux("kill-session", "-t", "="+session)
+		} else if err := syscall.Kill(uiPID, syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+		until := time.Now().Add(5 * time.Second)
+		for time.Now().Before(until) && (syscall.Kill(uiPID, 0) == nil || syscall.Kill(ownedPID, 0) == nil) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if syscall.Kill(uiPID, 0) == nil || syscall.Kill(ownedPID, 0) == nil {
+			t.Fatalf("terminal shutdown left owned processes: closePTY=%v", closePTY)
+		}
+		cleanupNeeded = false
+	}
 }

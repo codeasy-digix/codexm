@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -28,7 +27,7 @@ const compactHelp = `codexm — local chats, accounts, official Codex CLI
 
 codexm                                      TUI: Enter resumes; Right details; F2 settings
 codexm list [--json] [--archived]             Chats across every local project
-codexm resume THREAD --account NAME          Resume in this terminal
+codexm resume THREAD --account NAME          Resume or reconnect to a matching live CLI
 codexm resume THREAD --account NAME --terminal  Open a named tmux terminal
 codexm account [NAME] [--login|--set-default]  Native account selection (unchanged)
 codexm accounts                              Saved local account information
@@ -169,14 +168,7 @@ func Main(args []string) error {
 		if len(args) != 1 {
 			return errors.New("usage: codexm terminal SESSION")
 		}
-		if _, e := nativecli.Screen(ctx, c, args[0]); e != nil {
-			return e
-		}
-		p, e := exec.LookPath("tmux")
-		if e != nil {
-			return e
-		}
-		return syscall.Exec(p, []string{p, "attach-session", "-t", "=" + args[0]}, os.Environ())
+		return nativecli.Attach(ctx, c, args[0])
 	case "list":
 		f := flag.NewFlagSet("list", flag.ContinueOnError)
 		j := f.Bool("json", false, "JSON")

@@ -295,6 +295,12 @@ func ResumeArgs(l Launch) []string {
 	return []string{l.Binary, "--no-daemon", "--no-alt-screen", "resume", l.Thread}
 }
 func Resume(ctx context.Context, c config.Config, l Launch) error {
+	if existing, err := ReusableTerminal(ctx, c, l.Thread, l.Account); err != nil {
+		return err
+	} else if existing != nil {
+		fmt.Printf("Reconnecting to existing %s terminal (%s); its running authentication and work are preserved.\n", existing.Account, existing.Session)
+		return Attach(ctx, c, existing.Session)
+	}
 	if err := Prepare(ctx, c, l); err != nil {
 		return err
 	}

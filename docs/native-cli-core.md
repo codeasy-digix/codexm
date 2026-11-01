@@ -13,7 +13,9 @@ supervisor·manager·policy·daemon·tui 패키지의 실행 심벌이 없다.
 2. 과거 관리 DB와 작은 실행 영수증에서 알 수 있는 이전 계정만 표시한다.
 3. TUI Enter는 이전 등록 계정 또는 default로 재개한다. Right는 이번 계정 선택,
    F2는 전체 계정 관리다. 계정 홈·공통 설정·대화 저장소 연결을 검증한다.
-4. 공식 CLI로 archive/unarchive를 실행한다. 이미 보관된 채팅에는 unarchive만 한다.
+4. 같은 계정의 기존 codexm CLI가 실제로 이 채팅을 소유하면 tmux 재연결로 끝낸다.
+   저장된 영수증·pane·프로세스·열린 writer 파일 PID를 함께 확인하며 다른 계정은 거부한다.
+   그렇지 않으면 공식 archive/unarchive를 실행한다. 보관된 채팅에는 unarchive만 한다.
 5. 현재 터미널에서는 `exec`로 `codex --no-daemon --no-alt-screen resume ID`에 교체된다.
    모델·effort·권한·목표를 codexm이 다시 지정하지 않는다.
 6. 선택적 이전 웹에서는 같은 CLI를 이름 있는 tmux에서 실행하고 출력과 입력만 전달한다.
@@ -49,6 +51,11 @@ Codex CLI 0.166.0을 임시 HOME/대화와 로컬 mock model로 검증한 결과
 resume은 실행하지 않는다. unarchive 단계가 실패하면 채팅이 보관 상태로 남을 수
 있으며, 같은 ID로 보관 해제를 재시도한다. 성공한 것처럼 숨기거나 새 ID를 만들지 않는다.
 같은 채팅에 여러 화면에서 동시에 지시하는 방식은 지원 범위가 아니다.
+
+`starcraft1`의 2026-11-02 오류는 이미 실행된 codexm CLI에 새 CLI가 archive를
+시도한 경우였다. 새 foreground 경로는 같은 터미널에 다시 연결한다. 이는 GUI에
+보관 요청을 보내는 기능이 아니며 GUI의 writer 인계는 여전히 원래 앱에서 수행한다.
+[수정 검증](reconnect-validation-20261102.md)을 참고한다.
 
 codexm의 보관/복원 절차끼리는 별도 로컬 잠금으로 직렬화한다. 이 잠금은 codexm의
 state 아래에만 두며 공식 writer lock과 무관하다. 브라우저 mutation에는 작업 ID를
