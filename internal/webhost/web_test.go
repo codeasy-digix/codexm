@@ -71,3 +71,46 @@ func TestWebNodeIsIndependentOfShellDefault(t *testing.T) {
 		t.Fatal("relative configured Node accepted")
 	}
 }
+
+func TestWebStatusAndStopUseReceiptServer(t *testing.T) {
+	for _, server := range []string{"", "codex"} {
+		t.Run("server="+server, func(t *testing.T) {
+			c := config.Defaults()
+			c.Storage.StateDir = t.TempDir()
+			state := filepath.Join(c.StateDir(), "web")
+			os.MkdirAll(state, 0700)
+			spec := Spec{Session: "codexm-web", TmuxServer: server, State: state, Origin: "http://127.0.0.1:4317"}
+			b, _ := json.Marshal(spec)
+			os.WriteFile(filepath.Join(state, "launch.json"), b, 0600)
+			bin := t.TempDir()
+			expected := server
+			if expected == "" {
+				expected = "default"
+			}
+			script := `#!/bin/sh
+[ "$1" = "-L" ] && [ "$2" = "` + expected + `" ] || exit 99
+shift 2
+case "$1" in
+has-session) [ ! -e '` + filepath.Join(bin, "stopped") + `' ];;
+send-keys) touch '` + filepath.Join(bin, "stopped") + `';;
+*) exit 98;;
+esac
+`
+			os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0700)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			var out strings.Builder
+			if err := Command(context.Background(), c, "/unused", []string{"status"}, &out); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), `"tmux_server":"`+expected+`"`) || !strings.Contains(out.String(), `"starting":true`) {
+				t.Fatal(out.String())
+			}
+			if err := Command(context.Background(), c, "/unused", []string{"stop"}, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(bin, "stopped")); err != nil {
+				t.Fatal("stop was routed to wrong socket")
+			}
+		})
+	}
+}

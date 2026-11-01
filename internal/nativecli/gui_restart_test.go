@@ -3,11 +3,17 @@ package nativecli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/codeasy-digix/codexm/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGUIRestartRequiresFreshInteractiveConsent(t *testing.T) {
@@ -143,4 +149,74 @@ func TestGUIOwnerReadOnlyProbe(t *testing.T) {
 		t.Fatal("reused PID accepted")
 	}
 	t.Logf("verified GUI PID %d and writer PID %d; no signals sent", owner.Process.PID, owner.Writer.PID)
+}
+
+// Exercise the actual bounded helper handshake without ever requesting GUI stop.
+func TestGUIReopenHelperArmsAndCancelsWithoutStoppingGUI(t *testing.T) {
+	id, self := os.Getenv("CODEXM_GUI_OWNER_TEST_ID"), os.Getenv("CODEXM_TUI_TEST_BINARY")
+	if id == "" || self == "" {
+		t.Skip("opt-in installed GUI read-only/helper cancellation test")
+	}
+	ctx := context.Background()
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := findGUIOwner(ctx, c, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Path = filepath.Join(t.TempDir(), "config.toml")
+	c.Storage.StateDir = filepath.Join(filepath.Dir(c.Path), "state")
+	minimal := fmt.Sprintf("[runtime]\nshared_codex_home=%q\n[storage]\nstate_dir=%q\n", config.Expand(c.Runtime.SharedCodexHome), c.Storage.StateDir)
+	if err = os.WriteFile(c.Path, []byte(minimal), 0600); err != nil {
+		t.Fatal(err)
+	}
+	caller, err := inspectProcess(ctx, os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, 8)
+	if _, err = rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	session := "codexm-gui-reopen-" + hex.EncodeToString(nonce)
+	dir := filepath.Join(root(c), "gui-restarts", session)
+	os.MkdirAll(dir, 0700)
+	file := filepath.Join(dir, "request.json")
+	spec := guiRestartSpec{Owner: owner, Caller: caller, Thread: id, Shared: config.Expand(c.Runtime.SharedCodexHome), Session: session, Created: time.Now().Unix()}
+	if err = writeJSON(file, spec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tmux(ctx, CodexTmuxServer, "new-session", "-d", "-s", session, "-e", "PATH="+os.Getenv("PATH"), self, "--config", c.Path, "__gui-reopen", file); err != nil {
+		t.Fatal(err)
+	}
+	defer tmux(ctx, CodexTmuxServer, "kill-session", "-t", "="+session)
+	if _, err = tmux(ctx, CodexTmuxServer, "set-option", "-w", "-t", session, "remain-on-exit", "off"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !markerExists(filepath.Join(dir, "ready.json")) {
+		if markerExists(filepath.Join(dir, "result.json")) || time.Now().After(deadline) {
+			b, _ := os.ReadFile(filepath.Join(dir, "result.json"))
+			t.Fatalf("helper readiness failed: %s", b)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	(&guiRecovery{dir: dir}).fail()
+	for !markerExists(filepath.Join(dir, "result.json")) {
+		if time.Now().After(deadline) {
+			t.Fatal("helper did not cancel")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	var result struct{ Error string }
+	b, _ := os.ReadFile(filepath.Join(dir, "result.json"))
+	if err = json.Unmarshal(b, &result); err != nil || result.Error != "" {
+		t.Fatalf("cancel result: %s %v", b, err)
+	}
+	if markerExists(filepath.Join(dir, "stop-requested")) || !sameProcess(ctx, owner.Process) || !sameProcess(ctx, owner.Writer) {
+		t.Fatal("cancellation affected GUI ownership")
+	}
+	t.Log("real recovery helper acknowledged readiness and cancelled; GUI/writer PIDs unchanged")
 }

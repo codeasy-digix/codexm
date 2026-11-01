@@ -29,8 +29,19 @@ import (
 type Spec struct {
 	Session, Origin, Directory, Program, Config, Binary, State string
 	Listen                                                     string
+	TmuxServer                                                 string `json:"tmux_server,omitempty"`
 	Args                                                       []string
 	PID                                                        int
+}
+
+func webTmuxServer(spec Spec) string {
+	if spec.TmuxServer == "" {
+		return "default"
+	}
+	return spec.TmuxServer
+}
+func webTmux(ctx context.Context, spec Spec, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "tmux", append([]string{"-L", webTmuxServer(spec)}, args...)...)
 }
 
 func Command(ctx context.Context, c config.Config, self string, args []string, out io.Writer) error {
@@ -66,7 +77,10 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	var spec Spec
 	b, _ := os.ReadFile(path)
 	_ = json.Unmarshal(b, &spec)
-	alive := spec.Session != "" && exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+spec.Session).Run() == nil
+	if spec.TmuxServer != "" && spec.TmuxServer != "codex" {
+		return errors.New("unrecognized web tmux server; launch receipt preserved")
+	}
+	alive := spec.Session != "" && webTmux(ctx, spec, "has-session", "-t", "="+spec.Session).Run() == nil
 	switch action {
 	case "verify":
 		m, err := webbundle.Verify(config.Expand(*bundle), true)
@@ -75,7 +89,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		}
 		return json.NewEncoder(out).Encode(m)
 	case "status":
-		return json.NewEncoder(out).Encode(map[string]any{"running": alive && ready(state, spec.Origin), "starting": alive && !ready(state, spec.Origin), "url": spec.Origin, "session": spec.Session, "state": state})
+		return json.NewEncoder(out).Encode(map[string]any{"running": alive && ready(state, spec.Origin), "starting": alive && !ready(state, spec.Origin), "url": spec.Origin, "session": spec.Session, "state": state, "tmux_server": webTmuxServer(spec)})
 	case "logs":
 		b, err := os.ReadFile(filepath.Join(state, "web.log"))
 		if err != nil {
@@ -91,11 +105,11 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 			fmt.Fprintln(out, "Local web is stopped.")
 			return nil
 		}
-		if err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", spec.Session+":", "C-c").Run(); err != nil {
+		if err := webTmux(ctx, spec, "send-keys", "-t", spec.Session+":", "C-c").Run(); err != nil {
 			return err
 		}
 		for range 100 {
-			if exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+spec.Session).Run() != nil {
+			if webTmux(ctx, spec, "has-session", "-t", "="+spec.Session).Run() != nil {
 				fmt.Fprintln(out, "Local web and bridge stopped. Native CLI terminals keep running.")
 				return nil
 			}
@@ -133,7 +147,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		return errors.New("local web port is already in use")
 	}
 	probe.Close()
-	spec = Spec{Session: "codexm-web", Origin: "http://" + address, Config: c.Path, Binary: self, State: state}
+	spec = Spec{Session: "codexm-web", TmuxServer: "codex", Origin: "http://" + address, Config: c.Path, Binary: self, State: state}
 	spec.Listen = address
 	if *publicOrigin != "" {
 		spec.Origin, err = httpsOrigin(*publicOrigin)
@@ -175,7 +189,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 			return err
 		}
 	}
-	if exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+spec.Session).Run() == nil {
+	if webTmux(ctx, spec, "has-session", "-t", "="+spec.Session).Run() == nil {
 		return errors.New("named web session belongs to another configuration")
 	}
 	b, _ = json.Marshal(spec)
@@ -184,15 +198,15 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	}
 	_ = os.Remove(filepath.Join(state, "ready.json"))
 	command := cr.ShellQuote(self) + " --config " + cr.ShellQuote(c.Path) + " __web " + cr.ShellQuote(path)
-	if err = exec.CommandContext(ctx, "tmux", "new-session", "-d", "-s", spec.Session, command).Run(); err != nil {
+	if err = webTmux(ctx, spec, "new-session", "-d", "-s", spec.Session, command).Run(); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "tmux attach -t %s\n", spec.Session)
+	fmt.Fprintf(out, "tmux -L %s attach -t %s\n", webTmuxServer(spec), spec.Session)
 	for range 600 {
 		if ready(state, spec.Origin) {
 			return open(ctx, state, spec.Origin, *noOpen, out)
 		}
-		if exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+spec.Session).Run() != nil {
+		if webTmux(ctx, spec, "has-session", "-t", "="+spec.Session).Run() != nil {
 			return errors.New("web exited during startup; inspect codexm web logs")
 		}
 		select {
