@@ -58,8 +58,10 @@ CODEX_HOME 경로의 Unix socket 길이 제한도 피한다.
 설치 전후 인증·공통 설정·제품 설정 13개 파일의 내용과 symlink가 동일했다.
 GUI와 기존 공식 서버/CLI 프로세스는 설치·CLI 확인 과정에서 유지됐다.
 
-설치 버전:
+최초 검증 설치 버전:
 `v0.6.2-source-ffcfcb0da685bc68c17426b9075a1fa3a9ed23dfda491b30b88a648c561c3911`.
+이후 도움말을 실제 분기와 맞춘 최종 로컬 설치 버전은
+`v0.6.2-source-b8e5f7a549fab54a1a4680f4b9c2464626075125123d8f3e84e9f326e1471f69`다.
 private 증거는 `~/.local/state/codexm/validation/native-handoff-20261102/`에 보관한다.
 대화 화면·인증·개인 설정 원문은 Git에 포함하지 않는다.
 
@@ -84,6 +86,12 @@ private 증거는 `~/.local/state/codexm/validation/native-handoff-20261102/`에
 공용 데몬의 loaded 목록에 대상 대화는 없었다. 따라서 GUI 자동 인계 검증은
 **성공하지 않았다**. 시작 환경변수는 이전의 미설정 상태로 복원했고, GUI는 실행 중이다.
 검증 tmux는 정리됐으며 Discord에는 완료가 아닌 대기 상태를 알렸다.
+
+최초 설치 직후의 13개 파일 동일 검사와 GUI 재시작 이후 검사는 구분한다.
+공통 `config.toml` 수정 시각은 03:40:37 KST로 GUI 재시작 시점과 일치하며,
+03:52의 도움말 수정 재설치보다 앞선다. 최초 기준과 비교하면 공통 config 및 이를
+참조하는 계정 config의 내용이 달라졌고 인증 파일은 동일했다. 해당 비교만으로
+config 작성 주체를 확정하지 않으며, 이후의 설정 변경을 이전 값으로 덮어쓰지 않았다.
 
 설치된 앱 코드를 추가 확인한 결과, 로컬 연결의 `getConfigOverrides`는 항상
 `plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=...` 항목을
