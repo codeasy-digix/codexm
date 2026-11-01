@@ -75,6 +75,27 @@ private 증거는 `~/.local/state/codexm/validation/native-handoff-20261102/`에
 
 사용자는 다른 GUI 작업의 중단 가능성을 안내받은 후, 로컬 GUI 재시작을 포함한
 이 연결 모드의 검증을 승인했다. 현재 설치된 제품은 이 환경변수를 자동으로 설정하지
-않는다. GUI 재시작 후 연결/실제 인계 검증 결과는 후속 기록으로 추가한다.
+않는다.
+
+### 실제 GUI 재시작 결과
+
+승인된 검증에서 GUI main PID 28440을 SIGTERM으로 종료하고 앱을 다시 실행했다.
+새 main PID는 86555였으며, 앱은 다시 별도 CLI 서버 86743/87255를 만들었다.
+공용 데몬의 loaded 목록에 대상 대화는 없었다. 따라서 GUI 자동 인계 검증은
+**성공하지 않았다**. 시작 환경변수는 이전의 미설정 상태로 복원했고, GUI는 실행 중이다.
+검증 tmux는 정리됐으며 Discord에는 완료가 아닌 대기 상태를 알렸다.
+
+설치된 앱 코드를 추가 확인한 결과, 로컬 연결의 `getConfigOverrides`는 항상
+`plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=...` 항목을
+포함한다. 공용 데몬 분기는 동시에 override 배열이 비어 있기를 요구한다.
+따라서 현재 앱 빌드의 이 실행 경로는 환경변수만으로 전환할 수 없다. 앱 코드나
+서명 검증을 변경하거나 필수 설정을 제거하지 않았다.
+
+근거 파일은 설치된 app.asar의
+`.vite/build/early-bootstrap-439-a0f25ba32c465de1.js` (`s6`, `getConfigOverrides`)와
+`.vite/build/early-bootstrap-824-3c24dda6dba622ec.js` (`V.connect`)다.
+실제 실행 증거는 private `gui-before.json`, `gui-after.json`, `gui-notify.json`에 있다.
+GUI 전체 재시작을 제품의 fallback으로 사용할지는 다른 GUI 작업도 중단하는 동작이므로
+사용자에게 별도로 동작 방식을 확인 중이다. 현재 제품에는 자동 GUI 종료가 없다.
 
 공식 프로토콜 참고: [App Server API](https://learn.chatgpt.com/docs/app-server#api-overview).
