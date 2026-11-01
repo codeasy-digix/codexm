@@ -9,16 +9,20 @@ target_arch=$(uname -m)
 case "$target_arch" in aarch64) target_arch=arm64 ;; x86_64) target_arch=amd64 ;; esac
 case "$target_os/$target_arch" in darwin/arm64|darwin/amd64|linux/arm64|linux/amd64) ;; *) echo 'Unsupported platform' >&2; exit 2 ;; esac
 build=false
+from_build=
 web_bundle=
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --build) build=true ;;
+    --from-build) shift; from_build=${1:?--from-build needs an absolute verified build directory} ;;
     --web) shift; web_bundle=${1:?--web needs an absolute built bundle directory} ;;
-    *) echo 'Usage: ./install.sh [--build] [--web /absolute/bundle]' >&2; exit 2 ;;
+    *) echo 'Usage: ./install.sh [--build | --from-build /absolute/build] [--web /absolute/bundle]' >&2; exit 2 ;;
   esac
   shift
 done
 case "$web_bundle" in ''|/*) ;; *) echo '--web needs an absolute bundle directory' >&2; exit 2 ;; esac
+case "$from_build" in ''|/*) ;; *) echo '--from-build needs an absolute directory' >&2; exit 2 ;; esac
+if $build && [ -n "$from_build" ]; then echo 'Choose --build or --from-build.' >&2; exit 2; fi
 # codexm manages an existing official Codex installation; it never installs or
 # replaces codex. Check before creating directories, building or downloading.
 codex_binary=$(command -v codex 2>/dev/null || true)
@@ -67,6 +71,17 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 mkdir "$stage/payload"
+if [ -n "$from_build" ]; then
+  install_mode=source
+  for component in codexm codexm-tui; do
+    test -f "$from_build/$component" || { echo "Missing build component: $component" >&2; exit 1; }
+    expected=$(awk -v file="$component" '$2 == file {print $1}' "$from_build/SHA256SUMS")
+    if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$from_build/$component" | awk '{print $1}'); else actual=$(shasum -a 256 "$from_build/$component" | awk '{print $1}'); fi
+    [ -n "$expected" ] && [ "$expected" = "$actual" ] || { echo "Build checksum mismatch: $component" >&2; exit 1; }
+    cp "$from_build/$component" "$stage/payload/$component"
+    chmod 755 "$stage/payload/$component"
+  done
+else
 case "$build" in
   true) install_mode=source; "$source_root/build.sh" "$target_os" "$target_arch" "$stage/payload/codexm" ;;
   false)
@@ -80,6 +95,7 @@ case "$build" in
     tar -xzf "$stage/$archive" -C "$stage/payload"
     ;;
 esac
+fi
 [ "$("$stage/payload/codexm" --version)" = "codexm $version" ] || { echo 'Installed version would not match.' >&2; exit 1; }
 if [ -f "$stage/payload/codexm-tui" ]; then
   [ "$("$stage/payload/codexm-tui" --version)" = "codexm-tui $version" ] || { echo 'Terminal component version would not match.' >&2; exit 1; }

@@ -215,3 +215,53 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 		t.Fatal("legacy entrypoint recreated")
 	}
 }
+
+func TestTransferredBuildRequiresBothMatchingComponents(t *testing.T) {
+	repo := t.TempDir()
+	source, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(repo, "install.sh"), source, 0700)
+	os.WriteFile(filepath.Join(repo, "VERSION"), []byte("0.1.0\n"), 0600)
+	payload := filepath.Join(repo, "payload")
+	os.MkdirAll(payload, 0700)
+	cli := []byte("#!/bin/sh\necho 'codexm 0.1.0'\n")
+	tui := []byte("#!/bin/sh\necho 'codexm-tui 0.1.0'\n")
+	os.WriteFile(filepath.Join(payload, "codexm"), cli, 0700)
+	os.WriteFile(filepath.Join(payload, "codexm-tui"), tui, 0700)
+	os.WriteFile(filepath.Join(payload, "SHA256SUMS"), []byte(fmt.Sprintf("%x  codexm\n%x  codexm-tui\n", sha256.Sum256(cli), sha256.Sum256(tui))), 0600)
+	bin := filepath.Join(repo, "bin")
+	os.MkdirAll(bin, 0700)
+	os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\necho 'codex-cli fixture'\n"), 0700)
+	root := filepath.Join(repo, "installed")
+	run := func() error {
+		cmd := exec.Command("sh", filepath.Join(repo, "install.sh"), "--from-build", payload)
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEXM_INSTALL_ROOT="+root, "CODEXM_LINK_DIR="+filepath.Join(repo, "links"))
+		out, e := cmd.CombinedOutput()
+		if e != nil {
+			return fmt.Errorf("%w: %s", e, out)
+		}
+		return nil
+	}
+	if err = run(); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(root, "bin", "codexm")
+	before, _ := os.Readlink(current)
+	if err = run(); err != nil {
+		t.Fatal("idempotent transfer", err)
+	}
+	os.WriteFile(filepath.Join(payload, "codexm-tui"), []byte("corrupt"), 0700)
+	if run() == nil {
+		t.Fatal("corrupt component accepted")
+	}
+	after, _ := os.Readlink(current)
+	if before != after {
+		t.Fatal("failed update replaced installation")
+	}
+	os.Remove(filepath.Join(payload, "codexm-tui"))
+	if run() == nil {
+		t.Fatal("missing TUI accepted")
+	}
+}

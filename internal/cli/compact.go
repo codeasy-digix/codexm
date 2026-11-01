@@ -40,7 +40,9 @@ codexm shell-init zsh                        Shell integration
 
 Unlocked chats resume directly; archived chats are unarchived first.
 An owning shared daemon can archive/release the selected chat before resume.
-Separate GUI/CLI writers must release it first; codexm never force-closes them.
+A verified macOS GUI can restart after confirmation EACH time (all GUI work stops).
+Without an interactive terminal, or for another CLI, its owner must release it.
+New managed terminals use tmux -L codex; live legacy terminals stay on default.
 Then codex --no-daemon --no-alt-screen resume THREAD owns all subsequent work.
 No manager model, automatic account rotation, scheduling or history sync.
 Existing manager data is read-only metadata; old worker services are not started.
@@ -98,7 +100,7 @@ func Main(args []string) error {
 		fmt.Print(compactHelp)
 		return nil
 	}
-	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "bridge": true, "doctor": true}
+	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "bridge": true, "doctor": true}
 	if !allowed[command] {
 		return fmt.Errorf("%q is excluded from compact codexm; use list, resume, account or web (existing work is preserved)", command)
 	}
@@ -126,6 +128,13 @@ func Main(args []string) error {
 		webctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
 		return webhost.Run(webctx, c, args[0])
+	case "__gui-reopen":
+		if len(args) != 1 {
+			return errors.New("missing GUI recovery spec")
+		}
+		helperctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+		return nativecli.RunGUIReopen(helperctx, c, args[0])
 	case "__native-run":
 		if len(args) != 1 {
 			return errors.New("missing native launch spec")
@@ -162,9 +171,9 @@ func Main(args []string) error {
 			}
 		}
 		if *jsonOutput {
-			return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "native-cli", "codex": r.Binary, "chats": len(list.Sessions), "archived": archived, "history": config.Expand(c.Runtime.SharedCodexHome), "manager": false, "scheduler": false, "history_sync": false})
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "native-cli", "codex": r.Binary, "chats": len(list.Sessions), "archived": archived, "history": config.Expand(c.Runtime.SharedCodexHome), "manager": false, "scheduler": false, "history_sync": false, "tmux_server": nativecli.CodexTmuxServer, "gui_restart": "confirm-each-time"})
 		}
-		fmt.Printf("Mode: official CLI handoff\nCodex: %s\nLocal chats: %d (%d archived)\nHistory: %s\nManager/scheduler/history-sync: excluded\n", r.Binary, len(list.Sessions), archived, config.Expand(c.Runtime.SharedCodexHome))
+		fmt.Printf("Mode: official CLI handoff\nCodex: %s\nLocal chats: %d (%d archived)\nHistory: %s\nTmux server: codex; GUI restart: confirm each time\nManager/scheduler/history-sync: excluded\n", r.Binary, len(list.Sessions), archived, config.Expand(c.Runtime.SharedCodexHome))
 		return nil
 	case "terminal":
 		if len(args) != 1 {
@@ -231,7 +240,7 @@ func Main(args []string) error {
 		if *background {
 			l, e := nativecli.Open(ctx, c, self, id, *name)
 			if e == nil {
-				fmt.Printf("Native terminal: %s\ntmux attach -t %s\n", l.Session, l.Session)
+				fmt.Printf("Native terminal: %s\n%s\n", l.Session, nativecli.AttachCommand(l))
 			}
 			return e
 		}

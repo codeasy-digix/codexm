@@ -74,7 +74,7 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	session := fmt.Sprintf("codexm-tui-test-%d", os.Getpid())
 	tmux := func(args ...string) string {
 		t.Helper()
-		out, e := exec.Command("tmux", args...).CombinedOutput()
+		out, e := exec.Command("tmux", append([]string{"-L", "codex"}, args...)...).CombinedOutput()
 		if e != nil {
 			t.Fatalf("tmux %s: %v %s", args[0], e, out)
 		}
@@ -82,7 +82,7 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	}
 	// Ensure startup begins with a terminal's normal modes; the fake CLI observes them after exec.
 	pane := strings.TrimSpace(tmux("new-session", "-d", "-P", "-F", "#{pane_id}", "-s", session, "-x", "120", "-y", "38", "-e", "PATH="+os.Getenv("PATH"), "-e", "HOME="+root, "-e", "CODEX_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_SQLITE_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_ACCOUNT=default", "/bin/sleep", "60"))
-	t.Cleanup(func() { exec.Command("tmux", "kill-session", "-t", "="+session).Run() })
+	t.Cleanup(func() { exec.Command("tmux", "-L", "codex", "kill-session", "-t", "="+session).Run() })
 	tmux("set-option", "-w", "-t", pane, "remain-on-exit", "on")
 	terminalModes := func() string {
 		t.Helper()
@@ -106,7 +106,7 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 		t.Helper()
 		until := time.Now().Add(12 * time.Second)
 		for time.Now().Before(until) {
-			out, e := exec.Command("tmux", "capture-pane", "-p", "-t", pane).CombinedOutput()
+			out, e := exec.Command("tmux", "-L", "codex", "capture-pane", "-p", "-t", pane).CombinedOutput()
 			if e == nil && strings.Contains(string(out), text) {
 				return
 			}

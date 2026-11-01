@@ -111,16 +111,17 @@ func Accounts(c config.Config) ([]Account, error) {
 }
 
 type Launch struct {
-	Thread  string `json:"thread_id"`
-	Account string `json:"account"`
-	Cwd     string `json:"cwd"`
-	Session string `json:"session,omitempty"`
-	Pane    string `json:"pane,omitempty"`
-	At      int64  `json:"at"`
-	Binary  string `json:"binary"`
-	Config  string `json:"config"`
-	Ready   bool   `json:"ready"`
-	Error   string `json:"error,omitempty"`
+	Thread     string `json:"thread_id"`
+	Account    string `json:"account"`
+	Cwd        string `json:"cwd"`
+	Session    string `json:"session,omitempty"`
+	TmuxServer string `json:"tmux_server,omitempty"`
+	Pane       string `json:"pane,omitempty"`
+	At         int64  `json:"at"`
+	Binary     string `json:"binary"`
+	Config     string `json:"config"`
+	Ready      bool   `json:"ready"`
+	Error      string `json:"error,omitempty"`
 }
 
 func root(c config.Config) string { return filepath.Join(c.StateDir(), "native-cli") }
@@ -268,7 +269,7 @@ func Prepare(ctx context.Context, c config.Config, l Launch) error {
 		}
 		if !released {
 			if cr.WriterBusy(config.Expand(c.Runtime.SharedCodexHome), l.Thread) {
-				return fmt.Errorf("chat %s still has an active writer; automatic handoff from this GUI/standalone CLI is unavailable. Archive this chat in its owning GUI or exit its CLI, then retry; resume was not started", l.Thread)
+				return &ForeignWriterError{Thread: l.Thread}
 			}
 			// Its owner may have exited while the read-only daemon probe ran.
 			archived, err = archivedState(ctx, c, l.Thread)
@@ -320,9 +321,11 @@ func Resume(ctx context.Context, c config.Config, l Launch) error {
 		fmt.Printf("Reconnecting to existing %s terminal (%s); its running authentication and work are preserved.\n", existing.Account, existing.Session)
 		return Attach(ctx, c, existing.Session)
 	}
-	if err := Prepare(ctx, c, l); err != nil {
+	cleanup, err := prepareInteractive(ctx, c, l)
+	if err != nil {
 		return err
 	}
+	defer cleanup()
 	l.Ready = true
 	if err := writeReceipt(c, l); err != nil {
 		return err
@@ -331,7 +334,7 @@ func Resume(ctx context.Context, c config.Config, l Launch) error {
 		return err
 	}
 	// Replace codexm: the official CLI owns terminal input, signals and exit code.
-	err := syscall.Exec(l.Binary, ResumeArgs(l), environment(c, l.Account))
+	err = syscall.Exec(l.Binary, ResumeArgs(l), environment(c, l.Account))
 	l.Ready = false
 	_ = writeReceipt(c, l)
 	return err

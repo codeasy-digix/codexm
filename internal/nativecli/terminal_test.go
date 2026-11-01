@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/codeasy-digix/codexm/internal/config"
 )
@@ -18,7 +19,7 @@ func TestStalePaneDoesNotKillOrReplaceAnotherSession(t *testing.T) {
 		t.Run(display, func(t *testing.T) {
 			c := fixture(t)
 			h := os.Getenv("HOME")
-			script := "#!/bin/sh\ncase \"$1\" in\ndisplay-message) " + display + " ;;\nhas-session) exit 0 ;;\n*) printf '%s\\n' \"$1\" >> \"$HOME/unexpected-tmux\" ;;\nesac\n"
+			script := "#!/bin/sh\n[ \"$1\" = \"-L\" ] && shift 2\ncase \"$1\" in\ndisplay-message) " + display + " ;;\nhas-session) exit 0 ;;\n*) printf '%s\\n' \"$1\" >> \"$HOME/unexpected-tmux\" ;;\nesac\n"
 			if err := os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -58,10 +59,12 @@ func reconnectFixture(t *testing.T, mode string) (config.Config, Launch) {
 		t.Fatal(err)
 	}
 	script := `#!/bin/sh
+[ "$1" = "-L" ] && shift 2
 case "$1" in
 has-session) ` + map[bool]string{true: "exit 1", false: "exit 0"}[mode == "closed"] + ` ;;
 display-message)
   case "$*" in
+    *socket_path*) printf 'fixture-tmux\n' ;;
     *pane_current_command*) printf '` + l.Session + `|734567|codex\n' ;;
     *) printf '` + l.Session + `|0|\n' ;;
   esac ;;
@@ -170,7 +173,7 @@ func TestResumeReconnectionHelper(t *testing.T) {
 func TestClosedSessionReceiptDoesNotUseTmuxCurrentPane(t *testing.T) {
 	c := fixture(t)
 	h := os.Getenv("HOME")
-	script := "#!/bin/sh\ncase \"$1\" in\nhas-session) exit 1 ;;\n*) printf 'unrelated-session|0\\n' ;;\nesac\n"
+	script := "#!/bin/sh\n[ \"$1\" = \"-L\" ] && shift 2\ncase \"$1\" in\nhas-session) exit 1 ;;\n*) printf 'unrelated-session|0\\n' ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +195,7 @@ func TestDeadOwnedPaneExposesExitCodeAndHandoffError(t *testing.T) {
 	if err := saveSession(c, l); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\ncase \"$1\" in\nhas-session) exit 0 ;;\ndisplay-message) printf 'codexm-cli-0123456789abcdef|1|1\\n' ;;\ncapture-pane) printf 'Pane is dead (status 1)\\n\\n\\n' ;;\nesac\n"
+	script := "#!/bin/sh\n[ \"$1\" = \"-L\" ] && shift 2\ncase \"$1\" in\nhas-session) exit 0 ;;\ndisplay-message) printf 'codexm-cli-0123456789abcdef|1|1\\n' ;;\ncapture-pane) printf 'Pane is dead (status 1)\\n\\n\\n' ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -200,5 +203,123 @@ func TestDeadOwnedPaneExposesExitCodeAndHandoffError(t *testing.T) {
 	got, err := Screen(context.Background(), c, l.Session)
 	if err != nil || got.Alive || got.ExitCode == nil || *got.ExitCode != 1 || got.Launch.Error != l.Error || got.Text != "Pane is dead (status 1)" {
 		t.Fatalf("lost native failure metadata: %+v %v", got, err)
+	}
+}
+
+func TestTmuxNamespaceRoutesNewAndLegacyReceipts(t *testing.T) {
+	for _, server := range []string{"", CodexTmuxServer} {
+		t.Run("server="+server, func(t *testing.T) {
+			c := fixture(t)
+			h := os.Getenv("HOME")
+			l := Launch{Session: terminalName(c, fixtureID, "default"), Thread: fixtureID, Account: "default", Pane: "%7", TmuxServer: server, Ready: true}
+			if err := saveSession(c, l); err != nil {
+				t.Fatal(err)
+			}
+			expected := server
+			if expected == "" {
+				expected = "default"
+			}
+			script := `#!/bin/sh
+[ "$1" = "-L" ] && [ "$2" = "` + expected + `" ] || exit 97
+shift 2
+printf '%s\n' "$1" >> "$HOME/tmux-routes"
+case "$1" in
+has-session) exit 0;;
+display-message) printf '` + l.Session + `|0|\n';;
+capture-pane) printf 'correct server\n';;
+load-buffer) cat > "$HOME/input-text";;
+paste-buffer|send-keys|delete-buffer|kill-session) exit 0;;
+*) exit 98;;
+esac
+`
+			os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700)
+			t.Setenv("PATH", h+string(os.PathListSeparator)+os.Getenv("PATH"))
+			screen, err := Screen(context.Background(), c, l.Session)
+			if err != nil || screen.Text != "correct server" || screen.Attach != "tmux -L "+expected+" attach -t "+l.Session {
+				t.Fatalf("wrong server: %+v %v", screen, err)
+			}
+			if err = Input(context.Background(), c, l.Session, "literal $(do-not-run)", ""); err != nil {
+				t.Fatal(err)
+			}
+			if err = Input(context.Background(), c, l.Session, "", "C-c"); err != nil {
+				t.Fatal(err)
+			}
+			if err = Close(context.Background(), c, l.Session); err != nil {
+				t.Fatal(err)
+			}
+			data, _ := os.ReadFile(filepath.Join(h, "input-text"))
+			if string(data) != "literal $(do-not-run)" {
+				t.Fatal("literal input changed")
+			}
+		})
+	}
+}
+func TestTmuxAttachSwitchesOnlyWithinSameServer(t *testing.T) {
+	for _, tt := range []struct{ current, socket, want string }{
+		{"", "/tmp/tmux-501/codex", "attach-session"},
+		{"/tmp/tmux-501/default,123,0", "/tmp/tmux-501/codex", "attach-session"},
+		{"/tmp/tmux-501/codex,456,2", "/tmp/tmux-501/codex", "switch-client"},
+	} {
+		mode, env := attachMode(tt.current, tt.socket, []string{"TMUX=" + tt.current, "HOME=/safe"})
+		if mode != tt.want {
+			t.Fatal("wrong attach mode", mode)
+		}
+		if mode == "attach-session" && strings.Contains(strings.Join(env, "\n"), "TMUX=") {
+			t.Fatal("cross-server nesting guard not cleared")
+		}
+	}
+}
+
+// Real tmux, synthetic history/login, fake official CLI. No real chat is opened.
+func TestNativeTerminalUsesDedicatedServer(t *testing.T) {
+	self := os.Getenv("CODEXM_TUI_TEST_BINARY")
+	if self == "" {
+		t.Skip("opt-in built native launcher")
+	}
+	c := fixture(t)
+	script := `#!/bin/sh
+printf 'NAMESPACE_TEST_READY\n'
+IFS= read -r line
+printf '%s' "$line" > "$HOME/native-input"
+printf 'NAMESPACE_TEST_FINISHED\n'
+`
+	os.WriteFile(c.Runtime.CodexBinary, []byte(script), 0700)
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	l, err := Open(context.Background(), c, self, fixtureID, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer Close(context.Background(), c, l.Session)
+	if l.TmuxServer != CodexTmuxServer {
+		t.Fatal("new terminal was not isolated")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		screen, e := Screen(context.Background(), c, l.Session)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if screen.Launch.Ready && strings.Contains(screen.Text, "NAMESPACE_TEST_READY") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("native terminal never ready: %+v", screen)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err = Input(context.Background(), c, l.Session, "literal $value; data", ""); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		data, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), "native-input"))
+		if string(data) == "literal $value; data" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("native input not received: %q", data)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

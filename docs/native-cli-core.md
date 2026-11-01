@@ -5,7 +5,7 @@
 이전 관리형 구현은 전환 기록·테스트를 위해 소스에 남지만 새 명령에서 호출하지 않는다.
 옛 CLI 진입 코드는 `legacy` build tag로 기본 빌드에서 제외한다. 현재 바이너리에는
 supervisor·manager·policy·daemon·tui 패키지의 실행 심벌이 없다.
-홈 환경 저장소나 원격 서버로 제품을 배포하는 변경은 포함하지 않는다.
+현재 배포 범위와 GUI 확인 방식은 [설치 문서](deployment.md)와 [GUI 인계](gui-handoff.md)를 따른다.
 
 ## 실행 책임
 
@@ -15,10 +15,11 @@ supervisor·manager·policy·daemon·tui 패키지의 실행 심벌이 없다.
    F2는 전체 계정 관리다. 계정 홈·공통 설정·대화 저장소 연결을 검증한다.
 4. 같은 계정의 기존 codexm CLI가 실제로 이 채팅을 소유하면 tmux 재연결로 끝낸다.
    저장된 영수증·pane·프로세스·열린 writer 파일 PID를 함께 확인하며 다른 계정은 거부한다.
-   그렇지 않으면 공식 archive/unarchive를 실행한다. 보관된 채팅에는 unarchive만 한다.
+   잠금 없는 채팅은 그대로 재개하고, 보관된 채팅에는 unarchive만 한다.
+   소유 공용 데몬은 선택한 채팅을 archive할 수 있다. GUI 전체 종료는 별도 실행별 확인을 받는다.
 5. 현재 터미널에서는 `exec`로 `codex --no-daemon --no-alt-screen resume ID`에 교체된다.
    모델·effort·권한·목표를 codexm이 다시 지정하지 않는다.
-6. 선택적 이전 웹에서는 같은 CLI를 이름 있는 tmux에서 실행하고 출력과 입력만 전달한다.
+6. 선택적 이전 웹에서는 같은 CLI를 `tmux -L codex`의 이름 있는 세션에서 실행하고 출력과 입력만 전달한다.
 
 설치된 공식 CLI를 실행 시점에 찾으며 과거 관리 엔진 pin을 사용하지 않는다.
 `codexm account`의 터미널 계정 선택·브라우저/기기 인증·기본 인증 변경은 유지한다.
@@ -34,7 +35,7 @@ supervisor·manager·policy·daemon·tui 패키지의 실행 심벌이 없다.
 현재 설정은 runtime의 shared_codex_home/accounts_dir/codex_binary/web_node_binary,
 storage.state_dir, account_registry.removed뿐이다. 과거 설정 섹션은 실행 정책으로
 읽지 않는다. 기존 공식 인증·대화·목표/예산은 삭제·변환하지 않으며 기존 관리 DB도
-목록의 이전 계정 정보용으로만 읽는다. 원격 장비의 codexm 설치는 변경하지 않는다.
+목록의 이전 계정 정보용으로만 읽는다. 사용자 승인 대상은 local/mac-secondary/mac-mobile다.
 
 ## 소유권과 오류
 
@@ -46,15 +47,15 @@ Codex CLI 0.166.0을 임시 HOME/대화와 로컬 mock model로 검증한 결과
 - 원래 연결 종료 후 archive/unarchive 및 새 app-server의 즉시 resume은 성공했고,
   같은 thread ID·대화 하나·보관 해제 상태를 유지했다.
 
-따라서 외부 writer를 종료하거나 잠금 파일을 지우는 우회 동작은 하지 않는다.
-원래 GUI에서 보관하거나 원래 CLI를 종료한 다음 재개한다. 공식 명령 실패 시 새
+잠금 파일을 지우거나 독립 CLI를 자동 종료하지 않는다. 원래 GUI에서 보관하거나
+검증된 macOS GUI의 전체 재시작을 매번 확인한 뒤 인계할 수 있다. 공식 명령 실패 시 새
 resume은 실행하지 않는다. unarchive 단계가 실패하면 채팅이 보관 상태로 남을 수
 있으며, 같은 ID로 보관 해제를 재시도한다. 성공한 것처럼 숨기거나 새 ID를 만들지 않는다.
 같은 채팅에 여러 화면에서 동시에 지시하는 방식은 지원 범위가 아니다.
 
 `starcraft1`의 2026-11-02 오류는 이미 실행된 codexm CLI에 새 CLI가 archive를
 시도한 경우였다. 새 foreground 경로는 같은 터미널에 다시 연결한다. 이는 GUI에
-보관 요청을 보내는 기능이 아니며 GUI의 writer 인계는 여전히 원래 앱에서 수행한다.
+보관 요청을 보내는 기능은 아니다. 이후 추가된 확인 후 GUI 재시작과는 별도 경로다.
 [수정 검증](reconnect-validation-20261102.md)을 참고한다.
 
 codexm의 보관/복원 절차끼리는 별도 로컬 잠금으로 직렬화한다. 이 잠금은 codexm의

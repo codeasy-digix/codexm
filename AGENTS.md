@@ -18,8 +18,14 @@
   writer release before unarchive/resume. Never start/restart the daemon or change
   its authentication for a handoff. Fail before resume if mutations fail, and never
   replay uncertain archive requests. Never delete native writer locks, edit native
-  SQLite/rollouts, kill an external GUI/CLI, silently fork, or assume unarchive
+  SQLite/rollouts, kill an external CLI, silently fork, or assume unarchive
   guarantees takeover of a live writer. Preserve IDs, credentials, goals and budgets.
+- A verified macOS GUI writer may be stopped with SIGTERM only after an explicit
+  foreground terminal confirmation for that execution. Show that all GUI jobs
+  stop and do not auto-continue. Never persist consent, accept piped confirmation,
+  SIGKILL the GUI, or retry uncertain archive mutations via process termination.
+  Arm the bounded GUI-reopen helper before stopping it, reopen after the selected
+  CLI owns its writer or on failure, and preserve unrelated CLI/daemon processes.
 - Account selection changes authentication only. Preserve shared model/effort
   preferences and each account's GUI state and model cache. Never synchronize
   account-server preferences or copy one account's state onto another.
@@ -40,8 +46,8 @@
   after verifying the receipt, pane/process and that process's open thread-writer
   file. Preserve running authentication, including old default sessions. Refuse
   an account mismatch instead of silently reusing a different selection. A GUI
-  stdio owner still needs archive through that GUI; do not claim CLI archive can
-  do it. The desktop's optional shared-daemon mode is not enabled by codexm.
+  stdio owner needs owner-side archive or the explicitly confirmed GUI restart;
+  a new CLI archive cannot release that writer. The desktop's optional shared-daemon mode is not enabled by codexm.
 - Keep the TUI event reader separate from the main signal/shutdown loop. Test
   PTY loss and SIGTERM, including disappearance of owned frontend/bridge PIDs,
   not only disappearance of a tmux session.
@@ -52,7 +58,9 @@
   of thread IDs, account names, input, directory names or terminal keys.
 - Keep running work and old metadata. During migration retire only verified idle
   legacy product services; do not stop official Codex, GUI or unrelated tmux jobs.
-  Test processes use named tmux sessions and are cleaned up after verification.
+  New Codex-related sessions use `tmux -L codex` for create/list/attach/control.
+  Never alias all tmux globally. Receipts without a server retain `-L default`;
+  do not move or kill live legacy sessions. Test sessions are cleaned up afterward.
 - Run Go race tests/vet and relevant isolated official-CLI tests; run web checks
   when changing web behavior. Exercise Rust TUI keys/account mutations/handoff in
   an isolated tmux PTY. Use synthetic accounts/chats for handoff tests.
@@ -73,6 +81,7 @@
   Web is optional compatibility, not a dependency of the normal TUI install.
 - Cross-machine history-sync is retired. Do not restore engines, service entries,
   compatibility links or automatic history writes. Preserve archival data.
-- Installation and verification are local-Mac-only. Homebrew, archives/formula
-  preparation, releases/tags/npm and other-host codexm deployment are on hold.
+- The user authorized the local Mac, mac-secondary and mac-mobile for this change. Verify
+  matching artifacts and host-local settings; do not copy auth/history/preferences.
+  Homebrew, releases/tags/npm and deployment to other hosts remain on hold.
   Commit and push reviewed source changes; preserve concurrent edits and secrets.

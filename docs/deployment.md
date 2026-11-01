@@ -12,7 +12,7 @@
 | CLI 셸 함수 | 제품의 `internal/shellinit/`; `codexm shell-init zsh`로 출력 |
 | 이미 설치된 명령과 의존성 목록 | `.home/manifests/home.json`의 외부 도구 등록 |
 | 개인 zsh 로드 설정 | `.home/config/codexm/shell.zsh`; 제품 함수를 로드하는 짧은 설정 |
-| 실행 생명주기 | 공식 CLI 직접 실행; 웹과 별도 CLI는 이름 있는 tmux 세션 |
+| 실행 생명주기 | 공식 CLI 직접 실행; 웹과 별도 CLI는 `tmux -L codex`의 이름 있는 세션 |
 | 장비 간 history-sync | 제거. 코드·서비스·활성 환경 등록 없음 |
 
 `.home`에는 codexm source clone, revision pin, build/install/update 호출, 제품
@@ -69,9 +69,9 @@ Rust target과 해당 플랫폼 linker도 필요하다.
 `.home/tools/codexm/`, `config/home/codexm-revision.txt`, bootstrap의 제품 호출은
 제거했다. `.home`은 source 다운로드 캐시나 별도 제품 배포 주체가 아니다.
 유일한 설치 절차는 제품 저장소의 설치기이며, 향후 배포도 이 저장소에서 준비한다.
-**현재 Homebrew 등 배포 작업은 보류**한다. 이번 작업에는 소스 정리와 로컬 설치만
-포함하며 다른 장비에 codexm을 설치/업데이트하지 않는다. 기존 history-sync 서비스의
-중지·자동 시작 해제는 제품 신규 설치와 구분하여 세 장비에서 수행한다.
+**현재 Homebrew 등 공개 배포 작업은 보류**한다. 2026-11-02 사용자 요청으로
+local/mac-secondary/mac-mobile의 동일 변경 적용을 허용했다. 다른 장비에는 배포하지 않는다.
+인증·대화·모델/effort·GUI 계정 설정은 장비 사이에 복사하지 않는다.
 
 과거 통합 중간 단계는 [검증 기록](consolidation-20261101.md)에 남겼다. 그 문서의
 relay 통합·`.home` pin/build 설명은 현재 정책이 아니다. 제거한 기능의 데이터 경계는
@@ -93,3 +93,17 @@ relay 통합·`.home` pin/build 설명은 현재 정책이 아니다. 제거한 
 2026-11-02 로컬 TUI 적용에서는 웹 번들을 제외하고 codexm 웹/전용 HTTPS tmux를
 중지했다. 기존 네이티브 CLI와 인증/인증서 설정은 보존했다.
 [적용 검증 기록](terminal-validation-20261102.md)을 따른다.
+
+## 검증한 동일 플랫폼 빌드를 다른 장비에 적용
+
+제품 저장소에서 빌드한 `codexm`, `codexm-tui`와 두 파일의 `SHA256SUMS`,
+현재 `install.sh`, `VERSION`만 승인된 대상의 private 임시 디렉터리에 전송한다.
+대상에서 `./install.sh --from-build /absolute/transferred/build`를 실행하면 각 파일의
+해시·실행 가능한 버전·공식 Codex 선행 설치를 확인하고 동일 immutable 설치를 적용한다.
+소스가 없는 장비도 빌드 도구나 `.home` 빌드 없이 설치할 수 있다. 배포자가 신뢰하는
+빌드와 해시를 같이 전달하는 방식이며 공개 다운로드의 서명 검증을 대체하지 않는다.
+
+공통 에이전트 지침은 `.home/templates/codex/AGENTS.md`에서 관리하고
+`~/.codex/AGENTS.md`로 링크한다. 제품 소스의 개발 규칙과는 별개다.
+새 Codex 작업은 `tmux -L codex`; 실행 중인 기존 default 세션은 보존한다.
+[GUI 인계·tmux 운영](gui-handoff.md)을 따른다.

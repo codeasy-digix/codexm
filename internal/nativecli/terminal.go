@@ -20,6 +20,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const CodexTmuxServer = "codex"
+
 var sessionName = regexp.MustCompile(`^codexm-cli-[a-f0-9]{16}$`)
 
 func sessionPath(c config.Config, s string) string {
@@ -32,10 +34,18 @@ func saveSession(c config.Config, l Launch) error {
 	}
 	return config.AtomicWrite(sessionPath(c, l.Session), b, 0600)
 }
-func tmux(ctx context.Context, args ...string) (string, error) {
+
+// Empty receipts predate server isolation and belong to the default socket.
+func tmuxArgs(server string, args ...string) []string {
+	if server == "" {
+		server = "default"
+	}
+	return append([]string{"-L", server}, args...)
+}
+func tmux(ctx context.Context, server string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	b, e := exec.CommandContext(ctx, "tmux", args...).CombinedOutput()
+	b, e := exec.CommandContext(ctx, "tmux", tmuxArgs(server, args...)...).CombinedOutput()
 	if e != nil {
 		return "", fmt.Errorf("tmux: %w: %s", e, strings.TrimSpace(string(b)))
 	}
@@ -51,7 +61,7 @@ func readSession(c config.Config, s string) (Launch, error) {
 		return l, e
 	}
 	e = json.Unmarshal(b, &l)
-	if e == nil && (l.Session != s || !threadID.MatchString(l.Thread) || !regexp.MustCompile(`^%[0-9]+$`).MatchString(l.Pane)) {
+	if e == nil && ((l.TmuxServer != "" && l.TmuxServer != CodexTmuxServer) || l.Session != s || !threadID.MatchString(l.Thread) || !regexp.MustCompile(`^%[0-9]+$`).MatchString(l.Pane)) {
 		e = errors.New("invalid native session receipt")
 	}
 	return l, e
@@ -80,7 +90,7 @@ func ReusableTerminal(ctx context.Context, c config.Config, id, account string) 
 		if !l.Ready {
 			return nil, fmt.Errorf("existing CLI is still preparing this chat; inspect with codexm terminal %s", l.Session)
 		}
-		info, err := tmux(ctx, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_pid}|#{pane_current_command}")
+		info, err := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_pid}|#{pane_current_command}")
 		if err != nil {
 			return nil, err
 		}
@@ -145,21 +155,44 @@ func ReusableTerminal(ctx context.Context, c config.Config, id, account string) 
 // Attach never detaches another client or stops the existing CLI. Inside tmux,
 // switch the current client instead of nesting another tmux terminal.
 func Attach(ctx context.Context, c config.Config, session string) error {
-	if _, err := Screen(ctx, c, session); err != nil {
+	t, err := Screen(ctx, c, session)
+	if err != nil {
 		return err
 	}
-	if _, err := tmux(ctx, "has-session", "-t", "="+session); err != nil {
+	if _, err = tmux(ctx, t.Launch.TmuxServer, "has-session", "-t", "="+session); err != nil {
 		return err
 	}
 	bin, err := exec.LookPath("tmux")
 	if err != nil {
 		return err
 	}
-	command := "attach-session"
-	if os.Getenv("TMUX") != "" {
-		command = "switch-client"
+	// switch-client only works on the current server. Cross-server attach needs
+	// TMUX cleared; other clients (and their sessions) remain attached.
+	socket, err := tmux(ctx, t.Launch.TmuxServer, "display-message", "-p", "-t", t.Launch.Pane, "#{socket_path}")
+	if err != nil {
+		return err
 	}
-	return syscall.Exec(bin, []string{bin, command, "-t", "=" + session}, os.Environ())
+	command, env := attachMode(os.Getenv("TMUX"), strings.TrimSpace(socket), os.Environ())
+	return syscall.Exec(bin, append([]string{bin}, tmuxArgs(t.Launch.TmuxServer, command, "-t", "="+session)...), env)
+}
+func attachMode(current, socket string, env []string) (string, []string) {
+	if current != "" && strings.Split(current, ",")[0] == socket {
+		return "switch-client", env
+	}
+	clean := make([]string, 0, len(env))
+	for _, value := range env {
+		if !strings.HasPrefix(value, "TMUX=") {
+			clean = append(clean, value)
+		}
+	}
+	return "attach-session", clean
+}
+func AttachCommand(l Launch) string {
+	server := l.TmuxServer
+	if server == "" {
+		server = "default"
+	}
+	return "tmux -L " + server + " attach -t " + l.Session
 }
 
 // Open creates a named terminal only. There is no supervisor, RPC worker or model
@@ -173,6 +206,7 @@ func Open(ctx context.Context, c config.Config, self, id, account string) (Launc
 		return l, errors.New("tmux is required for web/native terminal sessions")
 	}
 	l.Session = terminalName(c, id, account)
+	l.TmuxServer = CodexTmuxServer
 	if e = os.MkdirAll(root(c), 0700); e != nil {
 		return l, e
 	}
@@ -193,7 +227,7 @@ func Open(ctx context.Context, c config.Config, self, id, account string) (Launc
 		if screen.Alive {
 			return old, nil
 		}
-		_, _ = tmux(ctx, "kill-session", "-t", "="+l.Session)
+		_, _ = tmux(ctx, old.TmuxServer, "kill-session", "-t", "="+l.Session)
 	}
 	args := []string{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", l.Session, "-x", "110", "-y", "36", "-c", l.Cwd}
 	// A long-lived tmux server can retain an obsolete PATH/locale. Resolve the
@@ -204,7 +238,7 @@ func Open(ctx context.Context, c config.Config, self, id, account string) (Launc
 		}
 	}
 	args = append(args, "/bin/sleep", "60")
-	pane, e := tmux(ctx, args...)
+	pane, e := tmux(ctx, l.TmuxServer, args...)
 	if e != nil {
 		return l, e
 	}
@@ -212,21 +246,21 @@ func Open(ctx context.Context, c config.Config, self, id, account string) (Launc
 	complete := false
 	defer func() {
 		if !complete {
-			_, _ = tmux(context.Background(), "kill-session", "-t", "="+l.Session)
+			_, _ = tmux(context.Background(), l.TmuxServer, "kill-session", "-t", "="+l.Session)
 		}
 	}()
-	if _, e = tmux(ctx, "set-option", "-w", "-t", l.Pane, "remain-on-exit", "on"); e != nil {
+	if _, e = tmux(ctx, l.TmuxServer, "set-option", "-w", "-t", l.Pane, "remain-on-exit", "on"); e != nil {
 		return l, e
 	}
 	// set-option's session target does not accept the '=' exact-match prefix on
 	// supported tmux versions; this exact, freshly-created name is already owned.
-	if _, e = tmux(ctx, "set-option", "-t", l.Session, "history-limit", "10000"); e != nil {
+	if _, e = tmux(ctx, l.TmuxServer, "set-option", "-t", l.Session, "history-limit", "10000"); e != nil {
 		return l, e
 	}
 	if e = saveSession(c, l); e != nil {
 		return l, e
 	}
-	if _, e = tmux(ctx, "respawn-pane", "-k", "-t", l.Pane, "-c", l.Cwd, self, "--config", c.Path, "__native-run", sessionPath(c, l.Session)); e != nil {
+	if _, e = tmux(ctx, l.TmuxServer, "respawn-pane", "-k", "-t", l.Pane, "-c", l.Cwd, self, "--config", c.Path, "__native-run", sessionPath(c, l.Session)); e != nil {
 		return l, e
 	}
 	complete = true
@@ -283,15 +317,15 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 	if e != nil {
 		return Terminal{}, e
 	}
-	t := Terminal{Launch: l, Attach: "tmux attach -t " + s}
+	t := Terminal{Launch: l, Attach: AttachCommand(l)}
 	// tmux display-message can fall back to its current pane for a stale target.
 	// A closed session is simply exited, even while its last receipt remains.
-	if _, e = tmux(ctx, "has-session", "-t", "="+s); e != nil {
+	if _, e = tmux(ctx, l.TmuxServer, "has-session", "-t", "="+s); e != nil {
 		return t, nil
 	}
-	value, e := tmux(ctx, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_dead}|#{pane_dead_status}")
+	value, e := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_dead}|#{pane_dead_status}")
 	if e != nil {
-		if _, exists := tmux(ctx, "has-session", "-t", "="+s); exists == nil {
+		if _, exists := tmux(ctx, l.TmuxServer, "has-session", "-t", "="+s); exists == nil {
 			return t, errors.New("recorded native pane is missing from an existing session; inspect it manually")
 		}
 		return t, nil
@@ -306,7 +340,7 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 			t.ExitCode = &code
 		}
 	}
-	t.Text, e = tmux(ctx, "capture-pane", "-p", "-J", "-t", l.Pane, "-S", "-1500")
+	t.Text, e = tmux(ctx, l.TmuxServer, "capture-pane", "-p", "-J", "-t", l.Pane, "-S", "-1500")
 	// capture-pane pads short output with the empty viewport rows. Do not scroll
 	// the browser past all visible text just to display those blank rows.
 	t.Text = strings.TrimRight(t.Text, " \t\r\n")
@@ -336,23 +370,23 @@ func Input(ctx context.Context, c config.Config, s, text, key string) error {
 			}
 		}
 		buffer := "codexm-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-		cmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buffer, "-")
+		cmd := exec.CommandContext(ctx, "tmux", tmuxArgs(t.Launch.TmuxServer, "load-buffer", "-b", buffer, "-")...)
 		cmd.Stdin = strings.NewReader(text)
 		if e = cmd.Run(); e != nil {
 			return e
 		}
-		defer tmux(context.Background(), "delete-buffer", "-b", buffer)
-		if _, e = tmux(ctx, "paste-buffer", "-p", "-b", buffer, "-t", t.Launch.Pane); e != nil {
+		defer tmux(context.Background(), t.Launch.TmuxServer, "delete-buffer", "-b", buffer)
+		if _, e = tmux(ctx, t.Launch.TmuxServer, "paste-buffer", "-p", "-b", buffer, "-t", t.Launch.Pane); e != nil {
 			return e
 		}
-		_, e = tmux(ctx, "send-keys", "-t", t.Launch.Pane, "Enter")
+		_, e = tmux(ctx, t.Launch.TmuxServer, "send-keys", "-t", t.Launch.Pane, "Enter")
 		return e
 	}
 	allowed := map[string]bool{"Enter": true, "Escape": true, "Up": true, "Down": true, "Left": true, "Right": true, "Tab": true, "BTab": true, "C-c": true, "C-d": true, "PageUp": true, "PageDown": true}
 	if !allowed[key] {
 		return errors.New("unsupported terminal key")
 	}
-	_, e = tmux(ctx, "send-keys", "-t", t.Launch.Pane, key)
+	_, e = tmux(ctx, t.Launch.TmuxServer, "send-keys", "-t", t.Launch.Pane, key)
 	return e
 }
 func Close(ctx context.Context, c config.Config, s string) error {
@@ -360,10 +394,10 @@ func Close(ctx context.Context, c config.Config, s string) error {
 	if e != nil {
 		return e
 	}
-	if _, e = tmux(ctx, "has-session", "-t", "="+t.Launch.Session); e != nil {
+	if _, e = tmux(ctx, t.Launch.TmuxServer, "has-session", "-t", "="+t.Launch.Session); e != nil {
 		return nil
 	}
-	_, e = tmux(ctx, "kill-session", "-t", "="+t.Launch.Session)
+	_, e = tmux(ctx, t.Launch.TmuxServer, "kill-session", "-t", "="+t.Launch.Session)
 	return e
 }
 func Sessions(c config.Config) []Launch {
