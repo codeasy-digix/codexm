@@ -6,7 +6,8 @@
 
 | 항목 | 담당 |
 |---|---|
-| 채팅 목록·계정·공식 CLI 인계·웹 | codexm 소스의 `internal/cli/compact.go`, `internal/nativecli/`, `web/` |
+| TUI·채팅 목록·계정·공식 CLI 인계 | `crates/terminal/`, `internal/cli/compact.go`, `internal/nativecli/` |
+| 선택적 이전 웹 | `web/`; 기본 TUI 실행에는 포함하지 않음 |
 | 빌드·설치·업데이트 | codexm 소스의 `build.sh`, `build-web.sh`, `install.sh` |
 | CLI 셸 함수 | 제품의 `internal/shellinit/`; `codexm shell-init zsh`로 출력 |
 | 이미 설치된 명령과 의존성 목록 | `.home/manifests/home.json`의 외부 도구 등록 |
@@ -29,9 +30,15 @@ source <(command codexm shell-init zsh)
 codexm --version
 ```
 
-소스 빌드에는 Go가 필요하다. 빌드한 CLI 실행에는 Python/Node/`.home`이 필요 없다.
-수동 메타데이터 진단 도구는 별도 [Rust workspace](rust.md)에서 빌드한다. 제품 설치기에
-진단용 컴파일러나 Python 의존성을 추가하지 않는다. Rust 소스·빌드도 이 저장소가 소유한다.
+소스 빌드에는 Go와 고정된 Rust 도구 체인이 필요하다. `build.sh`는 같은 디렉터리에
+Go `codexm`과 Rust `codexm-tui`를 만든다. 설치한 TUI 실행에는 Python/Node/Go/Rust/
+`.home`이 필요 없다. 수동 메타데이터 진단은 같은 [Rust workspace](rust.md)에 있지만
+제품 설치에 포함하지 않는다. Rust 소스·빌드도 이 저장소가 소유한다.
+
+소스 설치 ID는 Go와 Rust 두 실행 파일의 내용을 함께 해시한다. Rust만 수정해도
+새 immutable 디렉터리에 설치하며 기존 설치를 덮어쓰지 않는다. 내부 Rust 구성의
+버전이 제품 버전과 다르면 링크를 바꾸기 전에 실패한다. 다른 OS 교차 빌드에는
+Rust target과 해당 플랫폼 linker도 필요하다.
 공식 Codex는 별도 선행 도구다. 선택적 Meteor 웹의 빌드·실행에는 해당 Node가 필요하다.
 웹을 사용 중인 로컬 설치를 갱신할 때는 검증한 번들을 `--web /absolute/bundle`로 함께
 지정한다. 제품 설치기는 공식 `codex` 파일·업데이트·GUI 번들을 변경하지 않는다.
@@ -39,9 +46,10 @@ codexm --version
 | 경로 | 내용 |
 |---|---|
 | `~/.local/bin/codexm` | 제품 설치기가 만드는 실행 링크 |
-| `~/.local/share/codexm/versions/…` | immutable Go 실행 파일·선택적 웹 번들 |
+| `~/.local/share/codexm/versions/…` | immutable Go `codexm`·Rust `codexm-tui`·선택적 웹 번들 |
 | `~/.local/share/codexm/bin/codexm` | 선택된 설치 버전 링크 |
 | `~/.config/codexm/config.toml` | 로컬 경로·계정 등록 설정, Git 밖; 이전 실행 정책은 읽지 않음 |
+| `~/.config/codexm/config.toml.tui.json` | TUI 표시 설정. 별도 `--config` 사용 시 그 경로에 `.tui.json` 추가 |
 | `~/.config/codexm/shell.zsh` | 개인 환경에서 사용하는 선택적 셸 로더 |
 | `~/.local/state/codexm/` | native-cli 실행 영수증·웹 상태·과거 관리 DB·private 백업 |
 | `~/.codex/` | 공식 Codex 대화·공통 설정·기본 인증 연결 |
@@ -81,3 +89,7 @@ relay 통합·`.home` pin/build 설명은 현재 정책이 아니다. 제거한 
 [로컬 적용 검증](public-web-validation-20261101.md)을 따른다. Caddy의 실제 설정과
 인증 데이터는 로컬 config/state에 두고, 소스의 `deploy/Caddyfile.example`만 Git에서
 관리한다. `.home`에 웹 빌드·설치 책임을 추가하지 않는다.
+
+2026-11-02 로컬 TUI 적용에서는 웹 번들을 제외하고 codexm 웹/전용 HTTPS tmux를
+중지했다. 기존 네이티브 CLI와 인증/인증서 설정은 보존했다.
+[적용 검증 기록](terminal-validation-20261102.md)을 따른다.

@@ -1,6 +1,7 @@
 # 공식 CLI를 중심으로 줄인 codexm
 
-2026-11-01. 현재 공개 실행 경로는 `internal/cli/compact.go`와 `internal/nativecli/`다.
+2026-11-01. 현재 기본 UI는 `crates/terminal/`의 Rust TUI다. Go 진입점은
+`internal/cli/compact.go`와 `internal/nativecli/`다. [현재 TUI 동작](terminal-ui.md)을 따른다.
 이전 관리형 구현은 전환 기록·테스트를 위해 소스에 남지만 새 명령에서 호출하지 않는다.
 옛 CLI 진입 코드는 `legacy` build tag로 기본 빌드에서 제외한다. 현재 바이너리에는
 supervisor·manager·policy·daemon·tui 패키지의 실행 심벌이 없다.
@@ -10,11 +11,12 @@ supervisor·manager·policy·daemon·tui 패키지의 실행 심벌이 없다.
 
 1. Codex SQLite를 읽기 전용으로 조회하여 전체 로컬 프로젝트의 채팅 목록을 보여준다.
 2. 과거 관리 DB와 작은 실행 영수증에서 알 수 있는 이전 계정만 표시한다.
-3. 사용자가 채팅과 계정을 선택한다. 계정 홈·공통 설정·대화 저장소 연결을 검증한다.
+3. TUI Enter는 이전 등록 계정 또는 default로 재개한다. Right는 이번 계정 선택,
+   F2는 전체 계정 관리다. 계정 홈·공통 설정·대화 저장소 연결을 검증한다.
 4. 공식 CLI로 archive/unarchive를 실행한다. 이미 보관된 채팅에는 unarchive만 한다.
 5. 현재 터미널에서는 `exec`로 `codex --no-daemon --no-alt-screen resume ID`에 교체된다.
    모델·effort·권한·목표를 codexm이 다시 지정하지 않는다.
-6. 웹에서는 같은 CLI를 이름 있는 tmux에서 실행하고 출력과 입력만 전달한다.
+6. 선택적 이전 웹에서는 같은 CLI를 이름 있는 tmux에서 실행하고 출력과 입력만 전달한다.
 
 설치된 공식 CLI를 실행 시점에 찾으며 과거 관리 엔진 pin을 사용하지 않는다.
 `codexm account`의 터미널 계정 선택·브라우저/기기 인증·기본 인증 변경은 유지한다.
@@ -56,7 +58,7 @@ state 아래에만 두며 공식 writer lock과 무관하다. 브라우저 mutat
 ## 로컬 웹
 
 [웹 안내](local-web.md)를 따른다. 원래의 HTTP/Origin/DDP 인증을 유지하고 Go bridge는
-7개 메서드만 허용한다. 계정 사용량 확인은 명시적인 조회이며 모델 요청은 하지 않는다.
+명시적인 메서드만 허용한다. 계정 사용량 확인은 명시적인 조회이며 모델 요청은 하지 않는다.
 웹 본문은 tmux가 보여주는 공식 CLI 출력이다. 마지막 1,500줄을 표시하고 기본 키와
 문자열 입력을 전달한다. 전체 터미널 기능은 표시한 attach 명령으로 사용한다.
 웹/bridge 종료와 CLI 종료를 분리하며, 네이티브 CLI 종료만 사용자가 명시적으로 한다.

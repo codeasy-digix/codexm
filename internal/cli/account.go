@@ -32,7 +32,8 @@ Account selection changes this shell's environment for subsequent native launche
 terminal selection. A new independent terminal uses that native default; child
 shells inherit their parent's selection. Running Codex/GUI/daemon connections are
 not restarted. Account selection does not start a manager or change other running
-CLIs. Choose an account again when opening a chat. The local web can refresh usage.
+CLIs. The TUI reuses a chat's last registered account (or default). Use Right to
+change it for this launch, or F2 for account management and usage refresh.
 `
 
 const accountUsage = "usage: codexm account NAME [default|--set-default] [--login] [--browser|--device] | NAME --remove"

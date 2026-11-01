@@ -81,9 +81,13 @@ case "$build" in
     ;;
 esac
 [ "$("$stage/payload/codexm" --version)" = "codexm $version" ] || { echo 'Installed version would not match.' >&2; exit 1; }
+if [ -f "$stage/payload/codexm-tui" ]; then
+  [ "$("$stage/payload/codexm-tui" --version)" = "codexm-tui $version" ] || { echo 'Terminal component version would not match.' >&2; exit 1; }
+fi
 install_version=$release
 if [ "$install_mode" = source ]; then
-  if command -v sha256sum >/dev/null 2>&1; then binary_id=$(sha256sum "$stage/payload/codexm" | awk '{print $1}'); else binary_id=$(shasum -a 256 "$stage/payload/codexm" | awk '{print $1}'); fi
+  if [ -f "$stage/payload/codexm-tui" ]; then cat "$stage/payload/codexm" "$stage/payload/codexm-tui" > "$stage/native-components"; else cp "$stage/payload/codexm" "$stage/native-components"; fi
+  if command -v sha256sum >/dev/null 2>&1; then binary_id=$(sha256sum "$stage/native-components" | awk '{print $1}'); else binary_id=$(shasum -a 256 "$stage/native-components" | awk '{print $1}'); fi
   install_version="$release-source-$binary_id"
 fi
 if [ -n "$web_bundle" ]; then
@@ -94,6 +98,7 @@ fi
 destination="$install_root/versions/$install_version/$target_os-$target_arch"
 if [ -e "$destination" ]; then
   cmp "$stage/payload/codexm" "$destination/codexm" >/dev/null || { echo 'Existing immutable version differs; it was preserved.' >&2; exit 1; }
+  if [ -f "$stage/payload/codexm-tui" ]; then cmp "$stage/payload/codexm-tui" "$destination/codexm-tui" >/dev/null || { echo 'Existing terminal component differs; it was preserved.' >&2; exit 1; }; fi
   if [ -n "$web_bundle" ]; then "$destination/codexm" web verify --bundle "$destination/web/bundle" >/dev/null; fi
 else
   mkdir -p "$(dirname -- "$destination")"

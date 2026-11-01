@@ -81,7 +81,7 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 				return nil, e
 			}
 			a, e := Accounts(c)
-			return map[string]any{"sessions": list.Sessions, "accounts": a, "terminals": Sessions(c), "warning": list.Warning, "mode": "native-cli"}, e
+			return map[string]any{"sessions": list.Sessions, "accounts": a, "terminals": Sessions(c), "warning": list.Warning, "mode": "native-cli", "paths": map[string]string{"config": c.Path, "history": config.Expand(c.Runtime.SharedCodexHome), "accounts": config.Expand(c.Runtime.AccountsDir)}}, e
 		case "accounts.refresh":
 			a, e := Accounts(c)
 			if e != nil {

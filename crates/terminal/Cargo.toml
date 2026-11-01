@@ -1,0 +1,21 @@
+[package]
+name = "codexm-tui"
+version = "0.6.2"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Terminal catalog and account controls; hands work to the official Codex CLI"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+nix.workspace = true
+getrandom.workspace = true
+signal-hook.workspace = true
+
+[lints]
+workspace = true

@@ -112,12 +112,15 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 		t.Fatal("conflicting release changed")
 	}
 	// Local changes must not overwrite a release or a previous development build.
-	write(filepath.Join(repo, "build.sh"), []byte("#!/bin/sh\ncp \"$CODEXM_TEST_LOCAL_BINARY\" \"$3\"\n"), 0700)
+	write(filepath.Join(repo, "build.sh"), []byte("#!/bin/sh\ncp \"$CODEXM_TEST_LOCAL_BINARY\" \"$3\"\ncp \"$CODEXM_TEST_LOCAL_TUI\" \"$(dirname -- \"$3\")/codexm-tui\"\n"), 0700)
 	local := filepath.Join(repo, "local-binary")
 	write(local, binary, 0700)
+	localTUI := filepath.Join(repo, "local-tui")
+	tuiBytes := []byte("#!/bin/sh\necho 'codexm-tui 0.1.0'\n")
+	write(localTUI, tuiBytes, 0700)
 	runSource := func(extra ...string) error {
 		cmd := exec.Command("sh", append([]string{script, "--build"}, extra...)...)
-		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEXM_INSTALL_ROOT="+installRoot, "CODEXM_LINK_DIR="+filepath.Join(repo, "entrypoint"), "CODEXM_TEST_LOCAL_BINARY="+local)
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "CODEXM_INSTALL_ROOT="+installRoot, "CODEXM_LINK_DIR="+filepath.Join(repo, "entrypoint"), "CODEXM_TEST_LOCAL_BINARY="+local, "CODEXM_TEST_LOCAL_TUI="+localTUI)
 		if out, e := cmd.CombinedOutput(); e != nil {
 			return fmt.Errorf("%w: %s", e, out)
 		}
@@ -141,6 +144,26 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 	if b, _ := os.ReadFile(conflict); string(b) != "different saved release" {
 		t.Fatal("local build overwrote release")
 	}
+	previousSource := secondSource
+	write(localTUI, append(tuiBytes, []byte("# Rust UI changed without Go changes\n")...), 0700)
+	if e = runSource(); e != nil {
+		t.Fatal("TUI-only update failed", e)
+	}
+	secondSource, _ = os.Readlink(current)
+	if secondSource == previousSource {
+		t.Fatal("TUI-only update overwrote the immutable install")
+	}
+	if saved, _ := os.ReadFile(filepath.Join(filepath.Dir(previousSource), "codexm-tui")); string(saved) != string(tuiBytes) {
+		t.Fatal("previous TUI was overwritten")
+	}
+	write(localTUI, []byte("#!/bin/sh\necho 'codexm-tui wrong-version'\n"), 0700)
+	if e = runSource(); e == nil {
+		t.Fatal("mismatched TUI was installed")
+	}
+	if target, _ := os.Readlink(current); target != secondSource {
+		t.Fatal("version mismatch changed current")
+	}
+	write(localTUI, tuiBytes, 0700)
 	write(local, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codexm 0.1.0'; else exit 7; fi\n"), 0700)
 	if e = runSource(); e == nil {
 		t.Fatal("failed migration switched installation")

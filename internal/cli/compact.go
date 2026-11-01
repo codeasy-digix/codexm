@@ -26,14 +26,14 @@ import (
 
 const compactHelp = `codexm — local chats, accounts, official Codex CLI
 
-codexm                                      Choose a chat, then an account
+codexm                                      TUI: Enter resumes; Right details; F2 settings
 codexm list [--json] [--archived]             Chats across every local project
 codexm resume THREAD --account NAME          Resume in this terminal
 codexm resume THREAD --account NAME --terminal  Open a named tmux terminal
 codexm account [NAME] [--login|--set-default]  Native account selection (unchanged)
 codexm accounts                              Saved local account information
-codexm terminal SESSION                     Attach to a CLI opened from the web
-codexm web [status|stop|logs]                 Web: chat list and native terminal
+codexm terminal SESSION                     Attach to an existing named CLI terminal
+codexm web [status|stop|logs]                 Optional compatibility web (separate bundle)
 codexm web user --username NAME              Configure the independent web login
 codexm web --public-origin https://HOST      Use an authenticated HTTPS reverse proxy
 codexm doctor                               Check native CLI and local paths
@@ -253,7 +253,7 @@ func Main(args []string) error {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
 			return errors.New("interactive terminal required; use codexm list --json")
 		}
-		return pickChat(ctx, c)
+		return openNativeTUI(c, self)
 	}
 }
 func filterChats(all []catalog.Entry, search string, archive bool) []catalog.Entry {
@@ -327,64 +327,18 @@ func chooseAccount(c config.Config, s *bufio.Scanner, previous string) (string, 
 		fmt.Println("Choose an account number.")
 	}
 }
-func pickChat(ctx context.Context, c config.Config) error {
-	s := bufio.NewScanner(os.Stdin)
-	page := 0
-	query := ""
-	archived := false
-	for {
-		list, e := nativecli.List(ctx, c)
-		if e != nil {
-			return e
-		}
-		all := filterChats(list.Sessions, query, archived)
-		if page*20 >= len(all) {
-			page = 0
-		}
-		fmt.Printf("\nLocal chats: %d · page %d · filter %q\n", len(all), page+1, query)
-		printChats(all, page*20, (page+1)*20)
-		fmt.Print("\nNumber: choose · /text: search · n/p: page · a: archives · r: refresh · q: quit\n> ")
-		if !s.Scan() {
-			return s.Err()
-		}
-		v := strings.TrimSpace(s.Text())
-		switch v {
-		case "q":
-			return nil
-		case "n":
-			page++
-			continue
-		case "p":
-			if page > 0 {
-				page--
-			}
-			continue
-		case "r":
-			continue
-		case "a":
-			archived = !archived
-			page = 0
-			continue
-		}
-		if strings.HasPrefix(v, "/") {
-			query = strings.TrimPrefix(v, "/")
-			page = 0
-			continue
-		}
-		n, e := strconv.Atoi(v)
-		if e != nil || n < 1 || n > len(all) {
-			fmt.Println("Choose a chat number.")
-			continue
-		}
-		name, e := chooseAccount(c, s, all[n-1].Account)
-		if e != nil {
-			continue
-		}
-		l, e := nativecli.Plan(ctx, c, all[n-1].ID, name)
-		if e != nil {
-			fmt.Println(e)
-			continue
-		}
-		return nativecli.Resume(ctx, c, l)
+func openNativeTUI(c config.Config, self string) error {
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return errors.New("interactive terminal required; use codexm list --json")
 	}
+	ui := filepath.Join(filepath.Dir(self), "codexm-tui")
+	info, err := os.Lstat(ui)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+		return errors.New("Rust terminal component is missing; reinstall from source with ./install.sh --build")
+	}
+	conf, err := filepath.Abs(c.Path)
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(ui, []string{ui, "--bridge", self, "--config", conf}, os.Environ())
 }

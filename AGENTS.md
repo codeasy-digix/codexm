@@ -3,6 +3,9 @@
 - The active product is a local conversation catalog, account selector and official
   Codex CLI launcher. Keep `codex` native: never wrap/replace its binary or update
   command. `codexm account` may change the current shell or the explicit native default.
+- Running `codexm` opens the Rust TUI in crates/terminal. Enter directly resumes
+  with the last registered account or default; Right/Left move to/from details,
+  and F2 opens settings/account management. Keep explicit choices across polling.
 - Public entrypoints are in internal/cli/compact.go and internal/nativecli. Do not
   start the old supervisor, workers, manager model, scheduler, account rotation,
   watchdog, notifications or management plugin from the compact path. Prior
@@ -18,9 +21,13 @@
   account-server preferences or copy one account's state onto another.
 - Preselect a chat's last known registered account, or native `default` when
   unknown/removed. Never overwrite an explicit selection during polling. Web
-  account management may use a temporary isolated official auth server for
+  and TUI account management may use a temporary isolated official auth server for
   add/re-login; never start conversation workers or restore retired policy.
-  Keep login URLs/codes browser-owner-scoped and out of logs/durable receipts.
+  Keep login URLs/codes owner-scoped and out of logs/durable receipts.
+- The Rust TUI owns one serial local stdio bridge to validated Go account/catalog
+  code. No HTTP listener or per-keystroke subprocess. Restore terminal state and
+  reap the owned bridge/auth helpers before exec into the official-CLI launcher.
+  Do not block navigation on background reads or replay uncertain mutations.
 - The foreground launcher replaces itself with the installed official CLI. The
   web launches that CLI in named codexm-cli-* tmux terminals, reads their output,
   and forwards literal input. It does not interpret chat turns or run model logic.
@@ -33,8 +40,9 @@
 - Keep running work and old metadata. During migration retire only verified idle
   legacy product services; do not stop official Codex, GUI or unrelated tmux jobs.
   Test processes use named tmux sessions and are cleaned up after verification.
-- Run Go race tests/vet, relevant isolated official-CLI tests, web typecheck/tests
-  and browser interaction checks. Use synthetic accounts/chats for handoff tests.
+- Run Go race tests/vet and relevant isolated official-CLI tests; run web checks
+  when changing web behavior. Exercise Rust TUI keys/account mutations/handoff in
+  an isolated tmux PTY. Use synthetic accounts/chats for handoff tests.
   Report unsupported ownership cases instead of hiding failures.
 - This repository alone owns source, builds, installation, updates and product docs.
   `.home` only registers an installed command and loads personal shell settings.
@@ -47,6 +55,9 @@
   until its replacement passes behavior and installation checks. See docs/rust.md.
 - Run cargo fmt/check, locked workspace tests and clippy for Rust changes. The
   state audit is manual developer diagnostics, not automatic account/sync logic.
+- Source builds/installations include matching Go and Rust TUI siblings in one
+  immutable version. Hash both; replace executed Mach-O files using a new inode.
+  Web is optional compatibility, not a dependency of the normal TUI install.
 - Cross-machine history-sync is retired. Do not restore engines, service entries,
   compatibility links or automatic history writes. Preserve archival data.
 - Installation and verification are local-Mac-only. Homebrew, archives/formula
