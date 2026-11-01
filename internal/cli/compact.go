@@ -38,8 +38,10 @@ codexm web --public-origin https://HOST      Use an authenticated HTTPS reverse 
 codexm doctor                               Check native CLI and local paths
 codexm shell-init zsh                        Shell integration
 
-Resume runs official archive/unarchive (unarchive only for archived chats), then
-codex --no-daemon --no-alt-screen resume THREAD. Codex owns all subsequent work.
+Unlocked chats resume directly; archived chats are unarchived first.
+An owning shared daemon can archive/release the selected chat before resume.
+Separate GUI/CLI writers must release it first; codexm never force-closes them.
+Then codex --no-daemon --no-alt-screen resume THREAD owns all subsequent work.
 No manager model, automatic account rotation, scheduling or history sync.
 Existing manager data is read-only metadata; old worker services are not started.
 `
