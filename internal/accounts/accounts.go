@@ -104,13 +104,24 @@ func (r *Reader) Read(ctx context.Context, name string) Snapshot {
 		return s
 	}
 	defer p.Close()
+	return readAccountUsage(ctx, p, s)
+}
+
+type usageCaller interface {
+	Call(context.Context, string, any, any) error
+}
+
+func readAccountUsage(ctx context.Context, p usageCaller, s Snapshot) Snapshot {
 	var a struct {
 		Account *struct {
 			Type string `json:"type"`
 			Plan string `json:"planType"`
 		} `json:"account"`
 	}
-	if e = p.Call(ctx, "account/read", map[string]bool{"refreshToken": true}, &a); e != nil {
+	// Do not force an auth refresh just to inspect usage. Some CLI versions
+	// return account:null for refreshToken=true even while the authenticated
+	// rate-limit RPC succeeds. The subsequent RPC supplies live usage/error data.
+	if e := p.Call(ctx, "account/read", map[string]bool{"refreshToken": false}, &a); e != nil {
 		s.Error = cr.SafeText(e.Error())
 		return s
 	}
@@ -120,7 +131,7 @@ func (r *Reader) Read(ctx context.Context, name string) Snapshot {
 	}
 	s.Authenticated = true
 	s.Plan = a.Account.Plan
-	if e = p.Call(ctx, "account/rateLimits/read", map[string]any{}, &s); e != nil {
+	if e := p.Call(ctx, "account/rateLimits/read", map[string]any{}, &s); e != nil {
 		s.Error = cr.SafeText(e.Error())
 	}
 	return s

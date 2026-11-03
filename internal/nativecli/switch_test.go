@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"golang.org/x/sys/unix"
 )
 
 func TestSwitchThresholdRequiresBothKnownWindows(t *testing.T) {
@@ -61,6 +62,33 @@ func TestHandoffRefusesOldReceiptsBeforeSignalling(t *testing.T) {
 	_, e := RequestHandoff(context.Background(), c, "/unused", fixtureID, "beta", -1)
 	if e == nil || !strings.Contains(e.Error(), "ownership receipt") {
 		t.Fatal(e)
+	}
+}
+
+func TestReplacementNeverArchivesANewOwner(t *testing.T) {
+	c := fixture(t)
+	lockDir := filepath.Join(c.Runtime.SharedCodexHome, "thread-writer-locks")
+	if e := os.MkdirAll(lockDir, 0700); e != nil {
+		t.Fatal(e)
+	}
+	f, e := os.OpenFile(filepath.Join(lockDir, fixtureID+".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer f.Close()
+	if e = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); e != nil {
+		t.Fatal(e)
+	}
+	l, e := Plan(context.Background(), c, fixtureID, "default")
+	if e != nil {
+		t.Fatal(e)
+	}
+	e = prepare(context.Background(), c, l, false)
+	if _, ok := e.(*ForeignWriterError); !ok {
+		t.Fatalf("replacement must refuse a new writer: %v", e)
+	}
+	if _, e = os.Stat(filepath.Join(os.Getenv("HOME"), "argv")); !os.IsNotExist(e) {
+		t.Fatal("replacement invoked archive against another owner")
 	}
 }
 

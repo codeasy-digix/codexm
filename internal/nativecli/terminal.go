@@ -301,7 +301,7 @@ func RunSession(ctx context.Context, c config.Config, filename string) error {
 		}
 	}
 	if e == nil {
-		e = Prepare(ctx, c, l)
+		e = prepare(ctx, c, l, l.SwitchID == "")
 	}
 	if e != nil {
 		l.Error = e.Error()

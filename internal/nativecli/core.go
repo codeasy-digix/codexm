@@ -238,6 +238,10 @@ func launchEnvironment(c config.Config, l Launch) []string {
 // a live writer must release ownership before a new native CLI can take over.
 // Never edit a native DB, delete a lock, terminate another writer, or fork.
 func Prepare(ctx context.Context, c config.Config, l Launch) error {
+	return prepare(ctx, c, l, true)
+}
+
+func prepare(ctx context.Context, c config.Config, l Launch, releaseOwner bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	if !threadID.MatchString(l.Thread) {
@@ -272,6 +276,9 @@ func Prepare(ctx context.Context, c config.Config, l Launch) error {
 		return err
 	}
 	if cr.WriterBusy(config.Expand(c.Runtime.SharedCodexHome), l.Thread) {
+		if !releaseOwner {
+			return &ForeignWriterError{Thread: l.Thread}
+		}
 		// A separate --no-daemon archive cannot release a GUI/CLI's writer.
 		// Ask the existing shared server only if it actually has this thread.
 		released, err := archiveOnSharedDaemon(ctx, c, l)
