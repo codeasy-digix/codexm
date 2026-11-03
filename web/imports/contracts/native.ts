@@ -10,6 +10,8 @@ export const bridgeContract = {
     { name: "login.start", mutation: true, model: false },
     { name: "login.status", mutation: false, model: false },
     { name: "login.cancel", mutation: true, model: false },
+    { name: "chats.archive", mutation: true, model: false },
+    { name: "chats.unarchive", mutation: true, model: false },
     { name: "terminal.open", mutation: true, model: false },
     { name: "terminal.read", mutation: false, model: false },
     { name: "terminal.input", mutation: true, model: false },

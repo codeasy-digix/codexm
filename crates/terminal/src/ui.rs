@@ -69,7 +69,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         slots[0],
     );
     match app.view {
-        View::Chats | View::Detail => chats(frame, slots[1], app),
+        View::Chats | View::Detail | View::ChatManage | View::ChatConfirm => {
+            chats(frame, slots[1], app)
+        }
         View::Settings => settings(frame, slots[1], app),
         View::Accounts => accounts(frame, slots[1], app),
         View::Nickname => paragraph(
@@ -164,7 +166,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
             View::Chats => {
                 "↑↓ 이동 · Enter 바로 재개 · → 상세/계정 · / 검색 · A 보관 · R 갱신 · Q 종료"
             }
-            View::Detail => "↑↓ 이번 계정 선택 · Enter 적용 후 목록 · ←/Esc 목록 · F2 설정",
+            View::Detail => "↑↓ 이번 계정 선택 · Enter 적용 후 목록 · → 채팅 관리 · ←/Esc 목록",
+            View::ChatManage => "↑↓ 메뉴 · Enter 선택 · ←/Esc 계정 선택 · F2 설정",
+            View::ChatConfirm => "←→ 선택 · Enter 확인 · Esc 취소",
             View::Settings => "↑↓ 이동 · Enter 설정/변경 · ←/Esc 목록 · F2 목록",
             View::Accounts => {
                 "↑↓ 계정 · A 추가 · L 로그인 · D 기본 · X/Delete 등록 해제 · U 사용량 · Esc 뒤로"
@@ -227,11 +231,27 @@ fn chats(frame: &mut Frame, area: Rect, app: &App) {
             app.view == View::Chats,
         );
     }
-    if split || app.view == View::Detail {
+    if split
+        || matches!(
+            app.view,
+            View::Detail | View::ChatManage | View::ChatConfirm
+        )
+    {
         let area = if split { panes[1] } else { area };
-        if let Some(chat) = app.chat() {
-            let parts =
-                Layout::vertical([Constraint::Percentage(60), Constraint::Min(4)]).split(area);
+        let managing = matches!(app.view, View::ChatManage | View::ChatConfirm);
+        let chat = if app.view == View::ChatConfirm {
+            app.confirm_chat.as_ref().map(|c| &c.chat)
+        } else if managing {
+            app.managed_chat.as_ref()
+        } else {
+            app.chat()
+        };
+        if let Some(chat) = chat {
+            let parts = Layout::vertical([
+                Constraint::Percentage(if managing { 40 } else { 60 }),
+                Constraint::Min(4),
+            ])
+            .split(area);
             paragraph(
                 frame,
                 parts[0],
@@ -251,6 +271,55 @@ fn chats(frame: &mut Frame, area: Rect, app: &App) {
                     clean(&chat.effort)
                 ),
             );
+            if app.view == View::ChatConfirm {
+                let archived = app.confirm_chat.as_ref().is_some_and(|c| c.archived);
+                paragraph(
+                    frame,
+                    parts[1],
+                    if archived {
+                        "보관 확인"
+                    } else {
+                        "보관 해제 확인"
+                    },
+                    format!(
+                        "{}\n\n{}\n\n{}",
+                        clean(&chat.title),
+                        if archived {
+                            "이 채팅을 보관할까요?\n진행 중 작업은 중단될 수 있습니다.\nCodex 관리 worktree가 정리될 수 있습니다."
+                        } else {
+                            "이 채팅의 보관을 해제할까요?\n일반 채팅 목록에 다시 표시됩니다."
+                        },
+                        if app.confirm_yes {
+                            "  취소     [실행]"
+                        } else {
+                            "[취소]      실행"
+                        }
+                    ),
+                );
+                return;
+            }
+            if app.view == View::ChatManage {
+                list(
+                    frame,
+                    parts[1],
+                    "채팅 관리",
+                    vec![
+                        ListItem::new(if chat.archived {
+                            "보관하기 · 이미 보관됨"
+                        } else {
+                            "보관하기"
+                        }),
+                        ListItem::new(if chat.archived {
+                            "보관 해제 · 일반 목록으로 복원"
+                        } else {
+                            "보관 해제 · 보관되지 않음"
+                        }),
+                    ],
+                    app.chat_action,
+                    true,
+                );
+                return;
+            }
             let choices = app.account_names();
             let selected = if app.view == View::Detail {
                 app.detail_account
@@ -312,7 +381,7 @@ fn settings(frame: &mut Frame, area: Rect, app: &App) {
         parts[1],
         "현재 환경",
         format!(
-            "대화 저장소: {}\n계정 저장소: {}\n설정 파일: {}\n\nTUI는 계정과 채팅 선택만 관리합니다.\nEnter로 넘긴 뒤에는 공식 Codex CLI가 작업을 이어갑니다.\n웹 서버·자동 계정 교체·history-sync는 필요하지 않습니다.",
+            "대화 저장소: {}\n계정 저장소: {}\n설정 파일: {}\n\nTUI는 계정·채팅 선택과 보관/복원을 관리합니다.\nEnter로 넘긴 뒤에는 공식 Codex CLI가 작업을 이어갑니다.\n웹 서버·자동 계정 교체·history-sync는 필요하지 않습니다.",
             clean(app.snapshot.paths["history"].as_str().unwrap_or("")),
             clean(app.snapshot.paths["accounts"].as_str().unwrap_or("")),
             clean(app.snapshot.paths["config"].as_str().unwrap_or(""))

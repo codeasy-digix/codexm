@@ -1,4 +1,4 @@
-use crate::model::{Action, App, View};
+use crate::model::{Action, App, ChatArchiveChange, View};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::json;
 
@@ -91,6 +91,14 @@ impl App {
             },
             View::Detail => match key.code {
                 KeyCode::Left | KeyCode::Esc => self.view = View::Chats,
+                KeyCode::Right => {
+                    if let Some(chat) = self.chat().cloned() {
+                        self.chat_action = usize::from(chat.archived);
+                        self.managed_chat = Some(chat);
+                        self.confirm_chat = None;
+                        self.view = View::ChatManage;
+                    }
+                }
                 KeyCode::Up => self.detail_account = self.detail_account.saturating_sub(1),
                 KeyCode::Down => {
                     self.detail_account =
@@ -105,6 +113,64 @@ impl App {
                         self.notice = "이번 실행 계정을 선택했습니다. Enter로 재개하세요.".into();
                     }
                     self.view = View::Chats;
+                }
+                _ => {}
+            },
+            View::ChatManage => match key.code {
+                KeyCode::Left | KeyCode::Esc => self.leave_chat_management(),
+                KeyCode::Up => self.chat_action = self.chat_action.saturating_sub(1),
+                KeyCode::Down => self.chat_action = (self.chat_action + 1).min(1),
+                KeyCode::Enter => {
+                    if let Some(chat) = &self.managed_chat {
+                        let current = self.snapshot.sessions.iter().find(|c| c.id == chat.id);
+                        if let Some(chat) = current {
+                            let archived = self.chat_action == 0;
+                            if chat.archived == archived {
+                                self.notice = if archived {
+                                    "이미 보관된 채팅입니다."
+                                } else {
+                                    "보관되지 않은 채팅입니다."
+                                }
+                                .into();
+                            } else {
+                                self.confirm_chat = Some(ChatArchiveChange {
+                                    chat: chat.clone(),
+                                    archived,
+                                });
+                                self.confirm_yes = false;
+                                self.view = View::ChatConfirm;
+                            }
+                        } else {
+                            self.notice = "선택한 채팅이 더 이상 목록에 없습니다. ←로 돌아가 다시 선택하세요.".into();
+                        }
+                    }
+                }
+                _ => {}
+            },
+            View::ChatConfirm => match key.code {
+                KeyCode::Esc => {
+                    self.confirm_chat = None;
+                    self.view = View::ChatManage;
+                }
+                KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
+                    self.confirm_yes = !self.confirm_yes
+                }
+                KeyCode::Enter => {
+                    if self.confirm_yes {
+                        if let Some(change) = &self.confirm_chat {
+                            return request(
+                                if change.archived {
+                                    "chats.archive"
+                                } else {
+                                    "chats.unarchive"
+                                },
+                                json!({"thread_id":change.chat.id}),
+                            );
+                        }
+                    } else {
+                        self.confirm_chat = None;
+                        self.view = View::ChatManage;
+                    }
                 }
                 _ => {}
             },

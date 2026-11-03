@@ -6,6 +6,12 @@
 - Running `codexm` opens the Rust TUI in crates/terminal. Enter directly resumes
   with the last registered account or default; Right/Left move to/from details,
   and F2 opens settings/account management. Keep explicit choices across polling.
+- A second Right from the account panel opens per-chat archive/restore controls.
+  Freeze the selected thread ID across refresh and confirmation; default to cancel.
+  Use only official CLI archive/unarchive or the verified existing owner's RPC.
+  Never stop GUI/CLI processes, delete native locks, resume a chat, or edit its DB
+  from this menu. Verify the resulting archive state and never replay uncertain
+  requests. Preserve pending account choices when returning with Left.
 - Public entrypoints are in internal/cli/compact.go and internal/nativecli. Do not
   start the old supervisor, workers, manager model, scheduler, account rotation,
   watchdog, notifications or management plugin from the compact path. Prior

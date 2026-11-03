@@ -217,4 +217,15 @@ func TestOfficialUnarchiveAndResumePreparation(t *testing.T) {
 	if !targetFound {
 		t.Fatal("native identity or archive state was not preserved")
 	}
+	managed, e := SetChatArchived(ctx, c, l.Thread, true)
+	if e != nil || !managed.Archived || !managed.Changed {
+		t.Fatal("official catalog archive", managed, e)
+	}
+	managed, e = SetChatArchived(ctx, c, l.Thread, false)
+	if e != nil || managed.Archived || !managed.Changed {
+		t.Fatal("official catalog restore", managed, e)
+	}
+	if !cr.WriterBusy(c.Runtime.SharedCodexHome, control.Thread.ID) {
+		t.Fatal("catalog management released another owner's chat")
+	}
 }

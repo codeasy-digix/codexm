@@ -87,12 +87,19 @@ impl Preferences {
 pub enum View {
     Chats,
     Detail,
+    ChatManage,
+    ChatConfirm,
     Settings,
     Accounts,
     Nickname,
     AuthMode,
     Login,
     Confirm,
+}
+#[derive(Clone)]
+pub struct ChatArchiveChange {
+    pub chat: Chat,
+    pub archived: bool,
 }
 pub enum Action {
     None,
@@ -110,6 +117,9 @@ pub struct App {
     pub searching: bool,
     pub view: View,
     pub detail_account: usize,
+    pub chat_action: usize,
+    pub managed_chat: Option<Chat>,
+    pub confirm_chat: Option<ChatArchiveChange>,
     pub account_row: usize,
     pub setting_row: usize,
     pub overrides: HashMap<String, String>,
@@ -149,6 +159,9 @@ impl App {
             searching: false,
             view: View::Chats,
             detail_account: 0,
+            chat_action: 0,
+            managed_chat: None,
+            confirm_chat: None,
             account_row: 0,
             setting_row: 0,
             overrides: HashMap::new(),
@@ -211,14 +224,23 @@ impl App {
             .get(self.account_row)
             .map(|a| a.name.clone());
         self.snapshot = snapshot;
+        if let Some(managed) = &self.managed_chat
+            && let Some(current) = self.snapshot.sessions.iter().find(|c| c.id == managed.id)
+        {
+            self.managed_chat = Some(current.clone());
+        }
         self.filter();
-        if let Some(id) = id
-            && let Some(i) = self
+        if let Some(id) = id {
+            if let Some(i) = self
                 .filtered
                 .iter()
                 .position(|i| self.snapshot.sessions[*i].id == id)
-        {
-            self.selected = i;
+            {
+                self.selected = i;
+            } else if self.view == View::Detail {
+                self.view = View::Chats;
+                self.notice = "선택한 채팅이 현재 목록에서 사라졌습니다. 다시 선택하세요.".into();
+            }
         }
         self.account_row = account
             .and_then(|name| self.snapshot.accounts.iter().position(|a| a.name == name))
@@ -230,12 +252,32 @@ impl App {
             .and_then(|name| self.account_names().iter().position(|n| *n == name))
             .unwrap_or(0);
     }
+    pub fn leave_chat_management(&mut self) {
+        let row = self.managed_chat.as_ref().and_then(|chat| {
+            self.filtered
+                .iter()
+                .position(|i| self.snapshot.sessions[*i].id == chat.id)
+        });
+        if let Some(row) = row {
+            self.selected = row;
+            self.view = View::Detail;
+        } else {
+            self.view = View::Chats;
+            self.notice =
+                "선택한 채팅이 현재 목록에 없습니다. 검색 조건이나 보관 목록을 확인하세요.".into();
+        }
+    }
     pub fn reply(&mut self, method: &str, params: &Value, result: Result<Value, String>) {
         self.busy = None;
         self.blocking = false;
         match result {
             Err(e) => {
                 self.notice = format!("오류: {}", clean(&e));
+                if matches!(method, "chats.archive" | "chats.unarchive") {
+                    self.view = View::ChatManage;
+                    self.confirm_chat = None;
+                    self.refresh_needed = true;
+                }
                 if method == "login.start" {
                     self.view = View::AuthMode;
                 }
@@ -259,6 +301,33 @@ impl App {
                         self.usage.insert(name.into(), value);
                     }
                     self.notice = "사용량을 확인했습니다.".into();
+                }
+                "chats.archive" | "chats.unarchive" => {
+                    let id = params["thread_id"].as_str().unwrap_or("");
+                    if value["thread_id"].as_str() != Some(id) || !value["archived"].is_boolean() {
+                        self.notice =
+                            "응답의 채팅 상태를 확인하지 못했습니다. 목록을 갱신하세요.".into();
+                    } else {
+                        let archived = value["archived"].as_bool().unwrap_or(false);
+                        if let Some(chat) = self.snapshot.sessions.iter_mut().find(|c| c.id == id) {
+                            chat.archived = archived;
+                        }
+                        if let Some(chat) = &mut self.managed_chat
+                            && chat.id == id
+                        {
+                            chat.archived = archived;
+                        }
+                        self.filter();
+                        self.notice = if archived {
+                            "채팅을 보관했습니다. A 키로 보관된 채팅도 볼 수 있습니다."
+                        } else {
+                            "보관을 해제했습니다. 목록에서 Enter로 재개할 수 있습니다."
+                        }
+                        .into();
+                    }
+                    self.view = View::Chats;
+                    self.confirm_chat = None;
+                    self.refresh_needed = true;
                 }
                 "accounts.remove" | "accounts.setDefault" => {
                     self.view = View::Accounts;

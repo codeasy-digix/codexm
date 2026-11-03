@@ -101,6 +101,92 @@ fn settings_account_mutations_require_confirmation_and_choose_auth_mode() {
         matches!(key(&mut app,KeyCode::Esc),Action::Request{method:"login.cancel",params} if params["login_id"]=="private-fixture")
     );
 }
+
+#[test]
+fn second_right_opens_chat_management_and_left_preserves_pending_account() {
+    let mut app = app();
+    key(&mut app, KeyCode::Right);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Right);
+    assert!(app.view == View::ChatManage);
+    assert_eq!(app.managed_chat.as_ref().unwrap().id, "one");
+    assert_eq!(app.preferred(app.chat().unwrap()), "beta");
+    key(&mut app, KeyCode::Left);
+    assert!(app.view == View::Detail);
+    assert_eq!(app.detail_account, 1);
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.preferred(app.chat().unwrap()), "alpha");
+}
+
+#[test]
+fn archive_confirmation_targets_the_original_chat_across_refresh() {
+    let mut app = app();
+    key(&mut app, KeyCode::Right);
+    key(&mut app, KeyCode::Right);
+    key(&mut app, KeyCode::Enter);
+    assert!(app.view == View::ChatConfirm);
+    assert!(!app.confirm_yes);
+    assert!(matches!(key(&mut app, KeyCode::Enter), Action::None));
+    assert!(app.view == View::ChatManage);
+    key(&mut app, KeyCode::Enter);
+    // A different row occupies the selected list position while confirming.
+    let mut snapshot = app.snapshot.sessions.clone();
+    snapshot.remove(0);
+    app.replace(Snapshot {
+        sessions: snapshot,
+        ..Snapshot::default()
+    });
+    key(&mut app, KeyCode::Right);
+    assert!(
+        matches!(key(&mut app, KeyCode::Enter), Action::Request{method:"chats.archive",params} if params["thread_id"]=="one")
+    );
+    app.reply(
+        "chats.archive",
+        &json!({"thread_id":"one"}),
+        Err("owner busy".into()),
+    );
+    assert!(app.view == View::ChatManage);
+    assert!(app.refresh_needed);
+    assert!(matches!(key(&mut app, KeyCode::Enter), Action::None));
+    assert!(app.notice.contains("더 이상"));
+    key(&mut app, KeyCode::Left);
+    assert!(app.view == View::Chats);
+}
+
+#[test]
+fn archive_success_hides_active_row_and_restore_uses_same_id() {
+    let mut app = app();
+    app.reply(
+        "chats.archive",
+        &json!({"thread_id":"one"}),
+        Ok(json!({"thread_id":"one","archived":true,"changed":true})),
+    );
+    assert!(app.view == View::Chats);
+    assert!(
+        !app.filtered
+            .iter()
+            .any(|i| app.snapshot.sessions[*i].id == "one")
+    );
+    key(&mut app, KeyCode::Char('a'));
+    key(&mut app, KeyCode::Home);
+    key(&mut app, KeyCode::Right);
+    key(&mut app, KeyCode::Right);
+    assert_eq!(app.chat_action, 1);
+    key(&mut app, KeyCode::Enter);
+    assert!(app.view == View::ChatConfirm);
+    assert!(!app.confirm_yes);
+    key(&mut app, KeyCode::Right);
+    assert!(
+        matches!(key(&mut app, KeyCode::Enter), Action::Request{method:"chats.unarchive",params} if params["thread_id"]=="one")
+    );
+    app.reply(
+        "chats.unarchive",
+        &json!({"thread_id":"one"}),
+        Ok(json!({"thread_id":"one","archived":false,"changed":true})),
+    );
+    assert!(app.view == View::Chats);
+    assert!(!app.snapshot.sessions[0].archived);
+}
 #[test]
 fn background_reads_allow_navigation_but_pending_mutations_do_not() {
     let mut app = app();
@@ -152,6 +238,8 @@ fn renderer_survives_small_terminals_and_filters_terminal_escape_sequences() {
         for view in [
             View::Chats,
             View::Detail,
+            View::ChatManage,
+            View::ChatConfirm,
             View::Settings,
             View::Accounts,
             View::Nickname,
@@ -160,6 +248,11 @@ fn renderer_survives_small_terminals_and_filters_terminal_escape_sequences() {
             View::Confirm,
         ] {
             app.view = view;
+            app.managed_chat = Some(app.snapshot.sessions[0].clone());
+            app.confirm_chat = Some(crate::model::ChatArchiveChange {
+                chat: app.snapshot.sessions[0].clone(),
+                archived: true,
+            });
             terminal.draw(|f| ui::draw(f, &app)).unwrap();
         }
     }

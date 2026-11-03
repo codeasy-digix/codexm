@@ -244,33 +244,11 @@ func Prepare(ctx context.Context, c config.Config, l Launch) error {
 func prepare(ctx context.Context, c config.Config, l Launch, releaseOwner bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	if !threadID.MatchString(l.Thread) {
-		return errors.New("invalid chat UUID")
-	}
-	gate := filepath.Join(root(c), "handoffs", l.Thread+".lock")
-	if err := os.MkdirAll(filepath.Dir(gate), 0700); err != nil {
-		return err
-	}
-	fd, err := unix.Open(gate, unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW, 0600)
+	unlock, err := lockChatMutation(ctx, c, l.Thread)
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
-	for {
-		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
-		if err == nil {
-			break
-		}
-		if err != unix.EWOULDBLOCK {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	defer unix.Flock(fd, unix.LOCK_UN)
+	defer unlock()
 	archived, err := archivedState(ctx, c, l.Thread)
 	if err != nil {
 		return err
@@ -289,7 +267,6 @@ func prepare(ctx context.Context, c config.Config, l Launch, releaseOwner bool) 
 			if cr.WriterBusy(config.Expand(c.Runtime.SharedCodexHome), l.Thread) {
 				return &ForeignWriterError{Thread: l.Thread}
 			}
-			// Its owner may have exited while the read-only daemon probe ran.
 			archived, err = archivedState(ctx, c, l.Thread)
 			if err != nil {
 				return err
@@ -314,6 +291,39 @@ func prepare(ctx context.Context, c config.Config, l Launch, releaseOwner bool) 
 		}
 	}
 	return nil
+}
+
+// Serialize native metadata mutations and resume preparation for the same ID.
+// This is our operation gate, never Codex's native writer lock.
+func lockChatMutation(ctx context.Context, c config.Config, id string) (func(), error) {
+	if !threadID.MatchString(id) {
+		return nil, errors.New("invalid chat UUID")
+	}
+	gate := filepath.Join(root(c), "handoffs", id+".lock")
+	if err := os.MkdirAll(filepath.Dir(gate), 0700); err != nil {
+		return nil, err
+	}
+	fd, err := unix.Open(gate, unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != unix.EWOULDBLOCK {
+			unix.Close(fd)
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			unix.Close(fd)
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return func() { _ = unix.Flock(fd, unix.LOCK_UN); _ = unix.Close(fd) }, nil
 }
 
 func archivedState(ctx context.Context, c config.Config, id string) (bool, error) {

@@ -25,7 +25,7 @@ type Method struct {
 	Model    bool   `json:"model"`
 }
 
-var Methods = []Method{{"capabilities", false, false}, {"snapshot", false, false}, {"accounts.refresh", false, false}, {"accounts.remove", true, false}, {"accounts.setDefault", true, false}, {"login.start", true, false}, {"login.status", false, false}, {"login.cancel", true, false}, {"terminal.open", true, false}, {"terminal.read", false, false}, {"terminal.input", true, false}, {"terminal.close", true, false}}
+var Methods = []Method{{"capabilities", false, false}, {"snapshot", false, false}, {"accounts.refresh", false, false}, {"accounts.remove", true, false}, {"accounts.setDefault", true, false}, {"login.start", true, false}, {"login.status", false, false}, {"login.cancel", true, false}, {"chats.archive", true, false}, {"chats.unarchive", true, false}, {"terminal.open", true, false}, {"terminal.read", false, false}, {"terminal.input", true, false}, {"terminal.close", true, false}}
 
 type Request struct {
 	Version   int             `json:"protocolVersion"`
@@ -121,6 +121,8 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 			return true, err
 		case "terminal.open":
 			return Open(ctx, c, self, p.Thread, p.Account)
+		case "chats.archive", "chats.unarchive":
+			return SetChatArchived(ctx, c, p.Thread, r.Method == "chats.archive")
 		case "terminal.read":
 			return Screen(ctx, c, p.Session)
 		case "terminal.input":
