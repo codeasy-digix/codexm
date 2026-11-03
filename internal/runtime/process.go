@@ -22,6 +22,10 @@ type processRecord struct {
 	Session  string `json:"session"`
 }
 
+// NativeProcessIdentity identifies one PID incarnation, excluding zombies.
+// Compact CLI handoffs reuse this OS check without starting legacy workers.
+func NativeProcessIdentity(pid int) (string, error) { return processIdentity(pid) }
+
 func ProcessSession(c config.Config, run string) string {
 	return "process:" + filepath.Join(c.StateDir(), "workers", run+".process.json")
 }

@@ -11,6 +11,15 @@
   watchdog, notifications or management plugin from the compact path. Prior
   implementation and tests remain migration references, not active commands.
   Legacy CLI files require `-tags legacy`; they are excluded from normal builds.
+- Explicit `handoff THREAD --account NAME` is a bounded exception: verify a
+  current codexm launch receipt, PID incarnation, executable and exactly one
+  native writer before SIGTERM. Wait for both process exit and writer release
+  before starting the same ID with one continuation prompt. Never SIGKILL or
+  replay uncertain prompts. The temporary helper uses `tmux -L codex` and exits.
+  `--if-low 5` uses fresh 5h/week limits; unknown limits are not permission to
+  switch, aliases of the same login are not another account. GUI requests still
+  require a real foreground terminal and confirmation each time. See
+  docs/account-handoff.md. No always-on rotation service is implied.
 - Native conversations are read-only catalog data. The only handoff mutations are
   official archive/unarchive commands or owner-side RPC for the explicitly selected
   thread. Skip archive/unarchive for unlocked, unarchived chats. A reachable shared

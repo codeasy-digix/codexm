@@ -94,7 +94,11 @@ func (r *Reader) Read(ctx context.Context, name string) Snapshot {
 	defer lock.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
-	p, e := r.Resolver.Probe(ctx, name)
+	probeName := name
+	if probeName == "default" {
+		probeName = ""
+	}
+	p, e := r.Resolver.Probe(ctx, probeName)
 	if e != nil {
 		s.Error = cr.SafeText(e.Error())
 		return s

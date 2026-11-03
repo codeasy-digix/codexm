@@ -13,6 +13,10 @@ codexm list                         # 모든 로컬 프로젝트의 채팅 목�
 codexm list --archived --search 검색어
 codexm list --json
 codexm resume THREAD_ID --account ACCOUNT_NAME
+codexm resume THREAD_ID --account ACCOUNT_NAME --continue
+codexm handoff THREAD_ID --account NEXT_ACCOUNT --if-low 5
+codexm handoff-status THREAD_ID
+codexm usage --all
 ```
 
 | 키 | 동작 |
@@ -29,6 +33,13 @@ codexm resume THREAD_ID --account ACCOUNT_NAME
 다른 프로그램에서 실행한 계정은 알 수 없을 수 있습니다. 상세 패널의 계정 선택은
 이번 TUI 실행에만 적용하고, 실제 재개한 계정은 다음 실행의 이전 계정으로 남깁니다.
 자동 새로고침은 선택한 채팅과 계정을 유지합니다. 자동 실행·자동 계정 교체는 하지 않습니다.
+
+실행 중인 **codexm 소유 CLI의 명시적인 계정 교체**에는 `handoff`를 사용합니다.
+기존 CLI 종료와 잠금 해제 후 같은 ID를 새 계정으로 재개하며, 별도 요약·fork 없이
+계속 진행하는 프롬프트를 한 번 전달합니다. `--if-low 5`는 현재 계정의 5h 또는
+주간 잔여량이 5% 이하일 때만 요청합니다. 대상 계정은 두 한도가 모두 5% 초과여야
+합니다. 상주 감시기가 아니므로 작업 구간마다 요청해야 합니다.
+[명령·실행 범위·에이전트 지침](docs/account-handoff.md)을 참고하세요.
 
 같은 대화·계정의 codexm CLI가 tmux에 이미 있으면 보관/복원 없이 그 터미널로
 재연결합니다. 저장된 기록뿐 아니라 실제 pane·Codex 프로세스·해당 대화의 writer 파일을

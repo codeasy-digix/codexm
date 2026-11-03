@@ -111,17 +111,23 @@ func Accounts(c config.Config) ([]Account, error) {
 }
 
 type Launch struct {
-	Thread     string `json:"thread_id"`
-	Account    string `json:"account"`
-	Cwd        string `json:"cwd"`
-	Session    string `json:"session,omitempty"`
-	TmuxServer string `json:"tmux_server,omitempty"`
-	Pane       string `json:"pane,omitempty"`
-	At         int64  `json:"at"`
-	Binary     string `json:"binary"`
-	Config     string `json:"config"`
-	Ready      bool   `json:"ready"`
-	Error      string `json:"error,omitempty"`
+	Thread     string           `json:"thread_id"`
+	Account    string           `json:"account"`
+	Cwd        string           `json:"cwd"`
+	Session    string           `json:"session,omitempty"`
+	TmuxServer string           `json:"tmux_server,omitempty"`
+	Pane       string           `json:"pane,omitempty"`
+	At         int64            `json:"at"`
+	Binary     string           `json:"binary"`
+	Config     string           `json:"config"`
+	Ready      bool             `json:"ready"`
+	Error      string           `json:"error,omitempty"`
+	Continue   bool             `json:"continue,omitempty"`
+	Owner      *processIdentity `json:"owner,omitempty"`
+	OwnerKey   string           `json:"owner_key,omitempty"`
+	AuthKey    string           `json:"auth_key,omitempty"`
+	SwitchID   string           `json:"switch_id,omitempty"`
+	Model      string           `json:"model,omitempty"`
 }
 
 func root(c config.Config) string { return filepath.Join(c.StateDir(), "native-cli") }
@@ -179,6 +185,7 @@ func Plan(ctx context.Context, c config.Config, id, account string) (Launch, err
 	for _, e := range list.Sessions {
 		if e.ID == id {
 			l.Cwd = e.Cwd
+			l.Model = e.Model
 			found = true
 			break
 		}
@@ -216,11 +223,15 @@ func environment(c config.Config, account string) []string {
 	out := make([]string, 0, len(all))
 	for _, s := range all {
 		k, _, _ := strings.Cut(s, "=")
-		if k != "CODEX_THREAD_ID" && k != "CODEX_TURN_ID" && !strings.HasPrefix(k, "CODEXM_JOB_") {
+		if k != "CODEX_THREAD_ID" && k != "CODEX_TURN_ID" && !strings.HasPrefix(k, "CODEXM_JOB_") && !strings.HasPrefix(k, "CODEXM_NATIVE_") {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+func launchEnvironment(c config.Config, l Launch) []string {
+	return append(environment(c, l.Account), "CODEXM_NATIVE_THREAD_ID="+l.Thread, "CODEXM_NATIVE_ACCOUNT="+l.Account)
 }
 
 // Prepare leaves resumable chats alone. Only archived chats need unarchive;
@@ -312,12 +323,19 @@ func archivedState(ctx context.Context, c config.Config, id string) (bool, error
 }
 
 func ResumeArgs(l Launch) []string {
-	return []string{l.Binary, "--no-daemon", "--no-alt-screen", "resume", l.Thread}
+	args := []string{l.Binary, "--no-daemon", "--no-alt-screen", "resume", l.Thread}
+	if l.Continue {
+		args = append(args, ContinuePrompt)
+	}
+	return args
 }
 func Resume(ctx context.Context, c config.Config, l Launch) error {
 	if existing, err := ReusableTerminal(ctx, c, l.Thread, l.Account); err != nil {
 		return err
 	} else if existing != nil {
+		if l.Continue {
+			return errors.New("chat already has a live CLI; --continue was not sent again; use handoff for an account change")
+		}
 		fmt.Printf("Reconnecting to existing %s terminal (%s); its running authentication and work are preserved.\n", existing.Account, existing.Session)
 		return Attach(ctx, c, existing.Session)
 	}
@@ -327,6 +345,9 @@ func Resume(ctx context.Context, c config.Config, l Launch) error {
 	}
 	defer cleanup()
 	l.Ready = true
+	if err := trackLaunch(ctx, c, &l); err != nil {
+		return err
+	}
 	if err := writeReceipt(c, l); err != nil {
 		return err
 	}
@@ -334,7 +355,7 @@ func Resume(ctx context.Context, c config.Config, l Launch) error {
 		return err
 	}
 	// Replace codexm: the official CLI owns terminal input, signals and exit code.
-	err = syscall.Exec(l.Binary, ResumeArgs(l), environment(c, l.Account))
+	err = syscall.Exec(l.Binary, ResumeArgs(l), launchEnvironment(c, l))
 	l.Ready = false
 	_ = writeReceipt(c, l)
 	return err

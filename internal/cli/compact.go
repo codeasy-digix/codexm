@@ -28,6 +28,10 @@ const compactHelp = `codexm — local chats, accounts, official Codex CLI
 codexm                                      TUI: Enter resumes; Right details; F2 settings
 codexm list [--json] [--archived]             Chats across every local project
 codexm resume THREAD --account NAME          Resume or reconnect to a matching live CLI
+codexm resume THREAD --account NAME --continue  Resume and submit one continuation
+codexm handoff THREAD --account NAME [--if-low 5]  Replace this chat's codexm-owned CLI
+codexm handoff-status THREAD                 Read the last requested handoff result
+codexm usage [--account NAME|--all] [--model MODEL]  Read live 5h/week limits as JSON
 codexm resume THREAD --account NAME --terminal  Open a named tmux terminal
 codexm account [NAME] [--login|--set-default]  Native account selection (unchanged)
 codexm accounts                              Saved local account information
@@ -44,7 +48,7 @@ A verified macOS GUI can restart after confirmation EACH time (all GUI work stop
 Without an interactive terminal, or for another CLI, its owner must release it.
 New managed terminals use tmux -L codex; live legacy terminals stay on default.
 Then codex --no-daemon --no-alt-screen resume THREAD owns all subsequent work.
-No manager model, automatic account rotation, scheduling or history sync.
+No manager model, unattended account rotation, scheduling or history sync.
 Existing manager data is read-only metadata; old worker services are not started.
 `
 
@@ -100,7 +104,7 @@ func Main(args []string) error {
 		fmt.Print(compactHelp)
 		return nil
 	}
-	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "bridge": true, "doctor": true}
+	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}
 	if !allowed[command] {
 		return fmt.Errorf("%q is excluded from compact codexm; use list, resume, account or web (existing work is preserved)", command)
 	}
@@ -115,6 +119,72 @@ func Main(args []string) error {
 	}
 	self, _ = filepath.EvalSymlinks(self)
 	switch command {
+	case "__handoff":
+		if len(args) != 1 {
+			return errors.New("missing handoff request")
+		}
+		return nativecli.RunHandoff(ctx, c, self, args[0])
+	case "handoff-status":
+		if len(args) != 1 {
+			return errors.New("usage: codexm handoff-status THREAD")
+		}
+		s, e := nativecli.HandoffStatus(c, args[0])
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(os.Stdout).Encode(s)
+	case "handoff":
+		if len(args) < 1 {
+			return errors.New("usage: codexm handoff THREAD --account NAME [--if-low 5]")
+		}
+		id := args[0]
+		f := flag.NewFlagSet("handoff", flag.ContinueOnError)
+		account := f.String("account", "", "next saved account or default")
+		threshold := f.Int("if-low", -1, "request only when 5h or week remaining is at most this percent")
+		if e = f.Parse(args[1:]); e != nil {
+			return e
+		}
+		if f.NArg() != 0 || *account == "" || *threshold < -1 || *threshold > 100 {
+			return errors.New("specify --account NAME and a threshold from 0 to 100")
+		}
+		s, e := nativecli.RequestHandoff(ctx, c, self, id, *account, *threshold)
+		if e != nil {
+			if *threshold < 0 && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+				if handled, guiErr := nativecli.TryGUIHandoff(ctx, c, id, *account); handled {
+					return guiErr
+				}
+			}
+			return e
+		}
+		fmt.Printf("Handoff accepted, not yet completed: %s → %s\nThread: %s\nCheck: codexm handoff-status %s\nAfter replacement: tmux -L codex attach -t %s\n", s.Source.Account, s.Target.Account, id, id, nativecli.TargetTerminal(c, s))
+		return nil
+	case "usage":
+		f := flag.NewFlagSet("usage", flag.ContinueOnError)
+		account := f.String("account", "default", "saved nickname or default")
+		all := f.Bool("all", false, "all registered accounts and default")
+		model := f.String("model", "", "model-specific limit bucket")
+		if e = f.Parse(args); e != nil {
+			return e
+		}
+		if f.NArg() != 0 {
+			return errors.New("unexpected usage argument")
+		}
+		names := []string{*account}
+		if *all {
+			names = []string{"default"}
+			saved, e := nativecli.Accounts(c)
+			if e != nil {
+				return e
+			}
+			for _, a := range saved {
+				names = append(names, a.Name)
+			}
+		}
+		results := make([]nativecli.Usage, 0, len(names))
+		for _, name := range names {
+			results = append(results, nativecli.ReadUsage(ctx, c, name, *model))
+		}
+		return json.NewEncoder(os.Stdout).Encode(results)
 	case "account":
 		return accountCommand(ctx, c, args)
 	case "accounts":
@@ -211,6 +281,7 @@ func Main(args []string) error {
 		f := flag.NewFlagSet("resume", flag.ContinueOnError)
 		name := f.String("account", "", "saved nickname or default")
 		background := f.Bool("terminal", command == "open", "named tmux terminal")
+		continuation := f.Bool("continue", false, "submit one continuation after resume")
 		if e := f.Parse(args[1:]); e != nil {
 			return e
 		}
@@ -238,7 +309,7 @@ func Main(args []string) error {
 			}
 		}
 		if *background {
-			l, e := nativecli.Open(ctx, c, self, id, *name)
+			l, e := nativecli.OpenContinuation(ctx, c, self, id, *name, *continuation, "")
 			if e == nil {
 				fmt.Printf("Native terminal: %s\n%s\n", l.Session, nativecli.AttachCommand(l))
 			}
@@ -248,6 +319,7 @@ func Main(args []string) error {
 		if e != nil {
 			return e
 		}
+		l.Continue = *continuation
 		return nativecli.Resume(ctx, c, l)
 	default:
 		if len(args) != 0 {

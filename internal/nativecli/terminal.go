@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/config"
+	cr "github.com/codeasy-digix/codexm/internal/runtime"
 	"golang.org/x/sys/unix"
 )
 
@@ -198,10 +199,14 @@ func AttachCommand(l Launch) string {
 // Open creates a named terminal only. There is no supervisor, RPC worker or model
 // request. Reopening the same live thread/account attaches to its existing CLI.
 func Open(ctx context.Context, c config.Config, self, id, account string) (Launch, error) {
+	return OpenContinuation(ctx, c, self, id, account, false, "")
+}
+func OpenContinuation(ctx context.Context, c config.Config, self, id, account string, continuation bool, switchID string) (Launch, error) {
 	l, e := Plan(ctx, c, id, account)
 	if e != nil {
 		return l, e
 	}
+	l.Continue, l.SwitchID = continuation, switchID
 	if _, e = exec.LookPath("tmux"); e != nil {
 		return l, errors.New("tmux is required for web/native terminal sessions")
 	}
@@ -225,6 +230,9 @@ func Open(ctx context.Context, c config.Config, self, id, account string) (Launc
 			return l, e
 		}
 		if screen.Alive {
+			if continuation || switchID != "" {
+				return l, errors.New("target terminal already exists; no continuation was replayed")
+			}
 			return old, nil
 		}
 		_, _ = tmux(ctx, old.TmuxServer, "kill-session", "-t", "="+l.Session)
@@ -280,6 +288,19 @@ func RunSession(ctx context.Context, c config.Config, filename string) error {
 	latest, e := Plan(ctx, c, l.Thread, l.Account)
 	if e == nil {
 		l.Binary, l.Cwd = latest.Binary, latest.Cwd
+		if l.SwitchID != "" && cr.WriterBusy(config.Expand(c.Runtime.SharedCodexHome), l.Thread) {
+			e = errors.New("another writer acquired the chat during handoff; nothing was interrupted")
+		}
+	}
+	if e == nil && l.SwitchID != "" {
+		var s SwitchRequest
+		b, readErr := os.ReadFile(filepath.Join(switchDir(c, l.SwitchID), "request.json"))
+		key, keyErr := authKey(c, l.Account)
+		if readErr != nil || json.Unmarshal(b, &s) != nil || keyErr != nil || s.ID != l.SwitchID || s.Target.Thread != l.Thread || s.Target.Account != l.Account || s.TargetAuth != key {
+			e = errors.New("handoff target identity changed; replacement was not started")
+		}
+	}
+	if e == nil {
 		e = Prepare(ctx, c, l)
 	}
 	if e != nil {
@@ -288,6 +309,9 @@ func RunSession(ctx context.Context, c config.Config, filename string) error {
 		return e
 	}
 	l.Ready = true
+	if e = trackLaunch(ctx, c, &l); e != nil {
+		return e
+	}
 	if e = saveSession(c, l); e != nil {
 		return e
 	}
@@ -297,7 +321,7 @@ func RunSession(ctx context.Context, c config.Config, filename string) error {
 	if e = os.Chdir(l.Cwd); e != nil {
 		return e
 	}
-	e = syscall.Exec(l.Binary, ResumeArgs(l), environment(c, l.Account))
+	e = syscall.Exec(l.Binary, ResumeArgs(l), launchEnvironment(c, l))
 	l.Ready = false
 	l.Error = e.Error()
 	_ = saveSession(c, l)
