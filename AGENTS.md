@@ -96,7 +96,11 @@
   Web is optional compatibility, not a dependency of the normal TUI install.
 - Cross-machine history-sync is retired. Do not restore engines, service entries,
   compatibility links or automatic history writes. Preserve archival data.
-- The user authorized the local Mac, mac-secondary and mac-mobile for this change. Verify
-  matching artifacts and host-local settings; do not copy auth/history/preferences.
-  Homebrew, releases/tags/npm and deployment to other hosts remain on hold.
+- The active integration may be continued on the user's explicitly selected Mac.
+  Preserve other hosts and their live installations; source handoff is not a
+  request to deploy unfinished binaries everywhere. Never copy account credentials.
+- The user now authorizes public source and Homebrew distribution only after a
+  complete privacy audit of current files, Git history/metadata and release assets.
+  Preserve original private backups. Keep unfinished or unaudited history private;
+  do not flip repository visibility before the cleaned publication passes checks.
   Commit and push reviewed source changes; preserve concurrent edits and secrets.

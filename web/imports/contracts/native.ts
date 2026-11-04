@@ -2,6 +2,11 @@
 export const bridgeContract = {
   protocolVersion: 1,
   methods: [
+    { name: "accounts.catalog", mutation: false, model: false },
+    { name: "accounts.usage", mutation: false, model: false },
+    { name: "accounts.presentation", mutation: true, model: false },
+    { name: "accounts.importLegacy", mutation: true, model: false },
+    { name: "accounts.activate", mutation: true, model: true },
     { name: "capabilities", mutation: false, model: false },
     { name: "snapshot", mutation: false, model: false },
     { name: "accounts.refresh", mutation: false, model: false },

@@ -104,7 +104,7 @@ func Main(args []string) error {
 		fmt.Print(compactHelp)
 		return nil
 	}
-	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}
+	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "migrate-toolbar": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}
 	if !allowed[command] {
 		return fmt.Errorf("%q is excluded from compact codexm; use list, resume, account or web (existing work is preserved)", command)
 	}
@@ -188,7 +188,29 @@ func Main(args []string) error {
 	case "account":
 		return accountCommand(ctx, c, args)
 	case "accounts":
+		if len(args) == 1 && args[0] == "--json" {
+			a, e := nativecli.AccountCatalog(c)
+			if e != nil {
+				return e
+			}
+			return json.NewEncoder(os.Stdout).Encode(a)
+		}
 		return accountCommand(ctx, c, []string{"--list"})
+	case "migrate-toolbar":
+		f := flag.NewFlagSet("migrate-toolbar", flag.ContinueOnError)
+		source := f.String("source", "", "legacy Codex Usage support directory")
+		apply := f.Bool("apply", false, "copy missing logins and preserve native settings")
+		if e = f.Parse(args); e != nil {
+			return e
+		}
+		if f.NArg() != 0 {
+			return errors.New("unexpected migration argument")
+		}
+		r, e := nativecli.ImportToolbar(c, *source, *apply)
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(os.Stdout).Encode(r)
 	case "web":
 		return webhost.Command(ctx, c, self, args, os.Stdout)
 	case "__web":

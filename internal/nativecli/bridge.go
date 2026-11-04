@@ -25,7 +25,7 @@ type Method struct {
 	Model    bool   `json:"model"`
 }
 
-var Methods = []Method{{"capabilities", false, false}, {"snapshot", false, false}, {"accounts.refresh", false, false}, {"accounts.remove", true, false}, {"accounts.setDefault", true, false}, {"login.start", true, false}, {"login.status", false, false}, {"login.cancel", true, false}, {"chats.archive", true, false}, {"chats.unarchive", true, false}, {"terminal.open", true, false}, {"terminal.read", false, false}, {"terminal.input", true, false}, {"terminal.close", true, false}}
+var Methods = []Method{{"accounts.catalog", false, false}, {"accounts.usage", false, false}, {"accounts.presentation", true, false}, {"accounts.importLegacy", true, false}, {"accounts.activate", true, true}, {"capabilities", false, false}, {"snapshot", false, false}, {"accounts.refresh", false, false}, {"accounts.remove", true, false}, {"accounts.setDefault", true, false}, {"login.start", true, false}, {"login.status", false, false}, {"login.cancel", true, false}, {"chats.archive", true, false}, {"chats.unarchive", true, false}, {"terminal.open", true, false}, {"terminal.read", false, false}, {"terminal.input", true, false}, {"terminal.close", true, false}}
 
 type Request struct {
 	Version   int             `json:"protocolVersion"`
@@ -75,6 +75,31 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 		switch r.Method {
 		case "capabilities":
 			return map[string]any{"protocolVersion": 1, "generation": "native-cli-v1", "methods": Methods}, nil
+		case "accounts.catalog":
+			return AccountCatalog(c)
+		case "accounts.usage":
+			return ReadDesktopUsage(ctx, c, p.Account)
+		case "accounts.presentation":
+			var change PresentationChange
+			if e := json.Unmarshal(r.Params, &change); e != nil {
+				return nil, e
+			}
+			return true, EditPresentation(c, change)
+		case "accounts.importLegacy":
+			var args struct {
+				Source string `json:"source"`
+				Apply  bool   `json:"apply"`
+			}
+			if e := json.Unmarshal(r.Params, &args); e != nil {
+				return nil, e
+			}
+			return ImportToolbar(c, args.Source, args.Apply)
+		case "accounts.activate":
+			var args ActivationRequest
+			if e := json.Unmarshal(r.Params, &args); e != nil {
+				return nil, e
+			}
+			return true, ActivateUsage(ctx, c, args)
 		case "snapshot":
 			list, e := List(ctx, c)
 			if e != nil {

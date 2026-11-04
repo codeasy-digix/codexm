@@ -122,8 +122,9 @@ func Defaults() Config {
 	c.Manager.MaxCallsPerHour = 12
 	c.Manager.DecisionTimeoutSeconds = 120
 	c.Manager.FailureCooldownSeconds = 600
-	c.WorkerAccounts.Priority = []string{"account-work", "account-secondary", "account-main", "account-backup"}
-	c.WorkerAccounts.FallbackAccount = "account-backup"
+	// A fresh installation has no predefined logins or automatic fallback.
+	// Legacy preferences are honored only when explicitly present in its config.
+	c.WorkerAccounts.Priority = []string{}
 	c.WorkerAccounts.FallbackRequiresAllPrimaryExhausted = true
 	c.WorkerAccounts.PreferredRecheckSeconds = 600
 	c.Supervisor.ReconcileIntervalSeconds = 30

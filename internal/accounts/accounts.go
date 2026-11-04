@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +31,8 @@ type Bucket struct {
 	SpendReached *bool   `json:"spendControlReached"`
 }
 type Snapshot struct {
+	Email         string            `json:"email,omitempty"`
+	ResetCredits  json.RawMessage   `json:"rateLimitResetCredits,omitempty"`
 	Account       string            `json:"account"`
 	AccountID     string            `json:"accountId"`
 	Plan          string            `json:"plan"`
@@ -114,8 +117,9 @@ type usageCaller interface {
 func readAccountUsage(ctx context.Context, p usageCaller, s Snapshot) Snapshot {
 	var a struct {
 		Account *struct {
-			Type string `json:"type"`
-			Plan string `json:"planType"`
+			Type  string `json:"type"`
+			Plan  string `json:"planType"`
+			Email string `json:"email"`
 		} `json:"account"`
 	}
 	// Do not force an auth refresh just to inspect usage. Some CLI versions
@@ -131,6 +135,7 @@ func readAccountUsage(ctx context.Context, p usageCaller, s Snapshot) Snapshot {
 	}
 	s.Authenticated = true
 	s.Plan = a.Account.Plan
+	s.Email = a.Account.Email
 	if e := p.Call(ctx, "account/rateLimits/read", map[string]any{}, &s); e != nil {
 		s.Error = cr.SafeText(e.Error())
 	}
