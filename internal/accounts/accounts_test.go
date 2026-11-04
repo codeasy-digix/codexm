@@ -14,6 +14,8 @@ func exhausted(n string) Snapshot {
 }
 func TestPriorityFallbackAndUnknown(t *testing.T) {
 	c := config.Defaults()
+	c.WorkerAccounts.Priority = []string{"account-work", "account-secondary", "account-main", "account-backup"}
+	c.WorkerAccounts.FallbackAccount = "account-backup"
 	s := map[string]Snapshot{"account-work": exhausted("account-work"), "account-secondary": available("account-secondary"), "account-backup": available("account-backup")}
 	n, _ := Choose(c, s, "", nil)
 	if n != "account-secondary" {
@@ -37,6 +39,7 @@ func TestPriorityFallbackAndUnknown(t *testing.T) {
 }
 func TestRecoveryRequiresAuthoritativeAvailability(t *testing.T) {
 	c := config.Defaults()
+	c.WorkerAccounts.Priority = []string{"account-work"}
 	s := map[string]Snapshot{"account-work": {Account: "account-work", Authenticated: true, Single: Bucket{Primary: &Window{UsedPercent: 0}}}}
 	n, _ := Choose(c, s, "", map[string]bool{"account-work": true})
 	if n != "" {

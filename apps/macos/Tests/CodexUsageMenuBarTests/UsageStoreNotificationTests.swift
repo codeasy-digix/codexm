@@ -1,109 +1,39 @@
 import Foundation
 import Testing
-
 @testable import CodexUsageMenuBar
 
-@Suite("Transient account notifications", .serialized)
+@Suite("Transient account notifications")
+@MainActor
 struct UsageStoreNotificationTests {
-  @Test("Automatically dismisses a successful connection notice")
-  @MainActor
-  func automaticallyDismissesNotice() async throws {
-    let fixture = try NotificationFixture(managedAccountCount: 1)
-    defer { fixture.remove() }
-    let store = UsageStore(
-      registry: fixture.registry,
-      noticeDismissDelay: .milliseconds(40),
-      errorDismissDelay: .milliseconds(80)
-    )
-    let accountID = try #require(store.accountStates.first(where: { $0.account.isManaged })?.id)
-
-    store.removeManagedAccount(accountID: accountID)
-
+  @Test("Success and error notifications dismiss independently")
+  func dismissesNotifications() async throws {
+    let f = try DesktopStoreFixture(); defer { f.remove() }
+    let store = f.store(notice: .milliseconds(120), error: .milliseconds(120)); defer { store.shutdown() }
+    try await store.reloadCatalog()
+    store.setNativeDefault(accountID: "work")
+    try await waitForDesktop { !store.isManagingAccounts }
     #expect(store.accountManagementNotice != nil)
-    await waitUntil(timeout: .seconds(5)) {
-      store.accountManagementNotice == nil
-    }
-    #expect(store.accountManagementNotice == nil)
+    try await waitForDesktop { store.accountManagementNotice == nil }
+    await f.backend.rejectMutations()
+    #expect(store.renameWorkspace(accountID: "work", workspaceName: "Team"))
+    try await waitForDesktop { !store.isManagingAccounts }
+    #expect(store.accountManagementError != nil)
+    try await waitForDesktop { store.accountManagementError == nil }
   }
 
-  @Test("A newer notice gets its own full display time")
-  @MainActor
-  func replacesNoticeDismissTimer() async throws {
-    let fixture = try NotificationFixture(managedAccountCount: 2)
-    defer { fixture.remove() }
-    let store = UsageStore(
-      registry: fixture.registry,
-      noticeDismissDelay: .seconds(2),
-      errorDismissDelay: .seconds(3)
-    )
-    let accountIDs = store.accountStates.filter { $0.account.isManaged }.map(\.id)
-    #expect(accountIDs.count == 2)
-
-    store.removeManagedAccount(accountID: accountIDs[0])
-    try await Task.sleep(for: .milliseconds(1_100))
-    store.removeManagedAccount(accountID: accountIDs[1])
-    let newerNotice = try #require(store.accountManagementNotice)
-
-    try await Task.sleep(for: .milliseconds(1_100))
-    #expect(store.accountManagementNotice == newerNotice)
+  @Test("A newer notice gets a fresh display interval")
+  func newerNotice() async throws {
+    let f = try DesktopStoreFixture(); defer { f.remove() }
+    let store = f.store(notice: .milliseconds(400)); defer { store.shutdown() }
+    try await store.reloadCatalog()
+    store.setNativeDefault(accountID: "work")
+    try await waitForDesktop { !store.isManagingAccounts }
+    try await Task.sleep(for: .milliseconds(250))
+    store.setNativeDefault(accountID: "work")
+    try await waitForDesktop { !store.isManagingAccounts }
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(store.accountManagementNotice != nil)
     store.clearAccountManagementNotice()
     #expect(store.accountManagementNotice == nil)
-  }
-
-  @Test("Automatically dismisses an account-management error")
-  @MainActor
-  func automaticallyDismissesError() async throws {
-    let fixture = try NotificationFixture(managedAccountCount: 1)
-    defer { fixture.remove() }
-    let store = UsageStore(
-      registry: fixture.registry,
-      noticeDismissDelay: .milliseconds(40),
-      errorDismissDelay: .milliseconds(40)
-    )
-    let accountID = try #require(store.accountStates.first(where: { $0.account.isManaged })?.id)
-    try Data("invalid registry".utf8).write(to: fixture.registry.registryURL)
-
-    store.renameWorkspace(accountID: accountID, workspaceName: "개발팀")
-
-    #expect(store.accountManagementError != nil)
-    await waitUntil(timeout: .seconds(5)) {
-      store.accountManagementError == nil
-    }
-    #expect(store.accountManagementError == nil)
-  }
-}
-
-@MainActor
-private func waitUntil(
-  timeout: Duration,
-  condition: @MainActor () -> Bool
-) async {
-  let clock = ContinuousClock()
-  let deadline = clock.now.advanced(by: timeout)
-  while !condition(), clock.now < deadline {
-    try? await Task.sleep(for: .milliseconds(10))
-  }
-}
-
-private struct NotificationFixture {
-  let root: URL
-  let registry: UsageAccountRegistry
-
-  init(managedAccountCount: Int) throws {
-    root = FileManager.default.temporaryDirectory.appending(
-      path: "UsageStoreNotificationTests-\(UUID().uuidString)",
-      directoryHint: .isDirectory
-    )
-    registry = UsageAccountRegistry(applicationSupportURL: root)
-
-    for index in 0..<managedAccountCount {
-      var account = try registry.beginManagedAccount()
-      account.displayName = "테스트 연결 \(index + 1)"
-      try registry.commitPendingAccount(account)
-    }
-  }
-
-  func remove() {
-    try? FileManager.default.removeItem(at: root)
   }
 }

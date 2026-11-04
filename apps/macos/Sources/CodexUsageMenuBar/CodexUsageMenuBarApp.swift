@@ -24,6 +24,7 @@ struct CodexUsageMenuBarApp: App {
     MenuBarExtra {
       MenuContentView(store: store, preferences: preferences)
         .environment(\.locale, L10n.locale)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.shutdown() }
     } label: {
       MenuBarUsageLabel(indicator: menuBarIndicator, style: preferences.menuBarIconStyle,
         preferences: preferences)

@@ -1,20 +1,27 @@
-#!/bin/zsh
-
-set -euo pipefail
-
-ROOT_DIR="${0:A:h:h}"
-SOURCE_APP="$ROOT_DIR/dist/Codex Usage.app"
-INSTALL_DIR="$HOME/Applications"
-INSTALLED_APP="$INSTALL_DIR/Codex Usage.app"
-
-"$ROOT_DIR/scripts/build-app.sh"
-mkdir -p "$INSTALL_DIR"
-
-# Ask a running copy to quit through the standard application event before an update.
-/usr/bin/osascript -e 'tell application id "org.codeasy.CodexUsage" to quit' >/dev/null 2>&1 || true
-/usr/bin/ditto --norsrc "$SOURCE_APP" "$INSTALLED_APP"
-xattr -cr "$INSTALLED_APP"
-codesign --verify --deep --strict "$INSTALLED_APP"
-/usr/bin/open "$INSTALLED_APP"
-
-echo "Installed and opened: $INSTALLED_APP"
+#!/bin/sh
+set -eu
+app_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source_app=${1:-$app_root/dist/CodexM.app}
+[ -d "$source_app" ] || { echo 'Build CodexM.app first; optionally pass its absolute path.' >&2; exit 1; }
+codesign --verify --deep --strict "$source_app"
+[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$source_app/Contents/Info.plist")" = 'org.codeasy.CodexUsage' ] || { echo 'Unexpected application identity' >&2; exit 1; }
+if pgrep -x CodexUsageMenuBar >/dev/null; then
+  echo 'Quit CodexM / Codex Usage from its menu before replacing the menu app. Other Codex applications can keep running.' >&2
+  exit 1
+fi
+install_dir=${CODEXM_APPLICATIONS_DIR:-$HOME/Applications}
+backup_root=${XDG_STATE_HOME:-$HOME/.local/state}/codexm/migrations/desktop-$(date -u +%Y%m%dT%H%M%S)-$$
+mkdir -p "$install_dir" "$backup_root"
+chmod 700 "$backup_root"
+stage=$(mktemp -d "$install_dir/.codexm-install.XXXXXX")
+trap 'rm -rf "$stage"' EXIT HUP INT TERM
+/usr/bin/ditto --norsrc "$source_app" "$stage/CodexM.app"
+codesign --verify --deep --strict "$stage/CodexM.app"
+for name in 'CodexM.app' 'Codex Usage.app'; do
+  if [ -e "$install_dir/$name" ]; then
+    [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$install_dir/$name/Contents/Info.plist")" = 'org.codeasy.CodexUsage' ] || { echo "Unrelated app preserved: $name" >&2; exit 1; }
+    mv "$install_dir/$name" "$backup_root/$name"
+  fi
+done
+mv "$stage/CodexM.app" "$install_dir/CodexM.app"
+printf 'Installed: %s\nBackup: %s\n' "$install_dir/CodexM.app" "$backup_root"

@@ -1,7 +1,7 @@
 {
   "name": "codexm-web",
   "private": true,
-  "version": "0.6.2",
+  "version": "0.7.0",
   "scripts": {
     "start": "meteor run --port 127.0.0.1:4317 --app-port 127.0.0.1:4319",
     "typecheck": "tsc --noEmit",

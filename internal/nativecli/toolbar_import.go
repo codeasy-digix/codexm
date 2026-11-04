@@ -53,7 +53,7 @@ func DefaultToolbarRoot() string {
 // credentials/default/history are never overwritten. The original app store
 // and a private credential backup remain available for rollback.
 func ImportToolbar(c config.Config, source string, apply bool) (ToolbarImportResult, error) {
-	result := ToolbarImportResult{Applied: apply, Items: []ToolbarImportItem{}}
+	result := ToolbarImportResult{Applied: apply, Complete: true, Items: []ToolbarImportItem{}}
 	if source == "" {
 		source = DefaultToolbarRoot()
 	}

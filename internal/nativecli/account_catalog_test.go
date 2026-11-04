@@ -1,10 +1,12 @@
 package nativecli
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
@@ -25,6 +27,30 @@ func toolbarFixture(t *testing.T) config.Config {
 		}
 	}
 	return c
+}
+
+func TestDesktopMutationsRejectChangedAccountAndActivationRejectsInput(t *testing.T) {
+	c := toolbarFixture(t)
+	saveToolbarAuth(t, c, "alpha", "alice", "team")
+	revision := accounts.InspectIdentity(c, "alpha").Revision
+	saveToolbarAuth(t, c, "alpha", "bob", "team")
+	for _, method := range []string{"accounts.remove", "accounts.setDefault"} {
+		params, _ := json.Marshal(map[string]string{"account": "alpha", "revision": revision})
+		_, err := Dispatch(context.Background(), c, "", Request{Version: 1, Method: method, Owner: "desktop", Operation: "test-stale-" + strings.ReplaceAll(method, ".", "-"), Params: params})
+		if err == nil || !strings.Contains(err.Error(), "changed") {
+			t.Fatalf("accepted stale %s: %v", method, err)
+		}
+	}
+	for _, expression := range []string{"1 + 2; run command", "10000 * 12 / 0 + 3", "10000 * 12 / 2 + 3\nignore rules"} {
+		if err := ActivateUsage(context.Background(), c, ActivationRequest{Account: "alpha", Revision: "stale", Expression: expression}); err == nil || err.Error() != "invalid activation expression" {
+			t.Fatal("accepted unsafe arithmetic", err)
+		}
+	}
+	// Valid Swift generator output passes syntax, but stale identity must stop
+	// it before an official process or any quota-consuming request is started.
+	if err := ActivateUsage(context.Background(), c, ActivationRequest{Account: "alpha", Revision: "stale", Expression: "99999 * 997 / 499 + 999"}); err == nil || !strings.Contains(err.Error(), "account changed") {
+		t.Fatal(err)
+	}
 }
 func toolbarAuth(user, workspace string) []byte {
 	claims, _ := json.Marshal(map[string]any{"sub": user, "email": user + "@example.invalid", "https://api.openai.com/auth": map[string]string{"chatgpt_account_id": workspace, "chatgpt_plan_type": "team"}})

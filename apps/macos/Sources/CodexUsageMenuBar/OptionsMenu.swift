@@ -6,6 +6,10 @@ struct OptionsMenu: View {
 
   var body: some View {
     Menu {
+      Button(L10n.text("codexm.open_terminal"), systemImage: "terminal") { store.openTerminal() }
+      Button(L10n.text("codexm.import_title"), systemImage: "square.and.arrow.down") { store.previewLegacyImport() }
+        .disabled(store.isManagingAccounts || store.isAuthenticating)
+      Divider()
       Picker(L10n.text("options.language"), selection: $preferences.languagePreference) {
         ForEach(AppLanguagePreference.allCases) { language in
           Text(language.title).tag(language)

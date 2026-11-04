@@ -293,6 +293,27 @@ func TestLoginBrokerCancelFailureAndExpirationPreserveOldCredentials(t *testing.
 	}
 }
 
+func TestReloginRejectsAnotherMemberOfTheSameWorkspace(t *testing.T) {
+	c, b, transports := loginFixture(t)
+	target := filepath.Join(c.Runtime.AccountsDir, "member", "auth.json")
+	before := identityFixtureAuth("alice", "fixture-account", "original")
+	if err := config.AtomicWrite(target, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	login, err := b.Start(context.Background(), "member", "browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := (*transports)[0]
+	if err := config.AtomicWrite(filepath.Join(f.home, "auth.json"), identityFixtureAuth("bob", "fixture-account", "candidate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.complete(true, f.serverID)
+	waitLogin(t, b, login.LoginID, "failed")
+	waitLoginCleanup(t, b, login.LoginID)
+	assertSavedBytes(t, target, before)
+}
+
 func TestCanceledNewLoginDoesNotCreateGhostAccount(t *testing.T) {
 	c, b, _ := loginFixture(t)
 	login, e := b.Start(context.Background(), "new-name", "browser")
@@ -533,7 +554,9 @@ func TestLoginTransportInitializationFailureReapsOwnedHelper(t *testing.T) {
 		finished <- e
 	}()
 	var pidBytes []byte
-	startupDeadline := time.Now().Add(3 * time.Second)
+	// Readiness is separate from the two-second cancellation assertion below.
+	// First execution of a fixture can be delayed by macOS under race-test load.
+	startupDeadline := time.Now().Add(7 * time.Second)
 	for len(pidBytes) == 0 && time.Now().Before(startupDeadline) {
 		pidBytes, _ = os.ReadFile(filepath.Join(home, "owned-pid"))
 		if len(pidBytes) > 0 {

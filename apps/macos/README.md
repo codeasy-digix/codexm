@@ -1,159 +1,76 @@
-# Codex Usage for macOS
+# CodexM menu app
 
-여러 Codex 계정·워크스페이스의 5h 및 주간 **남은 사용량**을 한곳에서 확인하는 macOS 메뉴 바 앱입니다. 기본 로그인을 전환하지 않고 연결별 상태를 비교할 수 있습니다. 실행하면 Dock 아이콘이나 일반 창 없이 메뉴 바에만 아이콘이 나타납니다.
+The SwiftUI menu app, CLI and Rust TUI are one product. The app uses one local
+`codexm bridge --stdio` process for account discovery, authentication, usage,
+presentation and native-default changes. It has no HTTP listener and no separate
+credential registry or bundled OpenAI runtime. Install the official Codex CLI
+separately; its command, updates, model preferences and conversations stay native.
 
-선택 기능인 **5h 한도 자동 갱신**은 앱이 켜져 있는 동안 가벼운 실제 모델 요청을 예약하여 계정별 5h 사용 창의 시작을 유지합니다. 서버 한도를 강제로 초기화하거나 크레딧을 늘리는 기능이 아니며, Codex 사용량을 소비합니다.
+The menu shows 5h/week usage and reset credits when the account reports them.
+Options include browser/device sign-in, re-login, unregister, native-default
+selection, display/workspace names, account order and opening the terminal TUI.
+The native default follows `~/.codex/auth.json`, including changes made by
+`codexm account NAME --set-default`. A login identity includes both user and
+workspace; responses and edits from a former default are discarded.
 
-앱은 계정 정보를 수집하는 개발자 서버를 운영하지 않습니다. 인증·상태 조회·선택적 모델 요청은 OpenAI와 통신하며, 추가 연결의 로그인 저장소와 표시 설정은 Mac에 보관합니다. 상세한 범위와 주의사항은 아래 개인정보 항목을 참고하세요.
+Usage checks do not run a model. The optional **5h activation** setting does: it
+submits one ephemeral read-only arithmetic request using an available lightweight
+model. It is off on a new installation. Existing opt-in and schedules are preserved;
+aliases of the same login share a schedule. A successful request is due again after
+five hours, attempts are at least 30 minutes apart, and uncertain requests are never
+immediately replayed. Enable this on only one of your own devices if desired.
 
-English overview: Monitor multiple Codex accounts and workspaces in one native menu-bar panel. Optional 5h auto-refresh sends small, staggered model requests while the app runs; it consumes allowance and cannot override OpenAI's limits. There is no developer-operated account-data collection server. Choose English, Korean, Simplified Chinese or Hindi in Options → Language, or follow macOS language settings with English as the fallback. Language changes apply immediately and are saved on this Mac.
+English, Korean, Simplified Chinese and Hindi, icon preferences and refresh intervals
+remain available. The compatibility bundle identifier `org.codeasy.CodexUsage` is
+intentional: it preserves the former app's UserDefaults and login-item identity.
+It does not mean the old app is a separate product.
 
-## 주요 기능
+## Migration
 
-- 계정별 5시간·주간 사용률, 남은 비율, 초기화 시각 표시
-- 바깥쪽 5시간 링과 안쪽 주간 링에 각각의 남은 퍼센트 표시
-- 리셋 크레딧 개수와 서버가 제공하는 가장 빠른 소멸 시각 표시
-- 현재 머신의 기본 Codex 연결과 앱에 추가한 여러 ChatGPT 계정·워크스페이스 동시 확인
-- 메뉴 바 숫자는 5h 잔량을 우선 표시하고 5h 한도가 없으면 주간 잔량을 표시
-- 테두리 안의 배경은 상하 구분 없는 밝은 주황색 막대 하나로 주간 잔량만 표시(사용하면 오른쪽부터 비워짐). 숫자가 바뀌어도 주간 잔량이 같으면 막대는 그대로 유지
-- 터미널형 글자·기호·밑줄은 밝은 모드와 어두운 모드 모두 진한 남색으로 고정하고 굵게 표시. 주황색 채움과 밝은 빈 부분 모두에서 최소 6:1 색상 대비를 검사
-- 주간 정보가 없으면 배경은 사선 패턴으로 구분하고 5h 값으로 대신 채우지 않음(0%와 혼동 방지)
-- 아이콘 툴팁과 접근성 설명에서 두 잔량과 주간 막대 의미 확인
-- 기어 옵션에서 주간 막대 + 5h 숫자 터미널형 또는 주간 링 + 5h 숫자형 선택
-- 추가 연결은 15분마다 자동 갱신하고, 메뉴를 열 때 모든 연결을 순차 갱신 및 수동 새로고침
-- 기어 옵션에서 현재 머신의 기본 연결 갱신 주기를 30초·1분·5분·10분·30분·1시간 중 선택
-- 기본 연결 조회가 실패하거나 다른 조회와 겹치면 즉시 재시도하지 않고, 간격을 자동 조정하지 않은 채 선택한 다음 주기에 다시 한 번 시도
-- 연결별 Codex app-server 프로세스를 재사용하고, 짧은 시간 안의 중복 새로고침 요청은 한 번으로 합침
-- 일시적인 조회 실패에는 마지막 정상 사용량을 유지하고 경고 아이콘을 표시하며, 서버의 사용량 변경 알림도 즉시 반영
-- 선택 시 5h 한도가 있는 연결에만 5시간마다 한 번씩 가벼운 무도구 산술 요청을 보내되 연결별 시작을 최소 30분 간격으로 순차 실행
-- Node.js나 별도 Codex CLI 설치 없이 동작하는 네이티브 Codex 런타임 내장
-- 기존 `~/.codex` 로그인을 자동 재사용해 중복 로그인 방지
-- 추가한 계정/워크스페이스마다 독립된 `CODEX_HOME`을 사용하고 일반 브라우저 로그인 또는 기기 코드 인증을 선택
-- 한 ChatGPT 계정의 여러 워크스페이스를 별도 연결로 등록하고 각각의 사용량 확인
-- 두 방식 모두 인증 완료 시 별도 확인 단계 없이 연결을 자동 추가하고 동일 계정·워크스페이스 조합은 차단
-- 인증 패널에서 워크스페이스 표시 이름을 지정하고 각 연결의 연필 버튼 또는 `…` 메뉴에서 언제든 수정
-- 기본 계정의 워크스페이스 이름은 로그인 계정·워크스페이스 조합별로 저장하고, 현재 로그인 상태를 확인한 뒤 복원
-- 계정 이름 변경, 재로그인 및 로컬 로그인 정보 삭제 지원
-- 계정 카드 오른쪽 위 드래그 핸들로 기본 계정을 포함한 연결 순서를 변경하고 Mac별로 저장
-- 이메일·표시 이름·워크스페이스 이름·계정 메뉴를 한 줄에 표시하고, 불필요한 플랜명 행은 숨김
-- 표시 이름이 없으면 이메일을 표시하며, 이름이 없는 워크스페이스와 연결에 해시값을 표시하지 않음
-- 계정별 새로고침 버튼을 `…` 메뉴 밖에 두어 한 번의 클릭으로 조회
-- 5h·주간 남은 비율 그래프를 카드에 맞게 축소하고 리셋 크레딧 개수·소멸 시각·남은 시간·상세 제공 개수를 한 줄에 표시
-- 연결 작업 알림은 닫기 버튼을 제공하고 성공은 5초, 오류는 10초 후 자동으로 사라짐
-- macOS의 표준 로그인 항목(`SMAppService`) 선택 지원
-- Dock에 나타나지 않는 표준 메뉴 바 앱(`LSUIElement`)
-- 자동 갱신 옆의 `?` 버튼에서 사용량 소비, 예약 방식, 여러 장비 사용 주의사항 안내
-- 옵션의 **이 제품에 관하여**에서 제품 설명·개인정보 범위·소스 코드·오픈소스 라이선스 확인
-- 모든 앱 문구·도움말·접근성 레이블·남은 시간·오류 설명에 영어/한국어/중국어 간체/힌디어 지원
-- 기어 옵션의 **언어** 메뉴에서 시스템 설정 따르기 또는 네 언어를 선택하고 즉시 적용·저장
-
-앱은 함께 배포되는 Codex 네이티브 실행 파일과 공식 로컬 app-server 프로토콜인 `account/rateLimits/read` 및 `account/rateLimits/updated`를 사용합니다. 각 계정은 하나의 초기화된 app-server 연결을 계속 재사용하고, 연결이 실제로 종료되거나 시간 초과되면 자동 연속 재시도하지 않고 다음 예약 주기에 새 연결을 만듭니다. 앱은 중복 계정 판별과 외부 계정 전환 감지를 위해 `auth.json`의 계정/워크스페이스 식별자만 단방향 해시로 비교하며, 액세스·리프레시·ID 토큰 값은 판별에 사용하거나 별도로 저장·복사하지 않습니다.
-
-## 상태 조회와 5h 한도 자동 갱신
-
-상태 조회는 모델 응답을 생성하지 않습니다. 기본 계정 갱신 주기 메뉴는 **기본 계정만** 바꾸며, 추가 연결은 15분마다 조회합니다. 메뉴 바 패널을 열면 모든 연결의 상태를 순차 조회하므로 계정별 버튼을 일일이 누를 필요가 없습니다. 진행 중인 조회나 5초 이내 중복 전체 조회는 중복 실행하지 않습니다. 실패 시 즉시 연속 재시도하거나 간격을 자동으로 늘리지 않고 다음 설정 주기에 다시 시도합니다.
-
-**5h 한도 자동 갱신**은 상태 조회와 달리 실제 모델 요청을 보내고 Codex 사용량을 소비하므로 배포 기본값은 꺼져 있습니다. 사용자가 켜면 앱은 `model/list`로 확인한 사용 가능 경량 모델을 우선 선택하고, 지원되는 낮은 추론 강도(low)를 사용합니다. 경량 모델이 없으면 다른 사용 가능 모델이나 런타임 기본 모델로 대체하며, 최저 비용을 보장하는 방식은 아닙니다. 최근 정상 사용량 응답에 5h 한도가 있는 연결에만 임시(ephemeral)·읽기 전용 App Server 스레드에서 무도구 산술 요청 하나를 보냅니다. 주간 한도만 있고 5h 한도가 없는 연결, 미연결 및 인증 중인 연결은 건너뜁니다. 성공한 요청의 시작 시각을 로컬에 저장해 그로부터 5시간 뒤 다시 실행합니다. 자동 요청은 전체 연결 중 한 번에 하나만 실행하며, 다음 연결은 이전 연결의 요청 시작으로부터 최소 30분 뒤에 실행합니다. 실패한 연결도 최소 30분 뒤 다시 시도하며 앱이 종료된 동안에는 실행하지 않습니다. 앱을 다시 열었을 때 여러 연결의 예정 시각이 지났더라도 한꺼번에 실행하지 않고 30분 간격으로 하나씩 처리합니다.
-
-같은 계정들을 여러 장비에 등록했다면 자동 갱신은 **한 장비에서만** 켜는 것을 권장합니다. 한도·초기화 시각·인증 정책은 OpenAI가 결정하며, 이 앱은 한도 초기화나 refresh token 갱신 성공을 보장하지 않습니다. 계정별 브라우저 인증은 사용자가 직접 완료해야 합니다.
-
-## 개인정보와 외부 통신
-
-- 이 앱 자체에는 개발자가 운영하는 계정 서버, 광고 SDK 또는 앱 분석 업로드 기능이 없습니다. 앱은 인증 정보·이메일·사용량을 개발자에게 보내지 않습니다.
-- 추가 계정의 인증 정보는 해당 Mac의 독립된 `CODEX_HOME`에 공식 Codex 런타임이 저장합니다. 기본 연결은 기존 `.codex`를 사용합니다. 사용자 표시 이름·내부 식별용 단방향 해시·표시 순서·자동 요청 일정도 로컬에 저장됩니다.
-- OpenAI 로그인, 상태 조회, 선택적 산술 요청에는 OpenAI와의 네트워크 통신이 필요합니다. **외부 통신이 전혀 없는 앱이라는 뜻은 아닙니다.**
-- 자동 요청에는 산술식만 의도적으로 넣으며 사용자 문서를 첨부하거나 파일 읽기·도구 실행을 요청하지 않습니다. 다만 내장 런타임은 선택된 `CODEX_HOME`의 설정을 상속합니다. 사용자가 설정한 별도 모델 제공자·MCP 서버·런타임 텔레메트리의 네트워크 동작까지 앱이 제거하거나 보장하지는 않습니다. 민감한 환경에서는 해당 설정도 확인하세요.
-- 사용량 진단 로그는 이메일·계정 ID·토큰·저장소 경로를 기록하지 않습니다. 원본 서버/시스템 진단은 문제 확인을 위해 오류 설명에 표시될 수 있으므로 공유하기 전 내용을 확인하세요.
-- 연결 삭제는 그 Mac의 해당 추가 연결과 로그인 저장소를 삭제하며, OpenAI 계정 자체나 다른 장비의 연결은 삭제하지 않습니다.
-
-## 언어
-
-기어 옵션 → **언어**에서 **시스템 설정 따르기**, **English**, **한국어**, **简体中文**, **हिन्दी** 중 선택할 수 있습니다. 기본값은 시스템 설정 따르기이며 macOS의 선호 언어 또는 앱별 언어 설정을 사용합니다. 지원하지 않거나 올바르지 않은 시스템 언어는 영어로 표시하고, 중국어 지역/스크립트 설정은 간체 번역을 사용합니다. 앱에서 직접 언어를 선택하면 macOS 설정보다 우선하며 메뉴·계정 카드·열려 있는 도움말 창에 재실행 없이 즉시 적용됩니다. 선택은 해당 Mac에 저장되어 다음 실행에도 유지됩니다. 이미 발생한 일시적인 알림·원본 진단 메시지는 발생 당시 표현을 유지할 수 있습니다. 이메일·인증 코드·사용자가 입력한 이름·기술 식별자는 바꾸지 않습니다. 언어 선택 메뉴의 각 언어 이름은 해당 언어의 표기를 유지합니다. 원본 서버/시스템 오류 세부정보와 법적 라이선스 원문은 번역된 설명과 함께 원문으로 제공합니다.
-
-## 요구 사항
-
-- macOS 13 Ventura 이상
-- ChatGPT 계정
-
-Node.js와 Codex CLI는 필요하지 않습니다. Codex CLI에 이미 로그인된 Mac에서는 해당 로그인을 기본 연결로 그대로 사용합니다. 다른 계정이나 같은 계정의 다른 워크스페이스는 앱의 **계정 또는 워크스페이스 추가**에서 로그인할 수 있으며, 각 연결의 인증 정보는 서로 분리된 앱 전용 `CODEX_HOME`에 저장됩니다.
-
-**계정 또는 워크스페이스 추가**를 누르면 **일반 브라우저 로그인**과 **코드 인증 로그인** 중 선택할 수 있습니다. 기존 연결의 **다시 로그인**에서도 같은 선택을 제공합니다. 일반 브라우저 로그인은 기본 브라우저에서 ChatGPT 로그인을 진행하고 코드 입력 없이 완료됩니다. 브라우저에 다른 계정이 로그인되어 있다면 브라우저에서 필요한 계정으로 전환하세요. 인증이 끝나면 패널을 다시 열거나 확인 버튼을 누르지 않아도 연결이 자동 추가됩니다. 워크스페이스 이름은 로그인 준비 중부터 입력하거나 연결 후 수정할 수 있습니다.
-
-일반 브라우저 로그인은 내장 런타임이 여는 로컬 OAuth 콜백을 사용합니다. 포트 충돌이나 네트워크 정책으로 완료되지 않으면 취소 후 코드 인증을 선택하세요. App Store용 샌드박스 빌드에는 이 콜백 수신을 위한 `com.apple.security.network.server` 권한을 포함하며, 로그인 성공·실패·취소·시간 초과 시 로그인 프로세스를 종료합니다. 앱은 OAuth URL이나 인증 토큰을 진단 로그에 기록하지 않습니다.
-
-추가 연결의 저장 위치는 macOS가 제공하는 Application Support 아래의 `Codex Usage/Accounts/{UUID}/CodexHome`입니다. App Store 빌드에서는 앱 샌드박스 컨테이너 안에 생성됩니다. 사용자가 지정한 워크스페이스 표시 이름은 로컬 계정 목록에 저장됩니다. 선택된 계정/워크스페이스 식별자는 내부 판별용 단방향 해시로만 보관하며 화면에는 표시하지 않습니다. 앱은 인증 토큰 내용을 계정 간에 복사하지 않습니다.
-
-기본 계정의 이름은 이메일과 워크스페이스 식별자가 모두 확인된 조합에만 연결됩니다. `.codex` 로그인이 바뀌면 새 대상의 이름을 별도로 불러오고, 이름을 지워도 다른 워크스페이스의 이름은 유지됩니다. 이전 버전의 단일 기본 이름은 어느 로그인에 속했는지 확인할 수 없으므로 자동으로 붙이지 않습니다. 기존 값은 저장 파일에 보존되며, 현재 기본 계정의 연필 버튼으로 이름을 다시 지정할 수 있습니다.
-
-Mac App Store 빌드는 App Sandbox 정책 때문에 다른 앱이 만든 `~/.codex` 폴더를 자동으로 읽을 수 없습니다. 이 경우 최초 한 번 **기존 Codex 로그인 연결**을 눌러 `.codex` 폴더 접근을 승인합니다. 이것은 ChatGPT 재로그인이 아니며, 이후에는 보안 범위 북마크로 권한을 유지합니다.
-
-## 설치 및 실행
-
-저장소를 받은 뒤 다음 명령을 실행합니다.
+Quit the former Codex Usage menu app before importing. Choose **Import legacy
+accounts** to preview, then confirm, or run:
 
 ```sh
-./scripts/install.sh
+codexm migrate-toolbar
+codexm migrate-toolbar --apply
 ```
 
-앱은 현재 사용자용 표준 앱 폴더인 `~/Applications/Codex Usage.app`에 설치되고 즉시 실행됩니다. 이후에는 Finder의 응용 프로그램에서 평소 macOS 앱처럼 실행할 수 있습니다.
+The one-time importer reuses matching registered logins or creates `usage-UUID`
+nicknames. It copies only credentials needed for a new local account; original
+credentials and private rollback backups are retained. It never overwrites the
+native default, existing named credentials, history, model or GUI preferences.
+Display names/order are carried over when no shared presentation already exists.
+Skipped records are reported and require re-login/manual review. Repeating import
+does not restore removed accounts or overwrite subsequent edits.
 
-## 삭제
+Unregister hides an account; it does not erase credentials. Native-default selection
+is an explicit action. Account-server preferences are never synchronized.
 
-별도 제거 도구나 셸 명령이 필요하지 않습니다.
-
-1. 메뉴 바의 **Codex Usage → 종료**를 누릅니다.
-2. Finder에서 `~/Applications`를 엽니다.
-3. **Codex Usage**를 휴지통으로 이동합니다.
-
-로그인 시 자동 열기를 켰다면 삭제 전에 앱에서 끄거나, **시스템 설정 → 일반 → 로그인 항목**에서 표준 방식으로 관리할 수 있습니다.
-
-## 개발
+## Development
 
 ```sh
-swift test
-./scripts/build-app.sh
+# Root repository: matching Go CLI and Rust TUI, then the Swift desktop.
+./build.sh
+./apps/macos/scripts/build-app.sh
+# Run after quitting only the former menu app:
+./apps/macos/scripts/install.sh
+open "$HOME/Applications/CodexM.app"
 ```
 
-번들에 번역 리소스가 포함되었는지 계정 조회 없이 확인하려면 다음 진단을 실행합니다. 이는 앱을 상주시키거나 계정 저장소를 초기화하지 않습니다.
+The app build accepts `CODEXM_NATIVE_BUILD_DIR` for an already verified CLI/TUI pair
+and `CODEXM_APP_OUTPUT` for a fresh output path. Both native versions must match the
+root `VERSION`. Test with Xcode's toolchain (Swift Testing may not be present in a
+standalone Command Line Tools installation):
 
 ```sh
-"dist/Codex Usage.app/Contents/MacOS/CodexUsageMenuBar" --localization-diagnostics
+cd apps/macos
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-현재 로그인된 Codex 계정까지 포함한 통합 테스트는 명시적으로 실행할 수 있습니다.
+Set `CODEXM_TEST_BINARY` to a freshly built CLI to include the isolated real-bridge
+test. It uses empty temporary account/config directories, not your logins.
+Builds are ad-hoc signed unless a valid `CODEXM_SIGN_IDENTITY` is explicitly supplied.
+Ad-hoc signing is not Developer ID signing or notarization. Public Cask distribution
+requires separate signing/notarization validation; see [distribution](../../docs/distribution.md).
 
-```sh
-CODEX_LIVE_TEST=1 swift test --filter LiveCodexIntegrationTests
-```
-
-빌드 결과는 `dist/Codex Usage.app`과 배포용 `dist/Codex Usage.app.zip`에 생성됩니다. iCloud 동기화 폴더가 앱 번들에 Finder 메타데이터를 다시 붙일 수 있으므로 배포·전달에는 서명 직후 만든 ZIP을 사용합니다. 빌드 시 현재 CPU 아키텍처에 맞는 공식 Codex 네이티브 런타임을 앱에 포함합니다. 로컬에 런타임이 없으면 빌드 시에만 고정 버전 패키지를 내려받고 SHA-512 무결성을 검사합니다. 최종 사용자의 Mac에서는 다운로드나 Node.js 설치가 일어나지 않습니다.
-
-App Sandbox 권한을 포함한 App Store용 번들은 다음과 같이 확인할 수 있습니다.
-
-```sh
-APP_STORE_BUILD=1 ./scripts/build-app.sh
-```
-
-기본 연결의 자동 갱신 주기는 앱의 기어 메뉴에서 선택하며 해당 Mac에만 저장됩니다. 추가 연결은 계속 15분마다 갱신됩니다. 개발 중 명령행에서 동일한 값을 지정하려면 아래 키에 `30`, `60`, `300`, `600`, `1800`, `3600` 중 하나를 저장한 뒤 앱을 다시 실행합니다.
-
-```sh
-defaults write org.codeasy.CodexUsage SystemDefaultUsageRefreshIntervalSeconds -int 60
-```
-
-이 명령은 개발 확인용 ad-hoc 서명을 사용합니다. 실제 App Store 제출 시에는 Apple Developer의 배포 인증서, 프로비저닝 프로파일 및 App Store Connect 메타데이터로 다시 서명·패키징해야 합니다.
-
-샌드박스 빌드가 된다는 사실은 OpenAI의 상용 배포 허가나 App Store 심사 통과를 뜻하지 않습니다. [현재 공식 인증 안내](https://learn.chatgpt.com/docs/app-server#auth-endpoints)는 기존 app-server 인증을 사용하는 로컬·오픈소스 앱은 계속 사용할 수 있지만 상용·호스팅 서비스에는 허용하지 않으며, 별도 **Sign in with ChatGPT** 통합을 권장한다고 명시합니다. 본 앱은 기존 내장 런타임 인증을 유지하므로 상용 배포를 계획한다면 해당 통합과 승인을 별도로 검토해야 합니다.
-
-사용량 조회 진단 로그는 계정 ID·이메일·토큰·`CODEX_HOME` 경로를 기록하지 않습니다. 문제를 재현할 때는 macOS 콘솔에서 하위 시스템 `org.codeasy.CodexUsage`, 범주 `UsageRefresh`로 필터링할 수 있습니다.
-
-## 참고
-
-Codex app-server는 현재 실험적 인터페이스이므로 프로토콜이 바뀌면 앱 업데이트가 필요할 수 있습니다. 런타임은 앱 버전과 함께 고정되어 App Store 업데이트로 교체됩니다.
-
-## 라이선스
-
-앱 소스 코드는 [MIT License](LICENSE)로 공개됩니다. 저장소는 [codeasy-org/CodexUsageToolbarApp](https://github.com/codeasy-digix/codexm)입니다.
-
-앱에 포함된 [OpenAI Codex](https://github.com/openai/codex) 런타임은 Apache License 2.0을 따릅니다. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), `Resources/CodexRuntime-LICENSE.txt`를 참고하세요. 앱 번들에는 MIT 라이선스, 제3자 고지, Codex 런타임 라이선스 원문이 모두 포함되며 **이 제품에 관하여 → 오픈소스 라이선스**에서 읽을 수 있습니다.
-
-이 프로젝트는 독립적인 오픈소스 프로젝트로 OpenAI의 공식 제품이 아닙니다. OpenAI, ChatGPT, Codex 명칭 및 상표는 해당 권리자에게 귀속됩니다. 오픈소스 라이선스가 OpenAI 서비스 이용 권한이나 계정 정책을 대신하지 않습니다.
+Source: https://github.com/codeasy-digix/codexm · Support: support@digix.kr

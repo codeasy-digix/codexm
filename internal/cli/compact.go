@@ -34,7 +34,8 @@ codexm handoff-status THREAD                 Read the last requested handoff res
 codexm usage [--account NAME|--all] [--model MODEL]  Read live 5h/week limits as JSON
 codexm resume THREAD --account NAME --terminal  Open a named tmux terminal
 codexm account [NAME] [--login|--set-default]  Native account selection (unchanged)
-codexm accounts                              Saved local account information
+codexm accounts [--json]                     Shared account catalog and presentation
+codexm migrate-toolbar [--apply]              Preview/import legacy menu accounts once
 codexm terminal SESSION                     Attach to an existing named CLI terminal
 codexm web [status|stop|logs]                 Optional compatibility web (separate bundle)
 codexm web user --username NAME              Configure the independent web login

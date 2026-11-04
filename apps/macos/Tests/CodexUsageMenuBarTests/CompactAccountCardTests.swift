@@ -11,7 +11,7 @@ struct CompactAccountCardTests {
   func omitsHashesFromHeaders() throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = UsageStore(registry: UsageAccountRegistry(applicationSupportURL: root))
+    let store = UsageStore(backend: DesktopBackendFixture())
     for kind in [UsageAccountKind.systemDefault, .managed] {
       var account = UsageAccount(id: kind == .systemDefault ? UsageAccount.systemDefaultID : UUID().uuidString,
         kind: kind, displayName: nil, lastKnownEmail: "owner@example.com",
@@ -58,29 +58,28 @@ struct CompactAccountCardTests {
   }
 
   @Test("Keeps the default account as the menu-bar source after reordering")
-  func reordersStoreWithoutChangingDefaultSource() throws {
-    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let registry = UsageAccountRegistry(applicationSupportURL: root)
-    var managed = try registry.beginManagedAccount()
-    managed.workspaceName = "개발팀"
-    try registry.commitPendingAccount(managed)
-    let store = UsageStore(registry: registry)
+  func reordersStoreWithoutChangingDefaultSource() async throws {
+    let f = try DesktopStoreFixture(); defer { f.remove() }
+    let store = f.store(); defer { store.shutdown() }
+    try await store.reloadCatalog()
     let oldStates = store.accountStates
     let primary = store.primaryAccountState
-    #expect(store.reorderAccounts(accountIDs: [managed.id, UsageAccount.systemDefaultID]))
-    #expect(store.accountStates.map(\.id) == [managed.id, UsageAccount.systemDefaultID])
+    #expect(store.reorderAccounts(accountIDs: ["work", UsageAccount.systemDefaultID]))
+    try await waitForDesktop { !store.isManagingAccounts }
+    #expect(store.accountStates.map(\.id) == ["work", UsageAccount.systemDefaultID])
     #expect(store.accountStates == Array(oldStates.reversed()))
     #expect(store.primaryAccountState == primary)
-    #expect(!store.reorderAccounts(accountIDs: [managed.id, managed.id]))
-    #expect(try registry.loadAccounts().map(\.id) == store.accountStates.map(\.id))
+    #expect(!store.reorderAccounts(accountIDs: ["work", "work"]))
+    let restarted = f.store(); defer { restarted.shutdown() }
+    try await restarted.reloadCatalog()
+    #expect(restarted.accountStates.map(\.id) == store.accountStates.map(\.id))
   }
 
   @Test("Renders a full credit card at compact height")
   func rendersCompactCard() throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = UsageStore(registry: UsageAccountRegistry(applicationSupportURL: root))
+    let store = UsageStore(backend: DesktopBackendFixture())
     let now = Date()
     var account = UsageAccount.systemDefault
     account.workspaceName = "개발팀"

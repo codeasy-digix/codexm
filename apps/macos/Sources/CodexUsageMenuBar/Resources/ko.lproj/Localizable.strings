@@ -1,4 +1,4 @@
-"app.title" = "Codex Usage";
+"app.title" = "CodexM";
 "language.name" = "한국어";
 "options.language" = "언어";
 "options.language_system" = "시스템 설정 따르기";
@@ -55,7 +55,7 @@
 "account.legacy_name" = "이전 앱 계정";
 "account.delete" = "연결 삭제";
 "account.delete_title" = "%@ 연결을 삭제할까요?";
-"account.delete_explanation" = "이 Mac에 저장된 이 연결의 로그인 정보와 전용 Codex 저장소가 함께 삭제됩니다.";
+"account.delete_explanation" = "CodexM 등록을 숨깁니다. 저장된 로그인·기본 계정·대화 기록은 보존합니다.";
 "account.removed" = "%@ 연결을 삭제했습니다.";
 "account.added" = "%@%@ 연결을 추가했습니다.";
 "account.reconnected" = "%@ 계정을 다시 연결했습니다.";
@@ -115,14 +115,14 @@
 "auto.help.cost" = "실제 모델 요청이므로 Codex 사용량을 소비하며 기본값은 꺼짐입니다. 사용 가능한 경량 모델을 우선 선택하고 지원하면 낮은 추론 강도(low)를 사용합니다. 경량 모델이 없으면 다른 사용 가능 모델이나 런타임 기본 모델을 사용합니다. 크레딧을 추가하거나 한도를 강제로 초기화하는 기능은 아니며, 초기화 시각과 사용 한도는 OpenAI가 결정합니다.";
 "auto.help.limits" = "마지막 정상 상태에 5h 한도가 있는 연결만 대상입니다. 주간 한도만 있는 계정, 연결이 끊긴 계정, 로그인 중인 계정은 제외됩니다. 자동 요청이 실패하면 다음 시도까지 최소 30분 기다립니다. 요청 성공이나 인증 토큰 갱신은 보장하지 않습니다.";
 "auto.help.devices" = "앱이 실행되지 않는 동안에는 요청하지 않습니다. 같은 계정을 여러 Mac에 등록했다면 중복 요청을 피하도록 이 기능은 한 장비에서만 켜세요. 계정 인증은 사용자가 직접 완료해야 합니다.";
-"auto.help.privacy" = "자동 요청에는 산술식만 넣으며 문서를 의도적으로 첨부하지 않습니다. 내장 Codex 런타임은 OpenAI와 통신하고 선택한 CODEX_HOME 설정을 따릅니다. 직접 설정한 모델 제공자, MCP 서버, 런타임 텔레메트리 설정도 확인하세요.";
+"auto.help.privacy" = "자동 요청에는 산술식만 넣으며 문서를 의도적으로 첨부하지 않습니다. 별도로 설치된 공식 Codex CLI가 OpenAI와 통신하고 선택한 CODEX_HOME 설정을 상속합니다. 직접 설정한 모델 제공자·MCP 서버·텔레메트리 설정도 확인하세요.";
 "about.title" = "이 제품에 관하여";
 "about.version" = "버전 %@ (%@)";
 "about.overview" = "여러 Codex 계정과 워크스페이스를 한 메뉴바 패널에서 확인합니다. 기본 로그인을 바꾸지 않고 5h·주간 남은 사용량, 초기화 시각, 리셋 크레딧을 함께 볼 수 있습니다.";
-"about.accounts" = "기본 연결은 이 Mac의 기존 .codex 로그인을 재사용합니다. 추가 계정과 워크스페이스는 앱이 관리하는 독립된 Codex 저장소를 사용합니다. 이름과 표시 순서는 로컬에 저장됩니다.";
+"about.accounts" = "메뉴 앱과 CLI는 CodexM 계정 관리를 공유합니다. 기본 계정은 이 Mac의 .codex 로그인을 따르며, 이름과 순서는 이 Mac에 저장합니다.";
 "about.refresh" = "패널을 열면 모든 연결을 조회합니다. 선택 기능인 5h 자동 갱신은 앱 실행 중 가벼운 산술 요청을 계정별로 분산 예약합니다. 실제 요청은 사용량을 소비하며 OpenAI의 한도를 강제로 바꾸지 않습니다.";
-"about.privacy" = "앱 자체 계정 서버, 광고 SDK, 앱 분석 업로드 기능은 없습니다. 인증 정보나 사용량을 앱 개발자에게 전송하지 않습니다. 인증·상태 조회·선택적인 모델 요청에는 OpenAI 통신이 필요합니다. 내장 런타임과 사용자가 설정한 외부 접속처의 통신 정책은 별도로 적용됩니다.";
-"about.opensource" = "Codex Usage는 MIT 라이선스의 오픈소스입니다. 내장 OpenAI Codex 런타임은 Apache License 2.0을 따릅니다. OpenAI 공식 제품이 아닌 독립 프로젝트이며 OpenAI, ChatGPT, Codex 상표는 각 소유자에게 속합니다.";
+"about.privacy" = "CodexM은 개발자 계정 서버나 분석 업로드를 사용하지 않으며 인증정보·사용량을 개발자에게 보내지 않습니다. 설치된 공식 Codex CLI가 인증·사용량 조회·선택적 모델 요청을 위해 OpenAI에 연결합니다.";
+"about.opensource" = "CodexM은 MIT 라이선스의 독립 오픈소스 프로젝트입니다. OpenAI·ChatGPT·Codex는 각 소유자의 상표입니다. 공식 CLI는 해당 라이선스에 따라 별도로 설치합니다.";
 "about.repository" = "소스 코드";
 "about.licenses" = "오픈소스 라이선스";
 "about.license_original" = "라이선스 전문은 원문인 영어로 제공합니다. 비공식 법률 번역으로 대체하지 않았습니다.";
@@ -146,3 +146,45 @@
 "error.auto_failed" = "Codex 자동 요청에 실패했습니다.";
 "error.auto_status" = "Codex 자동 요청 상태: %@";
 "error.detail" = "작업을 완료하지 못했습니다. 원본 진단: %@";
+
+"common.continue" = "계속";
+
+"codexm.missing" = "이 앱과 같은 버전의 CodexM CLI를 설치하세요.";
+
+"codexm.disconnected" = "CodexM 연결이 종료되었습니다. 새로고침으로 다시 연결하세요. 결과가 불확실한 작업은 반복하지 않습니다.";
+
+"codexm.timeout" = "CodexM 응답 시간이 초과되었습니다.";
+
+"codexm.incompatible" = "앱과 CLI 버전이 맞지 않습니다. 함께 업데이트하세요.";
+
+"codexm.open_terminal" = "터미널에서 CodexM 열기";
+
+"codexm.terminal_failed" = "터미널을 열지 못했습니다. 시스템 설정의 자동화 권한을 확인하세요.";
+
+"codexm.set_default" = "기본 계정으로 사용";
+
+"codexm.default_confirm" = "Codex 기본 계정을 변경할까요?";
+
+"codexm.default_help" = "새 터미널에서 이 계정을 사용합니다. Codex GUI는 작업을 마친 뒤 다시 실행하세요. 실행 중인 작업의 로그인은 유지됩니다.";
+
+"codexm.default_updated" = "기본 계정을 변경했습니다. 기존 작업은 유지됩니다.";
+
+"codexm.nickname_title" = "계정 닉네임 지정";
+
+"codexm.nickname_help" = "영문·숫자·-·_를 사용하세요. codexm account NAME에서도 이 이름을 사용합니다.";
+
+"codexm.nickname_invalid" = "사용하지 않는 1~64자 영문·숫자·-·_ 닉네임을 지정하세요. default는 예약된 이름입니다.";
+
+"codexm.login_named_default" = "이름 있는 계정을 추가한 뒤 기본 계정으로 사용을 선택하세요.";
+
+"codexm.login_incomplete" = "로그인이 완료되지 않았습니다. 기존 로그인은 유지됩니다.";
+
+"codexm.import_title" = "Codex Usage 계정 가져오기";
+
+"codexm.import_help" = "먼저 기존 Codex Usage 앱을 종료하세요. 기존 로그인·기본 계정을 덮어쓰지 않고 계정과 이름을 CodexM으로 복사합니다. 원본은 보존됩니다.";
+
+"codexm.import_counts" = "신규 %lld · 기존 %lld · 확인 필요 %lld";
+
+"codexm.import_complete" = "계정을 가져왔습니다. 원본 데이터는 보존했습니다.";
+
+"codexm.import_partial" = "일부 계정은 새 로그인이 필요합니다. 원본 데이터는 보존했습니다.";

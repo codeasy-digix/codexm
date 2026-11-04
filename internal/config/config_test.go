@@ -40,6 +40,7 @@ func TestFirstRunSaveReloadAndBackup(t *testing.T) {
 
 func TestLegacyDefaultWorkerIsIgnoredAndRemovedOnSave(t *testing.T) {
 	c := Defaults()
+	c.WorkerAccounts.Priority = []string{"account-work", "account-secondary"}
 	c.Path = filepath.Join(t.TempDir(), "config.toml")
 	if e := c.Save(); e != nil {
 		t.Fatal(e)

@@ -1,6 +1,7 @@
 package accounts
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -45,18 +46,29 @@ func CurrentNickname(c config.Config, codexHome, account string) string {
 			}
 		}
 	}
-	id := accountID(filepath.Join(codexHome, "auth.json"))
-	if id == "" {
+	current, err := nativePrivateRead(filepath.Join(codexHome, "auth.json"), false)
+	if err != nil || accountID(filepath.Join(codexHome, "auth.json")) == "" {
 		return ""
 	}
+	identity := CredentialIdentity(current)
 	matching := []string{}
 	for _, name := range names {
-		if accountID(filepath.Join(root, name, "auth.json")) == id {
+		candidate, err := nativePrivateRead(filepath.Join(root, name, "auth.json"), false)
+		if err != nil {
+			continue
+		}
+		other := CredentialIdentity(candidate)
+		// A workspace ID alone cannot distinguish its members. Older auth files
+		// without user claims match only when their complete credentials match.
+		if identity.Key != "" && identity.Key == other.Key || identity.Key == "" && bytes.Equal(current, candidate) {
 			matching = append(matching, name)
 		}
 	}
 	if slices.Contains(matching, account) {
 		return account
+	}
+	if len(matching) == 1 {
+		return matching[0]
 	}
 	for _, name := range c.WorkerAccounts.Priority {
 		if slices.Contains(matching, name) {

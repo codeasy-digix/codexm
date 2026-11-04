@@ -1,4 +1,4 @@
-"app.title" = "Codex Usage";
+"app.title" = "CodexM";
 "language.name" = "English";
 "options.language" = "Language";
 "options.language_system" = "Follow system settings";
@@ -55,7 +55,7 @@
 "account.legacy_name" = "Previous app account";
 "account.delete" = "Remove connection";
 "account.delete_title" = "Remove %@?";
-"account.delete_explanation" = "This deletes this connection's saved login and dedicated Codex home on this Mac.";
+"account.delete_explanation" = "This hides the registration in CodexM. Saved login, native default and conversation history are preserved.";
 "account.removed" = "Removed %@.";
 "account.added" = "Added %@%@.";
 "account.reconnected" = "Reconnected %@.";
@@ -115,14 +115,14 @@
 "auto.help.cost" = "This makes a real model request and consumes Codex allowance. It is off by default. An available lightweight model is preferred, with low effort when supported; otherwise an available model or the runtime default is used. It does not add credits or force OpenAI to reset a limit; reset timing and allowance remain controlled by OpenAI.";
 "auto.help.limits" = "Only connected accounts whose latest successful status includes a 5h limit are eligible. Weekly-only accounts, disconnected accounts and accounts awaiting sign-in are skipped. Failed automatic requests wait at least 30 minutes before another attempt. The app cannot guarantee that a request or token refresh will succeed.";
 "auto.help.devices" = "Requests stop when this app is not running. For the same accounts, enable this feature on only one Mac to avoid duplicate model requests. Account authentication must still be completed by you.";
-"auto.help.privacy" = "Automatic requests contain only an arithmetic expression. No documents are intentionally included. The bundled Codex runtime communicates with OpenAI and inherits the selected CODEX_HOME configuration; review any custom providers, MCP servers or runtime telemetry settings you have configured.";
+"auto.help.privacy" = "Automatic requests contain only an arithmetic expression. No documents are intentionally included. The separately installed official Codex CLI communicates with OpenAI and inherits the selected CODEX_HOME configuration; review any custom providers, MCP servers or runtime telemetry settings you have configured.";
 "about.title" = "About this product";
 "about.version" = "Version %@ (%@)";
 "about.overview" = "Monitor multiple Codex accounts and workspaces from one menu bar panel. See both 5h and weekly remaining allowance, reset times and reset credits without switching your main login.";
-"about.accounts" = "This Mac's default connection reuses its existing .codex login. Added accounts/workspaces use separate app-managed Codex homes. Names and display order are stored locally.";
+"about.accounts" = "The menu app and CLI share CodexM account management. The native default follows this Mac’s .codex login. Labels and order stay on this Mac.";
 "about.refresh" = "Opening the panel checks every connection. Optional 5h auto-refresh schedules lightweight arithmetic requests while the app runs, staggered across accounts. Real requests consume allowance and cannot override OpenAI's limits.";
-"about.privacy" = "This app has no developer-operated account server, advertising SDK or app analytics upload. It does not send credentials or usage data to its developer. Authentication, status checks and optional model requests still require communication with OpenAI. The bundled runtime and any user-configured endpoints have their own network behavior.";
-"about.opensource" = "Codex Usage is open source under the MIT License. Its bundled OpenAI Codex runtime is under Apache License 2.0. This is an independent project, not an official OpenAI product. OpenAI, ChatGPT and Codex are their owners' trademarks.";
+"about.privacy" = "CodexM has no developer-operated account server or analytics upload. Credentials and usage are not sent to its developer. The installed official Codex CLI connects to OpenAI for authentication, usage checks and optional model requests.";
+"about.opensource" = "CodexM is an independent open-source project under the MIT License. OpenAI, ChatGPT and Codex are their owners’ trademarks. The official CLI is installed separately under its own license.";
 "about.repository" = "Source code";
 "about.licenses" = "Open-source licenses";
 "about.license_original" = "License texts are supplied in their original English. They have not been replaced with unofficial legal translations.";
@@ -146,3 +146,45 @@
 "error.auto_failed" = "The automatic Codex request failed.";
 "error.auto_status" = "Automatic Codex request status: %@";
 "error.detail" = "The operation failed. Original diagnostic: %@";
+
+"common.continue" = "Continue";
+
+"codexm.missing" = "Install the matching CodexM CLI to use this app.";
+
+"codexm.disconnected" = "The CodexM connection closed. Refresh to reconnect; uncertain actions are not repeated.";
+
+"codexm.timeout" = "CodexM did not respond in time.";
+
+"codexm.incompatible" = "The app and CLI versions are incompatible. Update both together.";
+
+"codexm.open_terminal" = "Open CodexM in Terminal";
+
+"codexm.terminal_failed" = "Terminal could not be opened. Check Automation permission in System Settings.";
+
+"codexm.set_default" = "Use as native default";
+
+"codexm.default_confirm" = "Change the default Codex account?";
+
+"codexm.default_help" = "New terminals use this account. Restart the Codex GUI when ready; running tasks keep their current login.";
+
+"codexm.default_updated" = "Default account updated. Existing tasks were preserved.";
+
+"codexm.nickname_title" = "Choose an account nickname";
+
+"codexm.nickname_help" = "Use letters, numbers, - or _. This name is also used by codexm account NAME.";
+
+"codexm.nickname_invalid" = "Choose an unused nickname with 1–64 letters, numbers, - or _. The name default is reserved.";
+
+"codexm.login_named_default" = "Add a named account, then choose Use as native default.";
+
+"codexm.login_incomplete" = "Sign-in did not complete. Existing logins were preserved.";
+
+"codexm.import_title" = "Import Codex Usage accounts";
+
+"codexm.import_help" = "Quit the old Codex Usage app first. Copy its accounts and labels into CodexM without replacing existing logins or changing the default. The old data is preserved.";
+
+"codexm.import_counts" = "New %lld · Existing %lld · Needs review %lld";
+
+"codexm.import_complete" = "Account import finished. Original data was preserved.";
+
+"codexm.import_partial" = "Some accounts need a new sign-in. Their original data was preserved.";

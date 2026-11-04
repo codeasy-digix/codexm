@@ -79,6 +79,7 @@ type authFingerprint struct {
 	exists    bool
 	digest    [sha256.Size]byte
 	accountID string
+	identity  string
 }
 
 func NewLoginBroker(ctx context.Context, c config.Config) *LoginBroker {
@@ -381,7 +382,7 @@ func (b *LoginBroker) verify(s *loginSession) {
 		b.finish(s, "failed", "completed sign-in saved an unexpected account identity")
 		return
 	}
-	if s.before.accountID != "" && s.before.accountID != id {
+	if s.before.accountID != "" && s.before.accountID != id || s.before.identity != "" && s.before.identity != CredentialIdentity(data).Key {
 		b.finish(s, "failed", "sign in to the same account saved under this nickname; existing credentials were preserved")
 		return
 	}
@@ -426,7 +427,7 @@ func publishLogin(c config.Config, name, target string, data []byte) error {
 	}
 	wrote := false
 	_, _, err = config.Update(c.Path, "", func(c *config.Config) error {
-		if err := c.RegisterAccount(name); err != nil {
+		if err := c.RestoreAccountRegistration(name); err != nil {
 			return err
 		}
 		if err := c.Validate(); err != nil {
@@ -488,6 +489,7 @@ func fingerprintAuth(filename string) (authFingerprint, error) {
 	fingerprint := authFingerprint{exists: exists}
 	if exists {
 		fingerprint.digest = sha256.Sum256(data)
+		fingerprint.identity = CredentialIdentity(data).Key
 		var auth struct {
 			Tokens struct {
 				AccountID string `json:"account_id"`

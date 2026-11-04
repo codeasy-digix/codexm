@@ -23,7 +23,7 @@ type ActivationRequest struct {
 // ActivateUsage retains the toolbar's explicitly enabled, allowance-consuming
 // arithmetic request. There is no scheduler here and it cannot resume a chat.
 func ActivateUsage(ctx context.Context, c config.Config, args ActivationRequest) error {
-	if !regexp.MustCompile(`^[0-9]{1,3} [+-] [0-9]{1,3}$`).MatchString(args.Expression) {
+	if !regexp.MustCompile(`^[0-9]{1,5} \* [0-9]{1,3} / [1-9][0-9]{0,2} \+ [0-9]{1,3}$`).MatchString(args.Expression) {
 		return errors.New("invalid activation expression")
 	}
 	all, e := AccountCatalog(c)

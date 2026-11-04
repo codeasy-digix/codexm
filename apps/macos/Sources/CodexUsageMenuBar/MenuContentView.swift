@@ -31,6 +31,21 @@ struct MenuContentView: View {
         deleteConfirmationPanel(account)
       }
 
+      if let preview = store.legacyImportPreview {
+        VStack(alignment: .leading, spacing: 8) {
+          Text(L10n.text("codexm.import_title")).font(.headline)
+          Text(L10n.text("codexm.import_help")).font(.caption)
+          Text(L10n.text("codexm.import_counts", preview.items.filter { $0.action == "import" }.count,
+            preview.items.filter { $0.action == "reuse" || $0.action == "already-imported" }.count,
+            preview.items.filter { $0.action == "skipped" }.count)).font(.caption)
+          HStack {
+            Button(L10n.text("common.cancel")) { store.cancelLegacyImport() }
+            Button(L10n.text("common.continue")) { store.applyLegacyImport() }
+              .disabled(store.isManagingAccounts || preview.items.isEmpty)
+          }
+        }
+      }
+
       if let error = store.accountManagementError {
         statusPanel(
           error,
@@ -497,6 +512,7 @@ struct AccountUsageCard: View {
   @State private var draftName = ""
   @State private var isRenamingWorkspace = false
   @State private var draftWorkspaceName = ""
+  @State private var confirmDefault = false
   @FocusState private var workspaceEditorFocused: Bool
 
   var body: some View {
@@ -524,6 +540,10 @@ struct AccountUsageCard: View {
       // Do not apply an open editor's draft to a different default login.
       if viewState.account.isSystemDefault { isRenamingWorkspace = false }
     }
+    .confirmationDialog(L10n.text("codexm.default_confirm"), isPresented: $confirmDefault) {
+      Button(L10n.text("codexm.set_default")) { store.setNativeDefault(accountID: viewState.id) }
+      Button(L10n.text("common.cancel"), role: .cancel) { }
+    } message: { Text(L10n.text("codexm.default_help")) }
   }
 
   @ViewBuilder
@@ -614,6 +634,9 @@ struct AccountUsageCard: View {
       }
 
       if viewState.account.isManaged {
+        Text(viewState.account.nativeName)
+        Button(L10n.text("codexm.set_default"), systemImage: "checkmark.circle") { confirmDefault = true }
+          .disabled(viewState.account.isNativeDefault || store.isManagingAccounts)
         Button(L10n.text("account.rename"), systemImage: "text.cursor") {
           draftName = viewState.account.normalizedDisplayName ?? ""
           isRenaming = true

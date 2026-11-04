@@ -49,6 +49,8 @@ func accountFixture(t *testing.T) config.Config {
 	t.Helper()
 	root := t.TempDir()
 	c := config.Defaults()
+	c.WorkerAccounts.Priority = []string{"account-work", "account-secondary", "account-main", "account-backup"}
+	c.WorkerAccounts.FallbackAccount = "account-backup"
 	c.Path = filepath.Join(root, "config.toml")
 	c.Runtime.SharedCodexHome = filepath.Join(root, "shared")
 	c.Runtime.AccountsDir = filepath.Join(root, "accounts")

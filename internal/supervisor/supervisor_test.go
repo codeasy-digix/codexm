@@ -29,6 +29,8 @@ func fixture(t *testing.T) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	c := config.Defaults()
+	c.WorkerAccounts.Priority = []string{"account-work", "account-secondary", "account-main", "account-backup"}
+	c.WorkerAccounts.FallbackAccount = "account-backup"
 	c.Manager.Account = "account-backup"
 	c.Supervisor.WorkerSessionPrefix = "codexm-test-job-"
 	c.Path = filepath.Join(dir, "config.toml")
@@ -36,6 +38,9 @@ func fixture(t *testing.T) *Server {
 	c.Runtime.AccountsDir = filepath.Join(dir, "accounts")
 	c.Runtime.SharedCodexHome = filepath.Join(dir, "codex")
 	c.Runtime.EnginesDir = filepath.Join(dir, "engines")
+	if e := c.Save(); e != nil {
+		t.Fatal(e)
+	}
 	for _, n := range c.WorkerAccounts.Priority {
 		p := filepath.Join(c.Runtime.AccountsDir, n)
 		os.MkdirAll(p, 0700)

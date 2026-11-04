@@ -97,8 +97,8 @@ struct LocalizationTests {
       #expect(CodexUsageError.timedOut.errorDescription == L10n.text("error.timeout"))
       #expect(CodexUsageError.serverError("Technical detail").errorDescription
         == L10n.text("error.server_detail", "Technical detail"))
-      #expect(UsageAccountRegistryError.invalidAccountIdentifier.errorDescription
-        == L10n.text("account.invalid_id"))
+      #expect(CodexMBridgeError.incompatible.errorDescription
+        == L10n.text("codexm.incompatible"))
       let expired = UsageSnapshot(weeklyLimit: limit, planType: nil, availableResetCredits: 1,
         resetCreditDetails: [ResetCreditDetail(id: nil, status: "available", grantedAt: nil,
           expiresAt: now.addingTimeInterval(-1), title: nil, description: nil)],
@@ -161,7 +161,7 @@ struct LocalizedLayoutTests {
     try L10n.$languageOverride.withValue(language) {
       let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
       defer { try? FileManager.default.removeItem(at: root) }
-      let store = UsageStore(registry: UsageAccountRegistry(applicationSupportURL: root))
+      let store = UsageStore(backend: DesktopBackendFixture())
       let now = Date()
       var account = UsageAccount.systemDefault
       account.workspaceName = "Development"

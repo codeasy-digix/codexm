@@ -1,63 +1,40 @@
-# Desktop integration checkpoint
+# Desktop integration progress
 
-This is a work-in-progress handoff, not a release. The installed product has not
-been replaced. Keep this branch private until the publication checks below pass.
+The private integration branch remains a development record. Public publication
+must use a separately sanitized clone; do not change the private repo's visibility.
 
-## Accepted direction
+Completed implementation and local validation:
 
-- One CodexM repository owns the Rust TUI, validated existing Go account backend
-  and Swift menu app in `apps/macos`. Keep the old app's MIT attribution and four
-  UI languages. The old app's history was imported with a full Git subtree merge.
-- The menu app must use the same local stdio account catalog, authentication,
-  usage and native-default operations as the CLI. Remove its duplicate production
-  credential registry/runtime implementation after behavioral tests pass.
-- Preserve display/workspace names, order, preferences and explicit opt-in quota
-  activation. Migration is copy-only and must not overwrite existing credentials,
-  native defaults, conversation history, model/effort preferences or live writers.
-- Sources, binaries and the Homebrew tap will be public after privacy review.
-  Linux gets the CLI/TUI; macOS also gets the menu app. Do not publish private audit
-  reports, transcript exports, backups or local migration state.
+- Menu app now uses the shared serial stdio backend for catalog, usage, login,
+  presentation, unregister and native-default selection. Its duplicate credential
+  registry, embedded official runtime and old process clients are removed.
+- Default/login revisions protect stale reads and mutations. Login identity includes
+  both user and workspace. Registration no longer silently changes retired worker
+  priority policy. Login cancellation before the challenge arrives is cleaned up.
+- Swift pipe transport reads available bytes instead of waiting to fill a buffer;
+  real backend integration confirms requests continue after validation errors.
+- Four UI languages, name/order/preferences and explicit opt-in activation remain.
+  Activation aliases share an identity schedule; old timing is migrated conservatively.
+- Go race tests and vet, Rust locked workspace tests/fmt/clippy, web typecheck/tests,
+  70 Swift tests including real bridge and rendered locale views passed locally.
+  The Rust TUI passed its isolated owned tmux PTY interaction/shutdown test.
+- A matching 0.7.0 CLI/TUI/macOS app build was produced. It is ad-hoc signed only.
+  The active host has no former menu registry to import; synthetic migration tests
+  cover identity reuse, copy-only import, source preservation and idempotence.
+- Build/install docs and a source-based Homebrew Formula template are being prepared.
+  The Go-only/npm packager is retired; native archives require both matching binaries.
 
-## Implemented but not fully validated
+Remaining release gates:
 
-- Shared identity/revision, catalog/presentation, usage, one-time legacy import and
-  opt-in activation bridge endpoints exist in `internal/accounts` and
-  `internal/nativecli`.
-- A Swift stdio bridge scaffold exists in
-  `apps/macos/Sources/CodexUsageMenuBar/CodexMBridge.swift`. It is not wired into
-  `UsageStore` yet. Its DTO expects account fields that still need implementation.
-- The main Go module and first-party URLs now use the organization namespace.
-  Personal examples were replaced with neutral names. Production config no longer
-  predefines the developer's login list or fallback account.
+1. Finish isolated official CLI/auth checks and controlled installed app verification.
+2. Finish packaging/CI and validate the source Formula on macOS and Linux.
+3. Sanitize all published Git objects, author/committer/message/tag metadata, names,
+   source paths and release assets in a separate clone. Re-scan for secrets and
+   encoded private identifiers; retain original private backups and license attribution.
+4. Publish the cleaned source repository/release/tap only after their checks pass.
+5. Remove the former menu app GitHub repository only after integrated distribution
+   verification and preserved rollback backups. No public release or repo removal
+   is complete at this checkpoint.
 
-## Known failing checks and next work
-
-The focused Go account/native/CLI checks passed before the privacy transformation.
-The subsequent full `go test ./...` does **not** pass. Do not describe this snapshot
-as tested or install it as a stable build.
-
-1. Update test fixtures that depended on the former production default login list.
-   Set fictional priorities explicitly in legacy fixtures; keep new-install defaults
-   empty. Audit identity discovery and first-login config behavior, rather than
-   hiding regressions by restoring personal defaults.
-2. Fix an escaped account-name fixture that survived word-boundary substitution in
-   `internal/cli/account_test.go`. Extend privacy checks to escaped/encoded values,
-   filenames, authors/committers, messages, tags and every published ref.
-3. Finish and test Swift shared-backend integration. Remove duplicate credential
-   readers, embedded official-runtime handling and obsolete tests only when their
-   replacement coverage exists. Preserve default-switch/stale-response protections.
-4. Align the activation expression protocol with the existing Swift generator;
-   preserve opt-in schedules and avoid duplicate activation of aliases of one login.
-5. Complete CLI/Swift/Rust/web contract checks and isolated real-CLI validation,
-   then controlled local migration and installed UI validation.
-6. Finish history sanitization in a separate clone, re-scan it, and publish only
-   cleaned refs/assets to a clean organization repository. The existing private
-   source repository and original bundles must remain private. A general scan found
-   one false positive in a validation checksum; this is not proof of no secrets.
-7. Reconcile versioning, reproducible packages, signing/notarization and Homebrew.
-   Delete the former app repository only after backups, integrated deployment and
-   distribution verification. No source repository or release has been deleted or
-   published by this checkpoint.
-
-Machine-specific handoff details and test/audit reports live in the private
-`~/.local/state/codexm/` capsule; never commit that capsule or credentials.
+Local evidence, raw audit reports and migration backups belong in private state
+outside this repository. `.home` owns no product builds or source copies.

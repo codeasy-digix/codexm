@@ -6,6 +6,25 @@ import Testing
 @Suite("Automatic five-hour activation")
 @MainActor
 struct AutomaticUsageActivationTests {
+  @Test("Legacy schedules merge aliases by identity without enabling activation or advancing a request")
+  func migratesAliasSchedules() throws {
+    let suite = "CodexM.schedule." + UUID().uuidString
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = AutomaticUsageScheduleStore(defaults: defaults)
+    let old = Date(timeIntervalSince1970: 2_000_000_000)
+    store.recordAttempt(accountID: "legacy-id", at: old, expression: "1000 * 11 / 2 + 1")
+    store.recordSuccess(accountID: "legacy-id", requestStartedAt: old)
+    store.recordAttempt(accountID: "system-default", at: old.addingTimeInterval(60), expression: "2000 * 11 / 2 + 1")
+    store.migrate(from: "legacy-id", to: "identity:shared")
+    store.migrate(from: "system-default", to: "identity:shared")
+    #expect(!store.isEnabled)
+    #expect(store.entry(for: "identity:shared").nextAttemptDate() == old.addingTimeInterval(5 * 3600))
+    #expect(store.entry(for: "legacy-id").lastAttemptAt == nil)
+    #expect(store.entry(for: "system-default").lastAttemptAt == nil)
+    store.migrate(from: "legacy-id", to: "identity:shared")
+    #expect(store.entry(for: "identity:shared").lastSuccessAt == old)
+  }
   @Test("Uses an opt-in setting and persists it")
   func persistsOptInSetting() throws {
     let suiteName = "AutomaticUsageActivationTests.opt-in"

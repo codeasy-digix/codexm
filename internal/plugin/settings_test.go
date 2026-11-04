@@ -13,6 +13,8 @@ import (
 
 func configuredPlugin(t *testing.T) MCP {
 	i := fixture(t)
+	i.Config.WorkerAccounts.Priority = []string{"account-work", "account-secondary", "account-main", "account-backup"}
+	i.Config.WorkerAccounts.FallbackAccount = "account-backup"
 	i.Config.Manager.Account = "account-backup"
 	for _, name := range i.Config.WorkerAccounts.Priority {
 		if e := config.AtomicWrite(filepath.Join(i.Config.Runtime.AccountsDir, name, "auth.json"), []byte(`{}`), 0600); e != nil {

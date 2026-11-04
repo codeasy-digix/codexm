@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum BridgeValue: Encodable, Sendable {
   case string(String), bool(Bool), strings([String])
@@ -42,12 +43,16 @@ struct CodexMLocator: Sendable {
   var environment = ProcessInfo.processInfo.environment
   var bundleURL = Bundle.main.bundleURL
   func locate() throws -> URL {
+    if let explicit = environment["CODEXM_BINARY"] {
+      guard explicit.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: explicit) else { throw CodexMBridgeError.unavailable }
+      return URL(fileURLWithPath: explicit).resolvingSymlinksInPath()
+    }
     let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let paths = [environment["CODEXM_BINARY"],
+    let paths = [
       bundleURL.appending(path: "Contents/Resources/native/codexm").path,
       "/opt/homebrew/opt/codexm-cli/bin/codexm", "/usr/local/opt/codexm-cli/bin/codexm",
       home + "/.local/bin/codexm", "/opt/homebrew/bin/codexm", "/usr/local/bin/codexm"]
-    for path in paths.compactMap({ $0 }) where path.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: path) {
+    for path in paths where path.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: path) {
       return URL(fileURLWithPath: path).resolvingSymlinksInPath()
     }
     throw CodexMBridgeError.unavailable
@@ -77,6 +82,8 @@ final class CodexMBridge: CodexMServing, @unchecked Sendable {
           guard !stopped else { throw CodexMBridgeError.disconnected }
           if process == nil { try start() }
           continuation.resume(returning: try exchange(method, params: params))
+        } catch CodexMBridgeError.rejected(let message) {
+          continuation.resume(throwing: CodexMBridgeError.rejected(message))
         } catch {
           closeProcess()
           continuation.resume(throwing: error)
@@ -101,6 +108,7 @@ final class CodexMBridge: CodexMServing, @unchecked Sendable {
     child.standardInput = stdin; child.standardOutput = stdout; child.standardError = FileHandle.nullDevice
     try child.run()
     process = child; input = stdin.fileHandleForWriting; output = stdout.fileHandleForReading
+    _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
     let raw = try exchange("capabilities", params: Data("{}".utf8))
     struct Capabilities: Decodable { struct Method: Decodable { let name: String }; let protocolVersion: Int; let methods: [Method] }
     let capabilities = try JSONDecoder().decode(Capabilities.self, from: raw)
@@ -117,13 +125,22 @@ final class CodexMBridge: CodexMServing, @unchecked Sendable {
       "owner": owner, "operation_id": UUID().uuidString.replacingOccurrences(of: "-", with: ""),
       "params": try JSONSerialization.jsonObject(with: params)]
     var bytes = try JSONSerialization.data(withJSONObject: request); bytes.append(10)
-    let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-    DispatchQueue.global().asyncAfter(deadline: .now() + 100, execute: timeout)
-    defer { timeout.cancel() }
+    let deadline = ContinuousClock.now + .seconds(100)
     try input.write(contentsOf: bytes)
     while !buffer.contains(10) {
-      guard let chunk = try output.read(upToCount: 16384), !chunk.isEmpty else { throw CodexMBridgeError.disconnected }
-      buffer.append(chunk)
+      guard ContinuousClock.now < deadline else { throw CodexMBridgeError.timedOut }
+      var descriptor = pollfd(fd: output.fileDescriptor, events: Int16(POLLIN), revents: 0)
+      let ready = poll(&descriptor, 1, 100)
+      if ready < 0 && errno == EINTR { continue }
+      guard ready >= 0 else { throw CodexMBridgeError.disconnected }
+      if ready == 0 { continue }
+      var chunk = [UInt8](repeating: 0, count: 16384)
+      // Foundation read(upToCount:) can wait for the full count on a pipe.
+      // Read only currently available bytes; one JSON line is a complete reply.
+      let count = Darwin.read(output.fileDescriptor, &chunk, chunk.count)
+      if count < 0 && errno == EINTR { continue }
+      guard count > 0 else { throw CodexMBridgeError.disconnected }
+      buffer.append(contentsOf: chunk.prefix(count))
       guard buffer.count <= 2 * 1024 * 1024 else { throw CodexMBridgeError.invalidResponse }
     }
     let newline = buffer.firstIndex(of: 10)!
@@ -184,9 +201,18 @@ struct DesktopUsage: Decodable, Sendable {
 struct DesktopLogin: Decodable, Sendable {
   let account: String; let login_id: String; let status: String
   let auth_url: String?; let verification_url: String?; let user_code: String?; let error: String?
+
+  func challenge(method: CodexLoginMethod) throws -> CodexLoginChallenge? {
+    guard status == "pending" else { return nil }
+    if method == .browser {
+      return .browser(.init(loginId: login_id, authorizationURL: try CodexLoginChallenge.loginURL(auth_url)))
+    }
+    guard let user_code, !user_code.isEmpty else { throw CodexMBridgeError.invalidResponse }
+    return .deviceCode(.init(loginId: login_id, verificationURL: try CodexLoginChallenge.loginURL(verification_url), userCode: user_code))
+  }
 }
 
 struct ToolbarImport: Decodable, Sendable {
   struct Item: Decodable, Sendable { let legacy_id: String; let account: String?; let action: String; let reason: String? }
-  let applied: Bool; let items: [Item]
+  let applied: Bool; let complete: Bool; let items: [Item]
 }

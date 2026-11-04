@@ -1,39 +1,61 @@
-> 이 문서는 이전 관리형 codexm의 기록입니다. 현재 공개 실행 경로는 채팅 목록·계정·공식 CLI 인계로 축약했습니다. [현재 설계](native-cli-core.md)와 [README](../README.md)를 따르세요.
+# Distribution
 
-# 배포 준비
+CodexM is one source repository: https://github.com/codeasy-digix/codexm.
+The Homebrew tap is https://github.com/codeasy-digix/homebrew-tap.
+Support: **support@digix.kr**. The old menu app is integrated under `apps/macos`.
 
-제품 저장소는 `codeasy-digix/codexm`이며 현재는 소스와 로컬 설치만 준비한다.
-CI에는 테스트만 있고 태그 배포나 레지스트리 업로드는 없다.
+The default Homebrew Formula builds the matching CLI/TUI from audited source on
+macOS and Linux, and also builds `CodexM.app` on macOS. Go and Rust are build-only
+dependencies, Swift is the macOS system toolchain, and Python is not a product
+runtime dependency. The official Codex CLI must be installed separately. No native
+Codex binary, login, conversation, machine config or history-sync engine is bundled.
+`codex` and its updater are never wrapped or replaced.
+
+The locally built macOS app is ad-hoc signed. This is not Developer ID signing or
+notarization. A binary Cask/App Store release is not claimed. Do not strip quarantine
+or disable Gatekeeper to distribute an unnotarized app. A future Cask requires a
+verified Developer ID certificate, hardened-runtime signing, notarization and a
+stapled ticket, followed by a real clean-install check.
 
 ```sh
-go run ./cmd/package
+brew install codeasy-digix/tap/codexm
+codexm
+# macOS menu app:
+open "$(brew --prefix codexm)/CodexM.app"
 ```
 
-이 명령은 네 플랫폼(macOS/Linux × ARM64/AMD64)의 `codexm`만 빌드하고
-`dist/prepared/`에 압축 파일, `SHA256SUMS`, Homebrew 공식과 npm 디렉터리를 만든다.
-history-sync는 제거되어 코드나 실행 파일에 포함하지 않는다.
-공식 Codex 실행 파일·인증·대화도 패키지에 포함하지 않는다.
-준비된 모든 진입점의 이름은 `codexm`이다. `codex` 파일이나 셸 함수를 설치하지 않는다.
+The Formula and caveats preserve user configuration. Upgrading does not change the
+native default, migrate credentials automatically, enable activation, start a service,
+stop existing work, or install a web server. The menu offers an explicit legacy
+account import; review its preview first. Keep only one copy of the menu app running.
 
-Homebrew 공식은 검증한 실제 빌드 해시를 사용한다. 공식이 가리키는 GitHub Release는
-아직 생성하지 않으며, 저장소가 private인 동안 공개 tap에 적용하지 않는다.
-npm 디렉터리는 네 플랫폼 실행 파일을 포함하고 Node로 해당 파일만 실행한다.
-설치 시 다운로드·로그인·데몬 실행은 없으며 `private: true`로 게시를 차단한다.
-정식 게시 전 npm 이름/권한과 공개 여부를 결정하고 이 설정을 명시적으로 바꿔야 한다.
+## Release procedure
 
-향후 배포 순서는 로컬/플랫폼 검증 → 소스 버전 확정 → release 업로드 → 공개·인증
-정책에 맞는 tap/npm 게시 → 이전 account 배포 경로 은퇴다. 지금은 게시하지 않는다.
-기존 account 저장소는 자동 release와 공식 생성기를 제거한다. 이미 게시된 과거
-release/tap은 이 준비 작업에서 삭제하지 않는다. 공식 `@openai/codex`는 별도 제품이다.
+1. Validate Go race/vet, locked Rust tests/clippy/fmt, Swift shared-bridge/locale/UI
+   tests, web contracts and isolated official CLI/TUI behavior. Versions in `VERSION`,
+   Go, Cargo and desktop metadata must match.
+2. Preserve original private Git bundles. In a separate clone sanitize all source,
+   published history/commit metadata/tags/ref names, file paths and assets. Keep raw
+   audits/backups/auth outside Git. Never make an unaudited private repository public.
+3. Scan every published ref and release file for secrets and private identifiers;
+   inspect encoded forms and binaries as well as text. GitHub secret scanning/push
+   protection supplements this review; it does not remove arbitrary personal names.
+   Keep third-party license attribution intact. Rotate any real leaked credential.
+4. Commit/push only cleaned refs to the public repository. Produce the source archive
+   with `git archive` from the validated public tag. Preserve clean authors and no
+   personal usernames in archive ownership. Generate the Formula with
+   `scripts/render-formula.sh VERSION SOURCE_SHA256`; it points to that exact release
+   asset, never a private repo or moving branch.
+5. Native archives, when supplied, contain both `codexm` and `codexm-tui` plus license
+   notices. Build on each target platform, then run `scripts/package-native.sh`.
+   Never publish the obsolete Go-only archive. Collect archive checksums into
+   `SHA256SUMS`, audit the final assets, and publish the release.
+6. Validate the tap Formula from source on macOS and Linux and run `brew test` before
+   publishing its update. Remove the former menu app repository only after verified
+   integrated deployment/distribution and private rollback backups are retained.
 
-독립 설치는 `./install.sh --build`를 사용한다. 정식 release 이후 `./install.sh`는
-GitHub archive의 SHA-256을 검사한 다음 버전을 선택한다. 실패한 다운로드나 충돌은
-현재 설치를 보존한다. 로컬 소스 빌드는 실행 파일 hash가 포함된 별도 immutable 경로를
-사용해 다음 개발 빌드와 정식 Release가 충돌하지 않는다. `.home`은 이 과정에 관여하지 않는다.
-제품 소스의 빌드·설치기는 이 저장소에서만 실행한다.
-
-소스/설치 소유권은 [환경 관리](deployment.md)를 따른다.
-`.home`은 제품 소스 pin/clone/build/install/update나 바이너리 배포를 수행하지 않는다.
-
-2026-11-01 사용자 지시: Homebrew 등 배포 작업은 정리가 끝난 뒤 별도 요청 전까지
-진행하지 않는다. 현재 작업은 소스 정리와 로컬 설치·검증에 한정한다.
+`build.sh` and `install.sh` remain independent source/standalone installers. Their
+matching native pair lives in one immutable version and is replaced using fresh
+inodes. `.home` only registers installed tools and personal shell settings; it has no
+product clone/pin/build/update role. The old npm preparation and embedded Codex runtime
+are retired. No public artifact may contain the private migration/validation capsule.

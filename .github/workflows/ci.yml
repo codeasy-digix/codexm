@@ -1,8 +1,8 @@
-name: Test prepared codexm
+name: Test CodexM
 
 on:
   push:
-    branches: [main]
+    branches: [main, "handoff/**"]
   pull_request:
 
 permissions:
@@ -39,4 +39,18 @@ jobs:
           binary=$(./build.sh)
           CODEXM_TUI_TEST_BINARY="$binary" go test ./internal/cli -run '^TestNativeTUIThroughOwnedTerminal$' -count=1 -v
 
-# Preparation only: no tag trigger, release job, registry token, or publish step.
+  desktop:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build shared backend and test desktop in isolation
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/codexm" ./cmd/codexm
+          cd apps/macos
+          CODEXM_TEST_BINARY="$RUNNER_TEMP/codexm" swift test
+
+# Release upload remains a separate, explicit privacy-reviewed operation.

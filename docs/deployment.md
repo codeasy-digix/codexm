@@ -7,6 +7,7 @@
 | 항목 | 담당 |
 |---|---|
 | TUI·채팅 목록·계정·공식 CLI 인계 | `crates/terminal/`, `internal/cli/compact.go`, `internal/nativecli/` |
+| macOS 메뉴 앱 | `apps/macos/`; 공통 stdio 계정 백엔드와 동일 버전 CLI/TUI |
 | 선택적 이전 웹 | `web/`; 기본 TUI 실행에는 포함하지 않음 |
 | 빌드·설치·업데이트 | codexm 소스의 `build.sh`, `build-web.sh`, `install.sh` |
 | CLI 셸 함수 | 제품의 `internal/shellinit/`; `codexm shell-init zsh`로 출력 |

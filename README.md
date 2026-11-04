@@ -1,9 +1,16 @@
-# codexm
+# CodexM
 
 로컬 Codex 채팅을 찾아 계정을 고르고 **공식 Codex CLI로 이어가는** 작은 도구입니다.
 채팅 실행·모델 호출·권한 승인·목표 진행은 공식 CLI가 담당합니다. codexm은 별도
 작업 관리자나 자동 계정 교체 서비스를 시작하지 않습니다. 공식 `codex` 명령과 업데이트는
 수정하지 않습니다.
+
+macOS 메뉴 앱도 같은 계정·인증·기본 계정을 사용합니다. 메뉴에서 사용량 조회,
+계정 추가/재로그인/등록 해제, 기본 지정과 터미널 TUI 열기를 할 수 있습니다.
+기존 Codex Usage 앱의 언어·표시 이름·순서·설정은 일회성 가져오기로 보존합니다.
+[메뉴 앱과 마이그레이션](apps/macos/README.md) · [공통 계정 구조](docs/desktop-integration.md)
+
+지원: **support@digix.kr** · 소스: https://github.com/codeasy-digix/codexm
 
 ## 기본 흐름
 

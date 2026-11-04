@@ -1,0 +1,71 @@
+class Codexm < Formula
+  desc "Codex conversation catalog, account selector, TUI and macOS menu app"
+  homepage "https://github.com/codeasy-digix/codexm"
+  url "https://github.com/codeasy-digix/codexm/releases/download/v@VERSION@/codexm-@VERSION@-source.tar.gz"
+  sha256 "@SHA256@"
+  license "MIT"
+
+  depends_on "go" => :build
+  depends_on "rust" => :build
+  depends_on "tmux"
+
+  on_macos do
+    depends_on macos: :sonoma
+  end
+
+  def fetch
+    system "go", "mod", "download"
+    system "cargo", "fetch", "--locked"
+  end
+
+  def install
+    ENV["GOTOOLCHAIN"] = "local"
+    ENV["GOPROXY"] = "off"
+    ENV["CARGO_NET_OFFLINE"] = "true"
+    ENV["RUSTFLAGS"] = "--remap-path-prefix=#{buildpath}=."
+    os = OS.mac? ? "darwin" : "linux"
+    arch = Hardware::CPU.arm? ? "arm64" : "amd64"
+    system "./build.sh", os, arch, "#{buildpath}/native/codexm"
+    if OS.mac?
+      ENV["CODEXM_NATIVE_BUILD_DIR"] = "#{buildpath}/native"
+      ENV["CODEXM_APP_OUTPUT"] = "#{buildpath}/CodexM.app"
+      system "./apps/macos/scripts/build-app.sh"
+      prefix.install "CodexM.app"
+      bin.install_symlink prefix/"CodexM.app/Contents/Resources/native/codexm"
+    else
+      libexec.install "native/codexm", "native/codexm-tui"
+      bin.install_symlink libexec/"codexm"
+    end
+    (pkgshare/"licenses").install "THIRD_PARTY_NOTICES.txt"
+  end
+
+  def caveats
+    text = <<~EOS
+      Install the official Codex CLI separately. Its codex command stays unchanged.
+      Open the conversation TUI: codexm
+      Shell account selection: source <(command codexm shell-init zsh)
+      Support: support@digix.kr
+    EOS
+    if OS.mac?
+      text += <<~EOS
+        Open the menu app: open "#{opt_prefix}/CodexM.app"
+        You can add that app to Login Items from its menu.
+        Quit the old Codex Usage menu app, then preview/import its accounts:
+          codexm migrate-toolbar
+          codexm migrate-toolbar --apply
+        The app is built locally and ad-hoc signed, not notarized.
+      EOS
+    end
+    text
+  end
+
+  test do
+    assert_equal "codexm #{version}\n", shell_output("#{bin}/codexm --version")
+    assert_match "codexm migrate-toolbar", shell_output("#{bin}/codexm --help")
+    native = OS.mac? ? prefix/"CodexM.app/Contents/Resources/native" : libexec
+    assert_equal "codexm-tui #{version}\n", shell_output("#{native}/codexm-tui --version")
+    if OS.mac?
+      assert_match '"catalogsComplete":true', shell_output("'#{prefix}/CodexM.app/Contents/MacOS/CodexUsageMenuBar' --localization-diagnostics").delete(" \n")
+    end
+  end
+end

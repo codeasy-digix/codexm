@@ -125,7 +125,7 @@ enum L10n {
   /// Preserve original system/backend diagnostics, but always provide a
   /// translated app-authored explanation around errors outside our types.
   static func errorDescription(_ error: Error) -> String {
-    if error is CodexUsageError || error is CodexRuntimeError || error is UsageAccountRegistryError {
+    if error is CodexUsageError || error is CodexMBridgeError {
       return error.localizedDescription
     }
     return text("error.detail", error.localizedDescription)

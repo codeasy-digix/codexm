@@ -131,7 +131,7 @@ struct ProductInformationView: View {
   }
 
   static var licenseText: String {
-    ["LICENSE.txt", "THIRD_PARTY_NOTICES.md", "CodexRuntime-LICENSE.txt"].map { file in
+    ["LICENSE.txt", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.txt"].map { file in
       let url = Bundle.main.resourceURL?.appendingPathComponent(file)
       let text = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
         ?? L10n.text("about.license_missing")

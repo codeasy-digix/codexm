@@ -28,6 +28,7 @@ func TestComposerHistoryRestoresDraftWithoutChangingSelectedSession(t *testing.T
 
 func TestAccountPickerKeepsOriginalTargetAcrossListRefresh(t *testing.T) {
 	c := config.Defaults()
+	c.WorkerAccounts.Priority = []string{"account-work", "account-secondary", "account-backup"}
 	c.Manager.Account = "account-backup"
 	m := New(c, "codexm")
 	m.Status.Jobs = []jobs.Job{{ID: "first", Title: "original target", Account: "account-work", Kind: "chat", Managed: true}, {ID: "second", Kind: "chat", Managed: true}}

@@ -1,4 +1,4 @@
-"app.title" = "Codex Usage";
+"app.title" = "CodexM";
 "language.name" = "简体中文";
 "options.language" = "语言";
 "options.language_system" = "跟随系统设置";
@@ -55,7 +55,7 @@
 "account.legacy_name" = "旧版应用账户";
 "account.delete" = "移除连接";
 "account.delete_title" = "移除 %@？";
-"account.delete_explanation" = "这将删除此连接在此 Mac 上保存的登录信息和专用 Codex 目录。";
+"account.delete_explanation" = "此操作仅隐藏 CodexM 中的注册。登录、默认账户和对话记录均保留。";
 "account.removed" = "已移除 %@。";
 "account.added" = "已添加 %@%@。";
 "account.reconnected" = "已重新连接 %@。";
@@ -115,14 +115,14 @@
 "auto.help.cost" = "这是真实的模型请求，会消耗 Codex 额度，默认关闭。优先选择可用的轻量模型，并在支持时使用低推理强度；若没有轻量模型，则使用其他可用模型或运行时默认模型。它不会增加额度，也不能强制 OpenAI 重置限额；重置时间和额度由 OpenAI 决定。";
 "auto.help.limits" = "仅当已连接账户最近一次成功的状态包含 5h 限额时才会执行。只有每周限额、未连接或等待登录的账户会跳过。失败的自动请求至少等待 30 分钟才会再次尝试。应用无法保证请求或令牌刷新一定成功。";
 "auto.help.devices" = "应用未运行时，请求会停止。同一批账户请仅在一台 Mac 上启用此功能，避免重复模型请求。账户授权仍须由您完成。";
-"auto.help.privacy" = "自动请求只包含算术表达式，不主动附加文档。内置 Codex 运行时会与 OpenAI 通信，并继承所选 CODEX_HOME 的配置；请检查您自行配置的模型提供方、MCP 服务器或运行时遥测设置。";
+"auto.help.privacy" = "自动请求仅包含算术表达式，不会主动附加文档。单独安装的官方 Codex CLI 与 OpenAI 通信，并继承所选 CODEX_HOME 配置。请检查自定义模型提供方、MCP 服务器和遥测设置。";
 "about.title" = "关于本产品";
 "about.version" = "版本 %@（%@）";
 "about.overview" = "通过一个菜单栏面板监控多个 Codex 账户和工作区，无需切换主登录，即可查看 5h 和每周剩余额度、重置时间和重置额度。";
-"about.accounts" = "此 Mac 的默认连接复用现有 .codex 登录。附加账户和工作区使用应用管理的独立 Codex 目录。名称和显示顺序保存在本地。";
+"about.accounts" = "菜单应用与 CLI 共用 CodexM 账户管理。默认账户跟随本机 .codex 登录，标签和顺序保存在本机。";
 "about.refresh" = "打开面板会检查所有连接。可选的 5h 自动刷新会在应用运行时错峰安排轻量算术请求。真实请求会消耗额度，无法更改 OpenAI 的限额规则。";
-"about.privacy" = "本应用没有开发者运营的账户服务器、广告 SDK 或应用分析上传，不会将凭据或用量数据发送给开发者。授权、状态查询和可选模型请求仍需与 OpenAI 通信。内置运行时和用户配置的端点各有自身的网络行为。";
-"about.opensource" = "Codex Usage 是采用 MIT 许可证的开源项目，内置 OpenAI Codex 运行时采用 Apache License 2.0。本项目独立开发，并非 OpenAI 官方产品。OpenAI、ChatGPT 和 Codex 为其所有者的商标。";
+"about.privacy" = "CodexM 没有开发者运营的账户服务器或分析上传，不向开发者发送凭据或用量。已安装的官方 Codex CLI 连接 OpenAI 以进行认证、用量查询和可选模型请求。";
+"about.opensource" = "CodexM 是采用 MIT 许可证的独立开源项目。OpenAI、ChatGPT 和 Codex 商标属于各自所有者。官方 CLI 根据其自身许可证单独安装。";
 "about.repository" = "源代码";
 "about.licenses" = "开源许可证";
 "about.license_original" = "许可证以英文原文提供，不以非官方法律译文替代。";
@@ -146,3 +146,45 @@
 "error.auto_failed" = "Codex 自动请求失败。";
 "error.auto_status" = "Codex 自动请求状态：%@";
 "error.detail" = "操作失败。原始诊断：%@";
+
+"common.continue" = "继续";
+
+"codexm.missing" = "请安装与此应用版本匹配的 CodexM CLI。";
+
+"codexm.disconnected" = "CodexM 连接已关闭。请刷新重连；结果不确定的操作不会重复。";
+
+"codexm.timeout" = "CodexM 响应超时。";
+
+"codexm.incompatible" = "应用与 CLI 版本不兼容。请同时更新。";
+
+"codexm.open_terminal" = "在终端中打开 CodexM";
+
+"codexm.terminal_failed" = "无法打开终端。请检查系统设置中的自动化权限。";
+
+"codexm.set_default" = "设为默认账户";
+
+"codexm.default_confirm" = "更改 Codex 默认账户？";
+
+"codexm.default_help" = "新终端将使用此账户。请在准备好后重启 Codex GUI；正在运行的任务保留原登录。";
+
+"codexm.default_updated" = "默认账户已更新，现有任务已保留。";
+
+"codexm.nickname_title" = "选择账户昵称";
+
+"codexm.nickname_help" = "使用字母、数字、- 或 _。codexm account NAME 也使用此名称。";
+
+"codexm.nickname_invalid" = "请输入未使用的 1–64 字符昵称，可包含字母、数字、- 或 _。default 为保留名称。";
+
+"codexm.login_named_default" = "请先添加命名账户，再选择设为默认账户。";
+
+"codexm.login_incomplete" = "登录未完成，原有登录已保留。";
+
+"codexm.import_title" = "导入 Codex Usage 账户";
+
+"codexm.import_help" = "请先退出旧 Codex Usage 应用。将账户和标签复制到 CodexM，不替换现有登录或默认账户；原数据保留。";
+
+"codexm.import_counts" = "新增 %lld · 现有 %lld · 待检查 %lld";
+
+"codexm.import_complete" = "账户导入完成，原数据已保留。";
+
+"codexm.import_partial" = "部分账户需要重新登录，其原数据已保留。";

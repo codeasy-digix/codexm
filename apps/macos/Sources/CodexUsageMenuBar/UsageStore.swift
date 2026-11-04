@@ -5,44 +5,26 @@ import ServiceManagement
 @MainActor
 final class UsageStore: ObservableObject {
   enum AccountLoadState: Equatable {
-    case loading
-    case loaded(UsageSnapshot)
-    case needsAuthentication
-    case failed(CodexUsageError)
+    case loading, loaded(UsageSnapshot), needsAuthentication, failed(CodexUsageError)
   }
-
   struct AccountViewState: Equatable, Identifiable {
     var account: UsageAccount
     var state: AccountLoadState
     var isRefreshing: Bool
     var lastRefreshError: CodexUsageError? = nil
-
     var id: String { account.id }
-
     var isAutomaticActivationEligible: Bool {
       guard case .loaded(let snapshot) = state else { return false }
       return snapshot.fiveHourLimit != nil
     }
-
-    mutating func apply(snapshot: UsageSnapshot) {
-      state = .loaded(snapshot)
-      lastRefreshError = nil
-    }
-
-    mutating func applyRefreshFailure(
-      _ error: CodexUsageError,
-      authenticationRequired: Bool = false
-    ) {
-      if case .loaded = state {
-        lastRefreshError = error
-      } else {
-        state = authenticationRequired ? .needsAuthentication : .failed(error)
-        lastRefreshError = nil
-      }
+    mutating func apply(snapshot: UsageSnapshot) { state = .loaded(snapshot); lastRefreshError = nil }
+    mutating func applyRefreshFailure(_ error: CodexUsageError, authenticationRequired: Bool = false) {
+      if case .loaded = state { lastRefreshError = error }
+      else { state = authenticationRequired ? .needsAuthentication : .failed(error); lastRefreshError = nil }
     }
   }
 
-  @Published private(set) var accountStates: [AccountViewState]
+  @Published private(set) var accountStates: [AccountViewState] = [.init(account: .systemDefault, state: .loading, isRefreshing: false)]
   @Published private(set) var isRefreshingAll = false
   @Published private(set) var launchAtLoginEnabled = false
   @Published private(set) var launchAtLoginError: String?
@@ -59,1068 +41,387 @@ final class UsageStore: ObservableObject {
   @Published private(set) var automaticActivationEnabled: Bool
   @Published private(set) var automaticActivationInProgressAccountIDs = Set<String>()
   @Published private(set) var automaticActivationError: String?
+  @Published private(set) var isManagingAccounts = false
+  @Published private(set) var legacyImportPreview: ToolbarImport?
 
-  private enum AuthenticationMode {
-    case adding(UsageAccount)
-    case relogin(UsageAccount)
-
-    var account: UsageAccount {
-      switch self {
-      case .adding(let account), .relogin(let account): return account
-      }
-    }
-  }
-
-  private let registry: UsageAccountRegistry
-  private let runtimeLocator: CodexRuntimeLocator
-  private let client: CodexAppServerClient
-  private let authenticationClient: CodexAuthenticationClient
+  private let backend: any CodexMServing
   private let authorizationPageOpener: @MainActor (URL) -> Bool
-  private let identityReader: CodexAccountIdentityReader
-  private let automaticUsageClient: CodexAutomaticUsageClient
   private let automaticScheduleStore: AutomaticUsageScheduleStore
-  private let automaticPromptGenerator: AutomaticUsagePromptGenerator
-  private let accountOperationGate: AccountOperationGate
   private let refreshSchedule: UsageRefreshSchedule
   private let noticeDismissDelay: Duration
   private let errorDismissDelay: Duration
   private var refreshTask: Task<Void, Never>?
-  private var refreshOperationID: UUID?
   private var timerTask: Task<Void, Never>?
-  private var systemDefaultRefreshTask: Task<Void, Never>?
-  private var isSystemDefaultScheduledRefreshInProgress = false
-  private var automaticActivationTask: Task<Void, Never>?
   private var authenticationTask: Task<Void, Never>?
-  private var authenticationErrorDismissTask: Task<Void, Never>?
-  private var accountManagementErrorDismissTask: Task<Void, Never>?
-  private var accountManagementNoticeDismissTask: Task<Void, Never>?
-  private var authenticationMode: AuthenticationMode?
-  private var authenticationAttemptID: UUID?
-  private var lastRefreshAllRequestedAt: Date?
+  private var mutationTask: Task<Void, Never>?
+  private var activationTask: Task<Void, Never>?
+  private var noticeTask: Task<Void, Never>?
+  private var errorTask: Task<Void, Never>?
+  private var authErrorTask: Task<Void, Never>?
+  private var addingAccount = false
+  private var loginID: String?
+  private var authenticationAttempt: UUID?
+  private var lastRefreshAll: Date?
+  private var lastDefaultRefresh = Date.distantPast
+  private var lastManagedRefresh = Date.distantPast
   private var pendingRefreshAll = false
+  private var catalogSequence = 0
+  private var appliedCatalogSequence = 0
 
-  private static let refreshAllDebounceInterval: TimeInterval = 5
-
-  init(
-    registry: UsageAccountRegistry = UsageAccountRegistry(),
-    runtimeLocator: CodexRuntimeLocator = CodexRuntimeLocator(),
-    client: CodexAppServerClient = CodexAppServerClient(),
-    authenticationClient: CodexAuthenticationClient = CodexAuthenticationClient(),
-    authorizationPageOpener: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
-    identityReader: CodexAccountIdentityReader = CodexAccountIdentityReader(),
-    automaticUsageClient: CodexAutomaticUsageClient = CodexAutomaticUsageClient(),
-    automaticScheduleStore: AutomaticUsageScheduleStore = AutomaticUsageScheduleStore(),
-    automaticPromptGenerator: AutomaticUsagePromptGenerator = AutomaticUsagePromptGenerator(),
-    accountOperationGate: AccountOperationGate = AccountOperationGate(),
-    refreshSchedule: UsageRefreshSchedule = UsageRefreshSchedule(),
-    noticeDismissDelay: Duration = .seconds(5),
-    errorDismissDelay: Duration = .seconds(10)
-  ) {
-    self.registry = registry
-    self.runtimeLocator = runtimeLocator
-    self.client = client
-    self.authenticationClient = authenticationClient
-    self.authorizationPageOpener = authorizationPageOpener
-    self.identityReader = identityReader
-    self.automaticUsageClient = automaticUsageClient
-    self.automaticScheduleStore = automaticScheduleStore
-    self.automaticPromptGenerator = automaticPromptGenerator
-    self.accountOperationGate = accountOperationGate
-    self.refreshSchedule = refreshSchedule
+  init(backend: any CodexMServing = CodexMBridge(),
+       authorizationPageOpener: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
+       automaticScheduleStore: AutomaticUsageScheduleStore = AutomaticUsageScheduleStore(),
+       refreshSchedule: UsageRefreshSchedule = UsageRefreshSchedule(),
+       noticeDismissDelay: Duration = .seconds(5), errorDismissDelay: Duration = .seconds(10)) {
+    self.backend = backend; self.authorizationPageOpener = authorizationPageOpener
+    self.automaticScheduleStore = automaticScheduleStore; self.refreshSchedule = refreshSchedule
     self.systemDefaultRefreshInterval = refreshSchedule.systemDefaultInterval
-    self.noticeDismissDelay = noticeDismissDelay
-    self.errorDismissDelay = errorDismissDelay
     self.automaticActivationEnabled = automaticScheduleStore.isEnabled
-
-    do {
-      self.accountStates = try registry.loadAccounts().map {
-        AccountViewState(account: $0, state: .loading, isRefreshing: false)
-      }
-    } catch {
-      self.accountStates = [
-        AccountViewState(
-          account: .systemDefault,
-          state: .failed(.serverError(L10n.errorDescription(error))),
-          isRefreshing: false
-        )
-      ]
-    }
-    automaticScheduleStore.retain(accountIDs: Set(accountStates.map(\.id)))
+    self.noticeDismissDelay = noticeDismissDelay; self.errorDismissDelay = errorDismissDelay
     refreshLaunchAtLoginState()
   }
 
   deinit {
-    refreshTask?.cancel()
-    timerTask?.cancel()
-    systemDefaultRefreshTask?.cancel()
-    automaticActivationTask?.cancel()
-    authenticationTask?.cancel()
-    authenticationErrorDismissTask?.cancel()
-    accountManagementErrorDismissTask?.cancel()
-    accountManagementNoticeDismissTask?.cancel()
-    client.shutdown()
+    refreshTask?.cancel(); timerTask?.cancel(); authenticationTask?.cancel()
+    mutationTask?.cancel(); activationTask?.cancel(); noticeTask?.cancel()
+    errorTask?.cancel(); authErrorTask?.cancel(); backend.shutdown()
   }
-
-  var primaryAccountState: AccountLoadState {
-    accountStates.first(where: { $0.account.isSystemDefault })?.state ?? .needsAuthentication
+  func shutdown() {
+    refreshTask?.cancel(); timerTask?.cancel(); authenticationTask?.cancel()
+    mutationTask?.cancel(); activationTask?.cancel(); backend.shutdown()
   }
-
+  var primaryAccountState: AccountLoadState { accountStates.first { $0.account.isSystemDefault }?.state ?? .needsAuthentication }
   var latestFetchedAt: Date? {
-    accountStates.compactMap { viewState -> Date? in
-      guard case .loaded(let snapshot) = viewState.state else { return nil }
-      return snapshot.fetchedAt
-    }.max()
+    accountStates.compactMap { if case .loaded(let s) = $0.state { return s.fetchedAt }; return nil }.max()
   }
-
-  var canRequestManualRefresh: Bool {
-    refreshTask == nil && !isRefreshingAll && !isSystemDefaultScheduledRefreshInProgress
-  }
-
-  var isAddingAccount: Bool {
-    if case .adding = authenticationMode { return true }
-    return false
-  }
-
-  var deviceLoginInfo: DeviceLoginInfo? {
-    guard case .deviceCode(let info) = loginChallenge else { return nil }
-    return info
-  }
-
-  var authenticationTitle: String {
-    if let account = authenticationAccount {
-      return L10n.text("auth.relogin_title", account.title)
-    }
-    return L10n.text("auth.add")
-  }
-
+  var canRequestManualRefresh: Bool { refreshTask == nil && !isRefreshingAll }
+  var isAddingAccount: Bool { addingAccount && isAuthenticating }
+  var deviceLoginInfo: DeviceLoginInfo? { if case .deviceCode(let info) = loginChallenge { return info }; return nil }
+  private var authenticationAccount: UsageAccount? { accountStates.first { $0.id == authenticationAccountID }?.account }
+  var authenticationTitle: String { authenticationAccount.map { L10n.text("auth.relogin_title", $0.title) } ?? L10n.text("auth.add") }
   var authenticationInstruction: String {
-    if authenticationMethod == .browser {
-      return L10n.text(authenticationAccount != nil ? "auth.browser_instruction_existing" : "auth.browser_instruction_new")
-    }
-    if authenticationAccount != nil {
-      return L10n.text("auth.instruction_existing")
-    }
-    return L10n.text("auth.instruction_new")
+    L10n.text(authenticationMethod == .browser
+      ? (addingAccount ? "auth.browser_instruction_new" : "auth.browser_instruction_existing")
+      : (addingAccount ? "auth.instruction_new" : "auth.instruction_existing"))
   }
-
   var authenticationCompletionNote: String {
-    if authenticationMethod == .browser {
-      return L10n.text(authenticationAccount != nil ? "auth.browser_completion_existing" : "auth.browser_completion_new")
-    }
-    if authenticationAccount != nil {
-      return L10n.text("auth.completion_existing")
-    }
-    return L10n.text("auth.completion_new")
+    L10n.text(authenticationMethod == .browser
+      ? (addingAccount ? "auth.browser_completion_new" : "auth.browser_completion_existing")
+      : (addingAccount ? "auth.completion_new" : "auth.completion_existing"))
   }
-
   var nextAutomaticActivationDate: Date? {
     guard automaticActivationEnabled else { return nil }
-    let now = Date()
-    guard let nextAccountDate = accountStates.compactMap({ viewState -> Date? in
-      guard viewState.id != authenticationAccountID else { return nil }
-      guard viewState.isAutomaticActivationEligible else { return nil }
-      return max(
-        now,
-        automaticScheduleStore.entry(for: viewState.id).nextAttemptDate()
-      )
-    }).min() else {
-      return nil
+    let dates = accountStates.filter { $0.isAutomaticActivationEligible && $0.account.activationKey != nil }.map {
+      automaticScheduleStore.entry(for: $0.account.activationKey!).nextAttemptDate()
     }
-    return max(
-      nextAccountDate,
-      automaticScheduleStore.nextGlobalAttemptDate()
-    )
+    guard let date = dates.min() else { return nil }
+    return max(Date(), date, automaticScheduleStore.nextGlobalAttemptDate())
   }
 
   func start() {
     guard timerTask == nil else { return }
     refreshAll()
-    startAutomaticActivationSchedulerIfNeeded()
-    startSystemDefaultRefreshScheduler()
-
     timerTask = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(
-          for: .seconds(UsageRefreshSchedule.managedAccountIntervalSeconds)
-        )
-        guard !Task.isCancelled else { return }
-        self?.refreshManagedAccountsIfIdle()
+        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        guard let self else { return }
+        if self.canRequestManualRefresh && !self.isManagingAccounts && !self.isAuthenticating {
+          do {
+            let changed = try await self.reloadCatalog()
+            if changed || Date().timeIntervalSince(self.lastManagedRefresh) >= Double(UsageRefreshSchedule.managedAccountIntervalSeconds) {
+              self.refreshAll()
+            } else if Date().timeIntervalSince(self.lastDefaultRefresh) >= Double(self.systemDefaultRefreshInterval.rawValue) {
+              self.refresh(accountID: UsageAccount.systemDefaultID)
+            }
+          } catch { self.showAccountManagementError(L10n.errorDescription(error)) }
+        }
+        self.activateIfDue()
       }
     }
   }
 
-  func setSystemDefaultRefreshInterval(_ interval: SystemDefaultRefreshInterval) {
-    guard interval != systemDefaultRefreshInterval else { return }
-    refreshSchedule.setSystemDefaultInterval(interval)
-    systemDefaultRefreshInterval = interval
-    startSystemDefaultRefreshScheduler()
-  }
-
-  func setAutomaticActivationEnabled(_ enabled: Bool) {
-    automaticScheduleStore.setEnabled(enabled)
-    automaticActivationEnabled = enabled
-    automaticActivationError = nil
-    if enabled {
-      startAutomaticActivationSchedulerIfNeeded()
-    } else {
-      stopAutomaticActivationScheduler()
+  // Read display metadata only. No credential bytes, native DB, or persistent
+  // account app-server connection belongs to this UI process.
+  @discardableResult
+  func reloadCatalog() async throws -> Bool {
+    catalogSequence += 1
+    let sequence = catalogSequence
+    let catalog: [DesktopAccount] = try await backend.call("accounts.catalog")
+    try Task.checkCancellation()
+    guard sequence > appliedCatalogSequence else { return false }
+    appliedCatalogSequence = sequence
+    let old = Dictionary(uniqueKeysWithValues: accountStates.map { ($0.id, $0) })
+    let changed = catalog.count != old.count || catalog.contains {
+      let a = $0.viewAccount
+      return old[a.id]?.account.revision != a.revision
     }
-  }
-
-  func refreshIfStale(maximumAge: TimeInterval = 60) {
-    let now = Date()
-    let hasStaleAccount = accountStates.contains { viewState in
-      guard case .loaded(let snapshot) = viewState.state else { return true }
-      return now.timeIntervalSince(snapshot.fetchedAt) >= maximumAge
+    accountStates = catalog.map { item in
+      let account = item.viewAccount
+      if var current = old[account.id], current.account.revision == account.revision {
+        current.account = account; return current
+      }
+      return AccountViewState(account: account, state: .loading, isRefreshing: false)
     }
-    if hasStaleAccount, !isRefreshingAll {
-      refreshAll()
+    for item in accountStates {
+      guard let identity = item.account.activationKey else { continue }
+      let oldID = item.id.hasPrefix("usage-") ? String(item.id.dropFirst(6)).uppercased() : item.id
+      automaticScheduleStore.migrate(from: oldID, to: identity)
     }
+    return changed
   }
 
   func refreshAll() {
-    // A panel opened during an individual/scheduled read still needs the
-    // other connections checked. Coalesce those requests into one next pass.
     guard !isRefreshingAll else { return }
-    guard refreshTask == nil, !isSystemDefaultScheduledRefreshInProgress else {
-      pendingRefreshAll = true
-      return
-    }
-    pendingRefreshAll = false
-    let now = Date()
-    if let lastRefreshAllRequestedAt,
-      now.timeIntervalSince(lastRefreshAllRequestedAt) < Self.refreshAllDebounceInterval
-    {
-      return
-    }
-    let accounts = accountStates.map(\.account)
-    guard !accounts.isEmpty else { return }
-    lastRefreshAllRequestedAt = now
-    isRefreshingAll = true
-    let operationID = UUID()
-    refreshOperationID = operationID
-
+    guard refreshTask == nil else { pendingRefreshAll = true; return }
+    if let lastRefreshAll, Date().timeIntervalSince(lastRefreshAll) < 5 { return }
+    lastRefreshAll = Date(); isRefreshingAll = true
+    beginRefresh(accountID: nil)
+  }
+  func refresh(accountID: String) { guard refreshTask == nil else { return }; beginRefresh(accountID: accountID) }
+  private func beginRefresh(accountID: String?) {
     refreshTask = Task { [weak self] in
       guard let self else { return }
-      defer { self.finishRefreshOperation(operationID, wasRefreshingAll: true) }
-      for account in accounts {
-        guard !Task.isCancelled else { return }
-        guard !self.isRefreshing(accountID: account.id) else { continue }
-        await self.refreshNow(account)
+      defer {
+        self.refreshTask = nil; self.isRefreshingAll = false
+        if self.pendingRefreshAll { self.pendingRefreshAll = false; self.lastRefreshAll = nil; self.refreshAll() }
       }
-    }
-  }
-
-  func refresh(accountID: String) {
-    guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
-    guard refreshTask == nil, !isRefreshingAll, !isSystemDefaultScheduledRefreshInProgress else {
-      return
-    }
-    guard !isRefreshing(accountID: accountID) else { return }
-    let operationID = UUID()
-    refreshOperationID = operationID
-    refreshTask = Task { [weak self] in
-      guard let self else { return }
-      defer { self.finishRefreshOperation(operationID, wasRefreshingAll: false) }
-      await self.refreshNow(account)
-    }
-  }
-
-  private func startSystemDefaultRefreshScheduler() {
-    systemDefaultRefreshTask?.cancel()
-    let interval = systemDefaultRefreshInterval.duration
-    systemDefaultRefreshTask = Task { [weak self] in
-      while !Task.isCancelled {
-        do {
-          try await Task.sleep(for: interval)
-        } catch {
-          return
+      do {
+        try await self.reloadCatalog()
+        let accounts = self.accountStates.map(\.account).filter { accountID == nil || $0.id == accountID }
+        for account in accounts {
+          guard !Task.isCancelled else { return }
+          if account.id != self.authenticationAccountID { await self.refreshNow(account) }
         }
-        guard !Task.isCancelled else { return }
-        await self?.refreshSystemDefaultOnSchedule()
-      }
+        self.lastDefaultRefresh = Date()
+        if accountID == nil { self.lastManagedRefresh = Date() }
+      } catch { self.showAccountManagementError(L10n.errorDescription(error)) }
     }
   }
-
-  private func refreshSystemDefaultOnSchedule() async {
-    guard refreshTask == nil, !isRefreshingAll else { return }
-    guard
-      let viewState = accountStates.first(where: { $0.account.isSystemDefault }),
-      !viewState.isRefreshing
-    else {
-      return
-    }
-    if case .needsAuthentication = viewState.state { return }
-    isSystemDefaultScheduledRefreshInProgress = true
-    defer {
-      isSystemDefaultScheduledRefreshInProgress = false
-      drainPendingRefreshAll()
-    }
-    await refreshNow(viewState.account)
-  }
-
-  private func isRefreshing(accountID: String) -> Bool {
-    accountStates.first(where: { $0.id == accountID })?.isRefreshing ?? false
-  }
-
-  private func refreshManagedAccountsIfIdle() {
-    guard refreshTask == nil else { return }
-    let accounts = accountStates.map(\.account).filter(\.isManaged)
-    guard !accounts.isEmpty else { return }
-    let operationID = UUID()
-    refreshOperationID = operationID
-    refreshTask = Task { [weak self] in
-      guard let self else { return }
-      defer { self.finishRefreshOperation(operationID, wasRefreshingAll: false) }
-      for account in accounts {
-        guard !Task.isCancelled else { return }
-        guard !self.isRefreshing(accountID: account.id) else { continue }
-        await self.refreshNow(account)
-      }
-    }
-  }
-
-  func connectExistingCodexLogin() {
-    clearAuthenticationError()
-    let panel = NSOpenPanel()
-    panel.title = L10n.text("auth.connect_default")
-    panel.message = L10n.text("auth.select_folder")
-    panel.prompt = L10n.text("auth.use_folder")
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.showsHiddenFiles = true
-    panel.directoryURL = runtimeLocator.suggestedCodexHomeURL
-
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    do {
-      try runtimeLocator.saveCodexHomeAccess(url)
-      refresh(accountID: UsageAccount.systemDefaultID)
-    } catch {
-      showAuthenticationError(L10n.errorDescription(error))
-    }
-  }
-
-  func startAddingAccount(method: CodexLoginMethod = .deviceCode) {
-    cancelAuthentication(discardPendingAccount: true)
-    clearAuthenticationError()
-    clearAccountManagementError()
-    clearAccountManagementNotice()
-
-    do {
-      let account = try registry.beginManagedAccount()
-      let home = try registry.pendingCodexHomeURL(for: account)
-      let runtime = try runtimeLocator.locateManagedAccount(codexHomeURL: home)
-      beginAuthentication(mode: .adding(account), method: method, runtime: runtime)
-    } catch {
-      showAuthenticationError(L10n.errorDescription(error))
-    }
-  }
-
-  func relogin(accountID: String, method: CodexLoginMethod = .deviceCode) {
-    guard !isAuthenticating else { return }
-    // The system default must remain this Mac's existing login, not an app-owned sign-in target.
-    guard let account = accountStates.first(where: { $0.id == accountID })?.account,
-      account.isManaged
-    else { return }
-    clearAuthenticationError()
-    clearAccountManagementError()
-    clearAccountManagementNotice()
-
-    do {
-      let runtime = try runtime(for: account)
-      beginAuthentication(mode: .relogin(account), method: method, runtime: runtime)
-    } catch {
-      showAuthenticationError(L10n.errorDescription(error))
-    }
-  }
-
-  func cancelCurrentAuthentication() {
-    cancelAuthentication(discardPendingAccount: true)
-  }
-
-  func renameManagedAccount(accountID: String, displayName: String) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
-    guard accountStates[index].account.isManaged else { return }
-    let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-    accountStates[index].account.displayName = trimmed.isEmpty ? nil : trimmed
-    do {
-      try registry.updateAccount(accountStates[index].account)
-    } catch {
-      showAccountManagementError(L10n.errorDescription(error))
-    }
-  }
-
-  @discardableResult
-  func renameWorkspace(accountID: String, workspaceName: String) -> Bool {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return false }
-    var account = accountStates[index].account
-    if account.isSystemDefault {
-      // A login may have changed externally while this editor was open. Never
-      // save the draft for a stale identity or guess a workspace from its email.
-      guard let currentRuntime = try? runtime(for: account),
-        let fingerprint = identityReader.fingerprint(codexHomeURL: currentRuntime.codexHomeURL),
-        fingerprint == account.lastKnownWorkspaceFingerprint,
-        account.workspaceNameKey != nil
-      else {
-        clearDefaultAccountPresentation()
-        showAccountManagementError(L10n.text("account.workspace_identity_unavailable"))
-        return false
-      }
-    }
-    let trimmed = workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
-    account.workspaceName = trimmed.isEmpty ? nil : trimmed
-
-    do {
-      try registry.updateAccount(account)
-      accountStates[index].account = account
-      clearAccountManagementError()
-      return true
-    } catch {
-      showAccountManagementError(L10n.errorDescription(error))
-      return false
-    }
-  }
-
-  func setPendingWorkspaceName(_ workspaceName: String) {
-    pendingWorkspaceName = workspaceName
-  }
-
-  @discardableResult
-  func reorderAccounts(accountIDs: [String]) -> Bool {
-    let currentIDs = accountStates.map(\.id)
-    guard accountIDs.count == currentIDs.count,
-      Set(accountIDs) == Set(currentIDs)
-    else { return false }
-    guard accountIDs != currentIDs else { return true }
-    do {
-      try registry.saveAccountOrder(accountIDs)
-      let currentStates = accountStates
-      accountStates = accountIDs.compactMap { id in currentStates.first { $0.id == id } }
-      clearAccountManagementError()
-      return true
-    } catch {
-      showAccountManagementError(L10n.text("account.order_failed", L10n.errorDescription(error)))
-      return false
-    }
-  }
-
-  func removeManagedAccount(accountID: String) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
-    let account = accountStates[index].account
-    guard account.isManaged else { return }
-    stopAutomaticActivationScheduler()
-    cancelRefresh()
-    if authenticationAccountID == accountID {
-      cancelAuthentication(discardPendingAccount: false)
-    }
-    client.invalidateSession(sessionID: accountID)
-    do {
-      try registry.removeManagedAccount(account)
-      accountStates.remove(at: index)
-      automaticScheduleStore.remove(accountID: accountID)
-      automaticActivationInProgressAccountIDs.remove(accountID)
-      showAccountManagementNotice(L10n.text("account.removed", account.title))
-      if recentlyAddedAccountID == accountID {
-        recentlyAddedAccountID = nil
-      }
-    } catch {
-      showAccountManagementError(L10n.errorDescription(error))
-    }
-    startAutomaticActivationSchedulerIfNeeded()
-  }
-
-  func copyDeviceLoginCode() {
-    guard let userCode = deviceLoginInfo?.userCode else { return }
-    copyToPasteboard(userCode)
-  }
-
-  func reopenAuthenticationPage() {
-    guard let url = loginChallenge?.authorizationURL else { return }
-    if !authorizationPageOpener(url) {
-      showAuthenticationError(L10n.text("auth.browser_open_failed"))
-    }
-  }
-
-  func setLaunchAtLogin(_ enabled: Bool) {
-    launchAtLoginError = nil
-    do {
-      if enabled {
-        try SMAppService.mainApp.register()
-      } else {
-        try SMAppService.mainApp.unregister()
-      }
-    } catch {
-      launchAtLoginError = L10n.errorDescription(error)
-    }
-    refreshLaunchAtLoginState()
-  }
-
-  func clearAccountManagementError() {
-    accountManagementErrorDismissTask?.cancel()
-    accountManagementErrorDismissTask = nil
-    accountManagementError = nil
-  }
-
-  func clearAccountManagementNotice() {
-    accountManagementNoticeDismissTask?.cancel()
-    accountManagementNoticeDismissTask = nil
-    accountManagementNotice = nil
-  }
-
-  func clearAuthenticationError() {
-    authenticationErrorDismissTask?.cancel()
-    authenticationErrorDismissTask = nil
-    authenticationError = nil
-  }
-
-  func consumeRecentlyAddedAccount(_ accountID: String) {
-    guard recentlyAddedAccountID == accountID else { return }
-    recentlyAddedAccountID = nil
-  }
-
   private func refreshNow(_ account: UsageAccount) async {
     setRefreshing(true, for: account.id)
     defer { setRefreshing(false, for: account.id) }
-    if let index = accountStates.firstIndex(where: { $0.id == account.id }),
-      case .loaded = accountStates[index].state
-    {
-      // Preserve the last value while refreshing.
-    } else {
-      setState(.loading, for: account.id)
-    }
-
     do {
-      let runtime = try runtime(for: account)
-      defer { withExtendedLifetime(runtime) {} }
-      let identityRevision = identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
-      if account.isSystemDefault,
-        accountStates.first(where: { $0.id == account.id })?.account.lastKnownWorkspaceFingerprint
-          != identityRevision
-      {
-        clearDefaultAccountPresentation()
-      }
-      let snapshot = try await accountOperationGate.withPermit(for: account.id) {
-        try await client.fetchUsage(
-          sessionID: account.id,
-          diagnosticLabel: account.isSystemDefault ? "default" : "managed",
-          identityRevision: identityRevision,
-          codexURL: runtime.executableURL,
-          environmentOverride: runtime.environment,
-          onUpdate: { [weak self] snapshot in
-            Task { @MainActor [weak self] in
-              self?.applyServerUpdate(snapshot, accountID: account.id,
-                workspaceFingerprint: identityRevision)
-            }
-          }
-        )
-      }
-      guard !Task.isCancelled else { return }
-      if account.isSystemDefault,
-        identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL) != identityRevision
-      {
-        clearDefaultAccountPresentation()
-        client.invalidateSession(sessionID: account.id)
-        return
-      }
-      updateAccountMetadata(
-        accountID: account.id,
-        snapshot: snapshot,
-        workspaceFingerprint: identityRevision
-      )
-      setSnapshot(snapshot, for: account.id)
-    } catch is CancellationError {
-      return
-    } catch CodexRuntimeError.defaultCodexHomeUnavailable {
-      clearDefaultAccountPresentation()
-      recordRefreshFailure(
-        .notAuthenticated(L10n.text("error.default_missing")),
-        authenticationRequired: true,
-        for: account.id
-      )
-    } catch let error as CodexUsageError {
-      let authenticationRequired: Bool
-      if case .notAuthenticated = error {
-        authenticationRequired = true
-      } else {
-        authenticationRequired = false
-      }
-      recordRefreshFailure(error, authenticationRequired: authenticationRequired, for: account.id)
-    } catch {
-      recordRefreshFailure(.serverError(L10n.errorDescription(error)), for: account.id)
+      let result: DesktopUsage = try await backend.call("accounts.usage", ["account": .string(account.nativeName)])
+      try Task.checkCancellation()
+      try await reloadCatalog()
+      guard result.revision == account.revision,
+        let index = accountStates.firstIndex(where: { $0.id == account.id && $0.account.revision == result.revision })
+      else { return }
+      accountStates[index].apply(snapshot: try result.snapshot.usage())
+    } catch is CancellationError { return }
+    catch {
+      // The backend rejects reads that cross a default/login change. Clear the
+      // old presentation by refreshing the catalog before retaining an error.
+      _ = try? await reloadCatalog()
+      guard let index = accountStates.firstIndex(where: { $0.id == account.id && $0.account.revision == account.revision }) else { return }
+      accountStates[index].applyRefreshFailure(.serverError(L10n.errorDescription(error)))
     }
   }
-
-  private func runtime(for account: UsageAccount) throws -> CodexRuntime {
-    if account.isSystemDefault {
-      return try runtimeLocator.locateDefaultAccount()
-    }
-    let home = try registry.managedCodexHomeURL(for: account)
-    return try runtimeLocator.locateManagedAccount(codexHomeURL: home)
+  private func setRefreshing(_ value: Bool, for id: String) {
+    if let i = accountStates.firstIndex(where: { $0.id == id }) { accountStates[i].isRefreshing = value }
+  }
+  func refreshIfStale(maximumAge: TimeInterval = 60) {
+    if latestFetchedAt.map({ Date().timeIntervalSince($0) >= maximumAge }) ?? true { refreshAll() }
+  }
+  func setSystemDefaultRefreshInterval(_ interval: SystemDefaultRefreshInterval) {
+    refreshSchedule.setSystemDefaultInterval(interval); systemDefaultRefreshInterval = interval
   }
 
-  private func beginAuthentication(mode: AuthenticationMode, method: CodexLoginMethod, runtime: CodexRuntime) {
-    cancelAuthentication(discardPendingAccount: true)
-    stopAutomaticActivationScheduler()
-    authenticationMode = mode
-    let attemptID = UUID()
-    authenticationAttemptID = attemptID
-    authenticationMethod = method
-    switch mode {
-    case .adding(let account):
-      authenticationAccountID = account.id
-      pendingWorkspaceName = account.normalizedWorkspaceName ?? ""
-      client.invalidateSession(sessionID: account.id)
-    case .relogin(let account):
-      authenticationAccountID = account.id
-      pendingWorkspaceName = ""
-      client.invalidateSession(sessionID: account.id)
-    }
-    isAuthenticating = true
-    loginChallenge = nil
-
-    authenticationTask = Task { [weak self, authenticationClient, client, identityReader] in
+  private func manage(_ action: @escaping @MainActor () async throws -> Void) {
+    guard !isManagingAccounts else { return }
+    isManagingAccounts = true
+    mutationTask = Task { [weak self] in
       guard let self else { return }
-      do {
-        try await authenticationClient.login(runtime: runtime, method: method) { [weak self] challenge in
-          Task { @MainActor [weak self] in
-            guard let self, self.authenticationAttemptID == attemptID, self.isAuthenticating else { return }
-            self.loginChallenge = challenge
-            if case .deviceCode = challenge { self.copyDeviceLoginCode() }
-            self.reopenAuthenticationPage()
-          }
-        }
-        guard !Task.isCancelled, self.authenticationAttemptID == attemptID else { return }
-        let snapshot = try await client.fetchUsage(
-          sessionID: mode.account.id,
-          diagnosticLabel: mode.account.isSystemDefault ? "default" : "managed",
-          identityRevision: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL),
-          codexURL: runtime.executableURL,
-          environmentOverride: runtime.environment
-        )
-        guard !Task.isCancelled, self.authenticationAttemptID == attemptID else { return }
-        self.finishAuthentication(mode: mode, snapshot: snapshot, runtime: runtime)
-      } catch is CancellationError {
-        return
-      } catch {
-        guard !Task.isCancelled, self.authenticationAttemptID == attemptID else { return }
-        self.failAuthentication(mode: mode, error: error)
+      defer { self.isManagingAccounts = false; self.mutationTask = nil }
+      do { try await action(); try await self.reloadCatalog() }
+      catch { self.showAccountManagementError(L10n.errorDescription(error)); _ = try? await self.reloadCatalog() }
+    }
+  }
+  func renameManagedAccount(accountID: String, displayName: String) {
+    _ = editPresentation(accountID: accountID, key: "display_name", value: displayName)
+  }
+  func renameWorkspace(accountID: String, workspaceName: String) -> Bool {
+    editPresentation(accountID: accountID, key: "workspace_name", value: workspaceName)
+  }
+  private func editPresentation(accountID: String, key: String, value: String) -> Bool {
+    guard !isManagingAccounts,
+      let account = accountStates.first(where: { $0.id == accountID })?.account,
+      account.lastKnownWorkspaceFingerprint != nil else { return false }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    manage { [self] in
+      let _: Bool = try await backend.call("accounts.presentation", ["account": .string(account.nativeName),
+        "revision": .string(account.revision), key: .string(trimmed)])
+    }
+    return true
+  }
+  func reorderAccounts(accountIDs: [String]) -> Bool {
+    guard !isManagingAccounts, Set(accountIDs) == Set(accountStates.map(\.id)), Set(accountIDs).count == accountIDs.count else { return false }
+    manage { [self] in
+      let _: Bool = try await backend.call("accounts.presentation", ["order": .strings(accountIDs.map { $0 == UsageAccount.systemDefaultID ? "default" : $0 })])
+    }
+    return true
+  }
+  func removeManagedAccount(accountID: String) {
+    guard let account = accountStates.first(where: { $0.id == accountID })?.account, account.isManaged else { return }
+    manage { [self] in
+      let _: Bool = try await backend.call("accounts.remove", ["account": .string(account.nativeName), "revision": .string(account.revision)])
+    }
+  }
+  func setNativeDefault(accountID: String) {
+    guard let account = accountStates.first(where: { $0.id == accountID })?.account, account.isManaged else { return }
+    manage { [self] in
+      let _: Bool = try await backend.call("accounts.setDefault", ["account": .string(account.nativeName), "revision": .string(account.revision)])
+      showAccountManagementNotice(L10n.text("codexm.default_updated"))
+    }
+  }
+  func previewLegacyImport() {
+    manage { [self] in legacyImportPreview = try await backend.call("accounts.importLegacy", ["apply": .bool(false)]) }
+  }
+  func cancelLegacyImport() { legacyImportPreview = nil }
+  func applyLegacyImport() {
+    manage { [self] in
+      let result: ToolbarImport = try await backend.call("accounts.importLegacy", ["apply": .bool(true)])
+      try await reloadCatalog()
+      for item in result.items {
+        if let name = item.account, let a = accountStates.first(where: { $0.account.nativeName == name })?.account,
+          let key = a.activationKey { automaticScheduleStore.migrate(from: item.legacy_id, to: key) }
       }
+      legacyImportPreview = nil
+      showAccountManagementNotice(L10n.text(result.complete ? "codexm.import_complete" : "codexm.import_partial"))
     }
   }
+  func connectExistingCodexLogin() { refresh(accountID: UsageAccount.systemDefaultID) }
 
-  private func finishAuthentication(
-    mode: AuthenticationMode,
-    snapshot: UsageSnapshot,
-    runtime: CodexRuntime
-  ) {
-    isAuthenticating = false
-    loginChallenge = nil
-    authenticationMethod = nil
-    authenticationAttemptID = nil
-    authenticationTask = nil
-    clearAuthenticationError()
-
-    switch mode {
-    case .adding(var account):
-      let trimmedWorkspaceName = pendingWorkspaceName.trimmingCharacters(
-        in: .whitespacesAndNewlines
-      )
-      account.workspaceName = trimmedWorkspaceName.isEmpty ? nil : trimmedWorkspaceName
-      account.lastKnownEmail = snapshot.accountEmail
-      account.lastKnownPlanType = snapshot.planType
-      let workspaceFingerprint = identityReader.fingerprint(
-        codexHomeURL: runtime.codexHomeURL
-      )
-      account.lastKnownWorkspaceFingerprint = workspaceFingerprint
-
-      let candidateIdentity = CodexAccountIdentity(
-        fingerprint: workspaceFingerprint,
-        email: snapshot.accountEmail,
-        planType: snapshot.planType
-      )
-      if let duplicate = duplicateAccount(matching: candidateIdentity) {
-        try? registry.discardPendingAccount(account)
-        authenticationMode = nil
-        authenticationAccountID = nil
-        showAccountManagementError(
-          L10n.text("account.duplicate", duplicate.title)
-        )
-        pendingWorkspaceName = ""
-        startAutomaticActivationSchedulerIfNeeded()
-        return
-      }
-
-      do {
-        try registry.commitPendingAccount(account)
-        client.invalidateSession(sessionID: account.id)
-        accountStates.append(
-          AccountViewState(
-            account: account,
-            state: .loaded(snapshot),
-            isRefreshing: false
-          )
-        )
-        recentlyAddedAccountID = account.id
-        let workspaceLabel = account.workspaceDisplayLabel.map { " · \($0)" } ?? ""
-        showAccountManagementNotice(
-          L10n.text("account.added", account.title, workspaceLabel)
-        )
-      } catch {
-        try? registry.discardPendingAccount(account)
-        showAccountManagementError(L10n.errorDescription(error))
-      }
-      authenticationMode = nil
-      authenticationAccountID = nil
-      pendingWorkspaceName = ""
-    case .relogin(let account):
-      updateAccountMetadata(
-        accountID: account.id,
-        snapshot: snapshot,
-        workspaceFingerprint: identityReader.fingerprint(codexHomeURL: runtime.codexHomeURL)
-      )
-      setSnapshot(snapshot, for: account.id)
-      authenticationMode = nil
-      authenticationAccountID = nil
-      pendingWorkspaceName = ""
-      showAccountManagementNotice(L10n.text("account.reconnected", account.title))
+  func startAddingAccount(method: CodexLoginMethod = .deviceCode, nickname: String? = nil) {
+    guard !isAuthenticating else { return }
+    let name: String
+    if let nickname { name = nickname }
+    else {
+      let alert = NSAlert(); alert.messageText = L10n.text("codexm.nickname_title")
+      alert.informativeText = L10n.text("codexm.nickname_help")
+      let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+      alert.accessoryView = field; alert.addButton(withTitle: L10n.text("common.continue")); alert.addButton(withTitle: L10n.text("common.cancel"))
+      guard alert.runModal() == .alertFirstButtonReturn else { return }; name = field.stringValue
     }
-    startAutomaticActivationSchedulerIfNeeded()
+    guard name.range(of: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", options: .regularExpression) != nil,
+      name != "default", !accountStates.contains(where: { $0.account.nativeName == name })
+    else { showAuthenticationError(L10n.text("codexm.nickname_invalid")); return }
+    beginAuthentication(account: name, adding: true, method: method)
   }
-
-  private func failAuthentication(mode: AuthenticationMode, error: Error) {
-    isAuthenticating = false
-    loginChallenge = nil
-    authenticationMethod = nil
-    authenticationAttemptID = nil
-    authenticationTask = nil
-    showAuthenticationError(L10n.errorDescription(error))
-    authenticationMode = nil
-    authenticationAccountID = nil
-    pendingWorkspaceName = ""
-
-    if case .adding(let account) = mode {
-      client.invalidateSession(sessionID: account.id)
-      try? registry.discardPendingAccount(account)
-    }
-    startAutomaticActivationSchedulerIfNeeded()
-  }
-
-  private func cancelAuthentication(discardPendingAccount: Bool) {
-    authenticationTask?.cancel()
-    authenticationTask = nil
-    isAuthenticating = false
-    loginChallenge = nil
-    authenticationMethod = nil
-    authenticationAttemptID = nil
-
-    if discardPendingAccount,
-      case .adding(let account) = authenticationMode
-    {
-      client.invalidateSession(sessionID: account.id)
-      try? registry.discardPendingAccount(account)
-    }
-    authenticationMode = nil
-    authenticationAccountID = nil
-    pendingWorkspaceName = ""
-    startAutomaticActivationSchedulerIfNeeded()
-  }
-
-  private func startAutomaticActivationSchedulerIfNeeded() {
-    guard automaticActivationEnabled, automaticActivationTask == nil else { return }
-    automaticActivationTask = Task { [weak self] in
-      guard let self else { return }
-      await self.runAutomaticActivationLoop()
-    }
-  }
-
-  private func stopAutomaticActivationScheduler() {
-    automaticActivationTask?.cancel()
-    automaticActivationTask = nil
-    automaticActivationInProgressAccountIDs.removeAll()
-  }
-
-  private func runAutomaticActivationLoop() async {
-    while !Task.isCancelled, automaticActivationEnabled {
-      await runDueAutomaticActivations()
-      guard !Task.isCancelled, automaticActivationEnabled else { return }
-      do {
-        try await Task.sleep(for: AutomaticUsageSchedulePolicy.schedulerPollInterval)
-      } catch {
-        return
-      }
-    }
-  }
-
-  private func runDueAutomaticActivations() async {
-    let now = Date()
-    guard automaticActivationInProgressAccountIDs.isEmpty else { return }
-    guard automaticScheduleStore.nextGlobalAttemptDate() <= now else { return }
-
-    let dueAccount = accountStates.enumerated().compactMap {
-      index, viewState -> (index: Int, nextDate: Date, account: UsageAccount)? in
-      guard viewState.id != authenticationAccountID else { return nil }
-      guard viewState.isAutomaticActivationEligible else { return nil }
-      let nextDate = automaticScheduleStore.entry(for: viewState.id).nextAttemptDate()
-      guard nextDate <= now else { return nil }
-      return (index, nextDate, viewState.account)
-    }.min { lhs, rhs in
-      if lhs.nextDate == rhs.nextDate {
-        return lhs.index < rhs.index
-      }
-      return lhs.nextDate < rhs.nextDate
-    }?.account
-    guard let account = dueAccount else { return }
-    automaticActivationError = nil
-
-    let attemptAt = Date()
-    let previousExpression = automaticScheduleStore.entry(for: account.id).lastExpression
-    let expression = automaticPromptGenerator.makeExpression(excluding: previousExpression)
-    automaticScheduleStore.recordAttempt(
-      accountID: account.id,
-      at: attemptAt,
-      expression: expression
-    )
-    automaticActivationInProgressAccountIDs.insert(account.id)
-    await performAutomaticActivation(
-      account: account,
-      attemptAt: attemptAt,
-      expression: expression
-    )
-  }
-
-  private func performAutomaticActivation(
-    account: UsageAccount,
-    attemptAt: Date,
-    expression: String
-  ) async {
-    defer { automaticActivationInProgressAccountIDs.remove(account.id) }
-
-    do {
-      let runtime = try runtime(for: account)
-      defer { withExtendedLifetime(runtime) {} }
-      let prompt = automaticPromptGenerator.prompt(for: expression)
-      let workingDirectoryURL = FileManager.default.temporaryDirectory
-      try await accountOperationGate.withPermit(for: account.id) {
-        try await automaticUsageClient.performRequest(
-          codexURL: runtime.executableURL,
-          environmentOverride: runtime.environment,
-          workingDirectoryURL: workingDirectoryURL,
-          prompt: prompt
-        )
-      }
-      guard !Task.isCancelled else { return }
-      automaticScheduleStore.recordSuccess(
-        accountID: account.id,
-        requestStartedAt: attemptAt
-      )
-      await refreshNow(account)
-    } catch is CancellationError {
-      return
-    } catch {
-      guard !Task.isCancelled else { return }
-      let message = "\(account.title): \(L10n.errorDescription(error))"
-      if let existing = automaticActivationError, !existing.isEmpty {
-        automaticActivationError = "\(existing)\n\(message)"
-      } else {
-        automaticActivationError = message
-      }
-    }
-  }
-
-  private func cancelRefresh() {
-    refreshTask?.cancel()
-    refreshTask = nil
-    refreshOperationID = nil
-    pendingRefreshAll = false
-    isRefreshingAll = false
-    for index in accountStates.indices {
-      if isSystemDefaultScheduledRefreshInProgress,
-        accountStates[index].account.isSystemDefault
-      {
-        continue
-      }
-      accountStates[index].isRefreshing = false
-    }
-  }
-
-  private func finishRefreshOperation(_ operationID: UUID, wasRefreshingAll: Bool) {
-    guard refreshOperationID == operationID else { return }
-    refreshTask = nil
-    refreshOperationID = nil
-    if wasRefreshingAll {
-      isRefreshingAll = false
-    }
-    drainPendingRefreshAll()
-  }
-
-  private func drainPendingRefreshAll() {
-    guard pendingRefreshAll, canRequestManualRefresh else { return }
-    refreshAll()
-  }
-
-  private func setState(_ state: AccountLoadState, for accountID: String) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
-    accountStates[index].state = state
-  }
-
-  private func setSnapshot(_ snapshot: UsageSnapshot, for accountID: String) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
-    accountStates[index].apply(snapshot: snapshot)
-  }
-
-  private func recordRefreshFailure(
-    _ error: CodexUsageError,
-    authenticationRequired: Bool = false,
-    for accountID: String
-  ) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
-    accountStates[index].applyRefreshFailure(
-      error,
-      authenticationRequired: authenticationRequired
-    )
-  }
-
-  private func applyServerUpdate(
-    _ snapshot: UsageSnapshot, accountID: String, workspaceFingerprint: String?
-  ) {
+  func relogin(accountID: String, method: CodexLoginMethod = .deviceCode) {
     guard let account = accountStates.first(where: { $0.id == accountID })?.account else { return }
     if account.isSystemDefault {
-      guard let currentRuntime = try? runtime(for: account),
-        identityReader.fingerprint(codexHomeURL: currentRuntime.codexHomeURL) == workspaceFingerprint
-      else { return }
-    }
-    updateAccountMetadata(accountID: accountID, snapshot: snapshot,
-      workspaceFingerprint: workspaceFingerprint)
-    setSnapshot(snapshot, for: accountID)
+      // Native defaults are role links, never overwritten by an anonymous UI login.
+      if let selected = account.selectedNickname { beginAuthentication(account: selected, adding: false, method: method) }
+      else { showAuthenticationError(L10n.text("codexm.login_named_default")) }
+    } else { beginAuthentication(account: account.nativeName, adding: false, method: method) }
   }
-
-  private func clearDefaultAccountPresentation() {
-    guard let index = accountStates.firstIndex(where: { $0.account.isSystemDefault }) else { return }
-    accountStates[index].account = .systemDefault
-    accountStates[index].state = .loading
-    accountStates[index].lastRefreshError = nil
-  }
-
-  private func setRefreshing(_ refreshing: Bool, for accountID: String) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
-    accountStates[index].isRefreshing = refreshing
-  }
-
-  private func updateAccountMetadata(
-    accountID: String,
-    snapshot: UsageSnapshot,
-    workspaceFingerprint: String?
-  ) {
-    guard let index = accountStates.firstIndex(where: { $0.id == accountID }) else { return }
-    accountStates[index].account.lastKnownEmail = snapshot.accountEmail
-    accountStates[index].account.lastKnownPlanType = snapshot.planType
-    if let workspaceFingerprint {
-      accountStates[index].account.lastKnownWorkspaceFingerprint = workspaceFingerprint
-    }
-    do {
-      if accountStates[index].account.isSystemDefault {
-        accountStates[index].account.workspaceName = try registry.workspaceName(
-          forSystemDefaultAccount: accountStates[index].account)
-      } else {
-        try registry.updateAccount(accountStates[index].account)
-      }
-    } catch {
-      if accountStates[index].account.isSystemDefault {
-        accountStates[index].account.workspaceName = nil
-      }
-      showAccountManagementError(L10n.errorDescription(error))
-    }
-  }
-
-  private func duplicateAccount(
-    matching candidateIdentity: CodexAccountIdentity
-  ) -> UsageAccount? {
-    accountStates.first { viewState in
-      let snapshot: UsageSnapshot?
-      if case .loaded(let loadedSnapshot) = viewState.state {
-        snapshot = loadedSnapshot
-      } else {
-        snapshot = nil
-      }
-
-      var fingerprint: String?
-      if let existingRuntime = try? runtime(for: viewState.account) {
-        fingerprint = identityReader.fingerprint(codexHomeURL: existingRuntime.codexHomeURL)
-        withExtendedLifetime(existingRuntime) {}
-      }
-      fingerprint = fingerprint ?? viewState.account.lastKnownWorkspaceFingerprint
-
-      let existingIdentity = CodexAccountIdentity(
-        fingerprint: fingerprint,
-        email: snapshot?.accountEmail ?? viewState.account.lastKnownEmail,
-        planType: snapshot?.planType ?? viewState.account.lastKnownPlanType
-      )
-      return candidateIdentity.matches(existingIdentity)
-    }?.account
-  }
-
-  private var authenticationAccount: UsageAccount? {
-    guard let authenticationAccountID else { return nil }
-    return accountStates.first { $0.id == authenticationAccountID }?.account
-  }
-
-  private func showAccountManagementNotice(_ message: String) {
-    clearAccountManagementError()
-    clearAccountManagementNotice()
-    accountManagementNotice = message
-    let delay = noticeDismissDelay
-    accountManagementNoticeDismissTask = Task { [weak self] in
+  private func beginAuthentication(account: String, adding: Bool, method: CodexLoginMethod) {
+    guard !isAuthenticating else { return }
+    let attempt = UUID(); authenticationAttempt = attempt; addingAccount = adding
+    isAuthenticating = true; authenticationAccountID = account; authenticationMethod = method
+    authenticationError = nil; loginChallenge = nil; pendingWorkspaceName = ""
+    authenticationTask = Task { [weak self] in
+      guard let self else { return }
+      defer { if self.authenticationAttempt == attempt { self.isAuthenticating = false; self.authenticationTask = nil; self.loginChallenge = nil; self.loginID = nil } }
       do {
-        try await Task.sleep(for: delay)
+        var result: DesktopLogin = try await self.backend.call("login.start", ["account": .string(account), "mode": .string(method == .browser ? "browser" : "device")])
+        self.loginID = result.login_id
+        try Task.checkCancellation()
+        if let challenge = try result.challenge(method: method) {
+          self.loginChallenge = challenge
+          if !self.authorizationPageOpener(challenge.authorizationURL) { self.showAuthenticationError(L10n.text("auth.browser_open_failed")) }
+        }
+        while result.status == "pending" || result.status == "verifying" {
+          try await Task.sleep(for: .seconds(1))
+          result = try await self.backend.call("login.status", ["login_id": .string(result.login_id)])
+        }
+        guard result.status == "succeeded" else { throw CodexMBridgeError.rejected(result.error ?? L10n.text("codexm.login_incomplete")) }
+        try await self.reloadCatalog()
+        if adding {
+          self.recentlyAddedAccountID = account
+          if !self.pendingWorkspaceName.isEmpty,
+            let current = self.accountStates.first(where: { $0.id == account })?.account {
+            let _: Bool = try await self.backend.call("accounts.presentation", ["account": .string(account), "revision": .string(current.revision), "workspace_name": .string(self.pendingWorkspaceName)])
+            try await self.reloadCatalog()
+          }
+        }
+        if let current = self.accountStates.first(where: { $0.id == account })?.account { await self.refreshNow(current) }
       } catch {
-        return
+        if let id = self.loginID {
+          // An uncancelled cleanup task is required when Cancel arrived before
+          // login.start returned its owner-scoped ID. Never restart login here.
+          await Task { [backend = self.backend] in
+            let _: DesktopLogin? = try? await backend.call("login.cancel", ["login_id": .string(id)])
+          }.value
+        }
+        if !Task.isCancelled { self.showAuthenticationError(L10n.errorDescription(error)) }
       }
-      guard !Task.isCancelled, self?.accountManagementNotice == message else { return }
-      self?.accountManagementNotice = nil
-      self?.accountManagementNoticeDismissTask = nil
     }
   }
+  func cancelCurrentAuthentication() {
+    authenticationTask?.cancel()
+  }
+  func setPendingWorkspaceName(_ workspaceName: String) { pendingWorkspaceName = workspaceName }
+  func copyDeviceLoginCode() { if let code = deviceLoginInfo?.userCode { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(code, forType: .string) } }
+  func reopenAuthenticationPage() { if let url = loginChallenge?.authorizationURL, !authorizationPageOpener(url) { showAuthenticationError(L10n.text("auth.browser_open_failed")) } }
 
-  private func showAccountManagementError(_ message: String) {
-    clearAccountManagementNotice()
-    clearAccountManagementError()
-    accountManagementError = message
-    let delay = errorDismissDelay
-    accountManagementErrorDismissTask = Task { [weak self] in
+  func setAutomaticActivationEnabled(_ enabled: Bool) {
+    automaticScheduleStore.setEnabled(enabled); automaticActivationEnabled = enabled; automaticActivationError = nil
+    if !enabled { activationTask?.cancel() }
+  }
+  private func activateIfDue() {
+    guard automaticActivationEnabled, activationTask == nil, refreshTask == nil,
+      !isAuthenticating, !isManagingAccounts, automaticScheduleStore.nextGlobalAttemptDate() <= Date() else { return }
+    guard let account = accountStates.first(where: {
+      guard $0.isAutomaticActivationEligible, let key = $0.account.activationKey else { return false }
+      return automaticScheduleStore.entry(for: key).nextAttemptDate() <= Date()
+    })?.account, let key = account.activationKey else { return }
+    let now = Date()
+    let expression = AutomaticUsagePromptGenerator().makeExpression(excluding: automaticScheduleStore.entry(for: key).lastExpression)
+    automaticScheduleStore.recordAttempt(accountID: key, at: now, expression: expression)
+    automaticActivationInProgressAccountIDs.insert(account.id)
+    activationTask = Task { [weak self] in
+      guard let self else { return }
+      defer { self.automaticActivationInProgressAccountIDs.remove(account.id); self.activationTask = nil }
       do {
-        try await Task.sleep(for: delay)
-      } catch {
-        return
-      }
-      guard !Task.isCancelled, self?.accountManagementError == message else { return }
-      self?.accountManagementError = nil
-      self?.accountManagementErrorDismissTask = nil
+        let _: Bool = try await self.backend.call("accounts.activate", ["account": .string(account.nativeName), "revision": .string(account.revision), "expression": .string(expression)])
+        self.automaticScheduleStore.recordSuccess(accountID: key, requestStartedAt: now)
+        if !Task.isCancelled { await self.refreshNow(account) }
+      } catch { self.automaticActivationError = L10n.errorDescription(error) }
     }
   }
 
-  private func showAuthenticationError(_ message: String) {
-    clearAuthenticationError()
-    authenticationError = message
-    let delay = errorDismissDelay
-    authenticationErrorDismissTask = Task { [weak self] in
-      do {
-        try await Task.sleep(for: delay)
-      } catch {
-        return
-      }
-      guard !Task.isCancelled, self?.authenticationError == message else { return }
-      self?.authenticationError = nil
-      self?.authenticationErrorDismissTask = nil
+  func openTerminal() {
+    do { try CodexMTerminal.open() } catch { showAccountManagementError(L10n.errorDescription(error)) }
+  }
+  func setLaunchAtLogin(_ enabled: Bool) {
+    launchAtLoginError = nil
+    do { if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
+    catch { launchAtLoginError = L10n.errorDescription(error) }
+    refreshLaunchAtLoginState()
+  }
+  private func refreshLaunchAtLoginState() { launchAtLoginEnabled = SMAppService.mainApp.status == .enabled }
+  func clearAccountManagementError() { errorTask?.cancel(); accountManagementError = nil }
+  func clearAccountManagementNotice() { noticeTask?.cancel(); accountManagementNotice = nil }
+  func clearAuthenticationError() { authErrorTask?.cancel(); authenticationError = nil }
+  func consumeRecentlyAddedAccount(_ id: String) { if recentlyAddedAccountID == id { recentlyAddedAccountID = nil } }
+  private func showAccountManagementNotice(_ text: String) {
+    clearAccountManagementNotice(); clearAccountManagementError(); accountManagementNotice = text
+    noticeTask = Task { [weak self, noticeDismissDelay] in
+      do { try await Task.sleep(for: noticeDismissDelay) } catch { return }; self?.accountManagementNotice = nil
     }
   }
-
-  private func copyToPasteboard(_ text: String) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
+  private func showAccountManagementError(_ text: String) {
+    clearAccountManagementError(); accountManagementError = text
+    errorTask = Task { [weak self, errorDismissDelay] in
+      do { try await Task.sleep(for: errorDismissDelay) } catch { return }; self?.accountManagementError = nil
+    }
   }
-
-  private func refreshLaunchAtLoginState() {
-    launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+  private func showAuthenticationError(_ text: String) {
+    clearAuthenticationError(); authenticationError = text
+    authErrorTask = Task { [weak self, errorDismissDelay] in
+      do { try await Task.sleep(for: errorDismissDelay) } catch { return }; self?.authenticationError = nil
+    }
   }
 }

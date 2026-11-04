@@ -42,13 +42,14 @@ type operation struct {
 	Error       string          `json:"error,omitempty"`
 }
 type Params struct {
-	Thread  string `json:"thread_id"`
-	Account string `json:"account"`
-	Session string `json:"session"`
-	Text    string `json:"text"`
-	Key     string `json:"key"`
-	Mode    string `json:"mode"`
-	LoginID string `json:"login_id"`
+	Thread   string `json:"thread_id"`
+	Account  string `json:"account"`
+	Session  string `json:"session"`
+	Text     string `json:"text"`
+	Key      string `json:"key"`
+	Mode     string `json:"mode"`
+	LoginID  string `json:"login_id"`
+	Revision string `json:"revision"`
 }
 
 func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any, error) {
@@ -139,6 +140,9 @@ func Dispatch(ctx context.Context, c config.Config, self string, r Request) (any
 				return nil, err
 			}
 			defer lock.Close()
+			if p.Revision != "" && accounts.InspectIdentity(c, p.Account).Revision != p.Revision {
+				return nil, errors.New("account changed while editing; refresh and try again")
+			}
 			if r.Method == "accounts.remove" {
 				return true, RemoveAccount(c, p.Account)
 			}
