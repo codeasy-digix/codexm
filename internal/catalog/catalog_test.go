@@ -142,7 +142,7 @@ func TestUntitledCatalogUsesReadableMetadataWithoutChangingIDs(t *testing.T) {
 		parent, expectedSource                                              string
 	}{
 		{name: "ordinary", id: "native-untitled", source: "cli", expected: "제목 없는 대화 · native-untitled", expectedSource: "cli"},
-		{name: "long-id", id: "00000000-7860-72f5-9977-eabf90c9bec5", source: "vscode", expected: "제목 없는 대화 · 01a12345…89ab", expectedSource: "vscode"},
+		{name: "long-id", id: "00000000-1234-7abc-8def-0123456789ab", source: "vscode", expected: "제목 없는 대화 · 00000000…89ab", expectedSource: "vscode"},
 		{name: "source-nickname", id: "child", source: `{"subagent":{"thread_spawn":{"parent_thread_id":"parent","agent_nickname":"Turing","agent_role":null,"agent_path":"/root/review"}}}`, expected: "하위 작업 · Turing", parent: "parent", expectedSource: "subagent"},
 		{name: "column-nickname", id: "column-child", source: `{"subagent":{"thread_spawn":{"agent_nickname":"source-name"}}}`, nickname: "column-name", expected: "하위 작업 · column-name", expectedSource: "subagent"},
 		{name: "role", id: "role-child", source: `{"subagent":{"thread_spawn":{"agent_role":"reviewer"}}}`, expected: "하위 작업 · reviewer", expectedSource: "subagent"},
