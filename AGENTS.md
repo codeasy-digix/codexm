@@ -3,6 +3,16 @@
 - The active product is a local conversation catalog, account selector and official
   Codex CLI launcher. Keep `codex` native: never wrap/replace its binary or update
   command. `codexm account` may change the current shell or the explicit native default.
+- `apps/macos` is the same product's Swift menu frontend. Reuse its one local stdio
+  bridge for accounts, authentication, usage, presentation and native-default changes.
+  Do not restore a second credential registry or bundle the official Codex runtime.
+  Preserve four locales and the compatibility preference domain. Legacy import is
+  one-time and copy-only; existing credentials/default/history are never overwritten.
+  Identity includes user and workspace; stale revisions cannot update a new login.
+- Menu usage activation is an explicit opt-in exception to passive usage reads.
+  Only its bounded `accounts.activate` endpoint makes a model request. Deduplicate
+  schedules by login identity, preserve existing timing, and never replay uncertain
+  activation or authentication mutations. Do not enable it during migration/tests.
 - Running `codexm` opens the Rust TUI in crates/terminal. Enter directly resumes
   with the last registered account or default; Right/Left move to/from details,
   and F2 opens settings/account management. Keep explicit choices across polling.
@@ -94,6 +104,9 @@
 - Source builds/installations include matching Go and Rust TUI siblings in one
   immutable version. Hash both; replace executed Mach-O files using a new inode.
   Web is optional compatibility, not a dependency of the normal TUI install.
+- Desktop changes require Swift tests including the isolated real stdio bridge and
+  locale layouts. Homebrew source builds include the matching app on macOS; Go/Rust
+  are build dependencies only. Ad-hoc local signing is not notarized distribution.
 - Cross-machine history-sync is retired. Do not restore engines, service entries,
   compatibility links or automatic history writes. Preserve archival data.
 - The active integration may be continued on the user's explicitly selected Mac.
