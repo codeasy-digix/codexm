@@ -1,24 +1,31 @@
 use codexm_state_audit as audit;
 use serde_json::json;
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt, symlink};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "codexm-audit-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&dir).unwrap();
-        Self(dir)
+        // Clock precision is not a uniqueness guarantee for parallel tests.
+        // Atomic creation also preserves stale directories from an older PID.
+        loop {
+            let dir = std::env::temp_dir().join(format!(
+                "codexm-audit-{}-{}",
+                std::process::id(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::DirBuilder::new().mode(0o700).create(&dir) {
+                Ok(()) => return Self(dir),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create audit test fixture: {error}"),
+            }
+        }
     }
 }
 impl Drop for Fixture {
