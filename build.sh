@@ -22,7 +22,22 @@ case "$target_os/$target_arch" in
   linux/arm64) rust_target=aarch64-unknown-linux-gnu ;;
   linux/amd64) rust_target=x86_64-unknown-linux-gnu ;;
 esac
-"$cargo_bin" build --manifest-path "$source_root/Cargo.toml" --locked --release --package codexm-tui --target "$rust_target" --target-dir "$source_root/target"
+# Panic locations can retain absolute Cargo cache paths even in stripped Rust
+# binaries. Remap them as well as the source tree before distributing artifacts.
+# Encoded flags preserve paths containing spaces and existing caller flags.
+flag_separator=$(printf '\037')
+encoded_flags=${CARGO_ENCODED_RUSTFLAGS:-}
+if [ -z "$encoded_flags" ] && [ -n "${RUSTFLAGS:-}" ]; then
+  set -f
+  for flag in $RUSTFLAGS; do
+    encoded_flags="${encoded_flags}${encoded_flags:+$flag_separator}$flag"
+  done
+  set +f
+fi
+for prefix in "$HOME=/home/builder" "${CARGO_HOME:-$HOME/.cargo}=/cargo" "$source_root=/src/codexm"; do
+  encoded_flags="${encoded_flags}${encoded_flags:+$flag_separator}--remap-path-prefix=$prefix"
+done
+CARGO_ENCODED_RUSTFLAGS="$encoded_flags" "$cargo_bin" build --manifest-path "$source_root/Cargo.toml" --locked --release --package codexm-tui --target "$rust_target" --target-dir "$source_root/target"
 # Replace the inode instead of overwriting a previously executed Mach-O file;
 # macOS can otherwise keep its old code-signing cache and kill the new process.
 tui_staged=$(mktemp "$output_parent/.codexm-tui-XXXXXX")
