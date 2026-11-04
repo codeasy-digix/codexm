@@ -2,8 +2,8 @@ class Codexm < Formula
   desc "Codex conversation catalog, account selector, TUI and macOS menu app"
   homepage "https://github.com/codeasy-digix/codexm"
   url "https://github.com/codeasy-digix/codexm/releases/download/v@VERSION@/codexm-@VERSION@-source.tar.gz"
-  sha256 "@SHA256@"
   version "@VERSION@"
+  sha256 "@SHA256@"
   license "MIT"
 
   depends_on "go" => :build
@@ -67,7 +67,8 @@ class Codexm < Formula
     native = OS.mac? ? prefix/"CodexM.app/Contents/Resources/native" : libexec
     assert_equal "codexm-tui #{version}\n", shell_output("#{native}/codexm-tui --version")
     if OS.mac?
-      assert_match '"catalogsComplete":true', shell_output("'#{prefix}/CodexM.app/Contents/MacOS/CodexUsageMenuBar' --localization-diagnostics").delete(" \n")
+      app = prefix/"CodexM.app/Contents/MacOS/CodexUsageMenuBar"
+      assert_match '"catalogsComplete":true', shell_output("'#{app}' --localization-diagnostics").delete(" \n")
     end
   end
 end

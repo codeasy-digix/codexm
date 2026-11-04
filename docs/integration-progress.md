@@ -1,40 +1,26 @@
-# Desktop integration progress
+# Desktop integration status
 
-The private integration branch remains a development record. Public publication
-must use a separately sanitized clone; do not change the private repo's visibility.
+CodexM owns the menu app, CLI/TUI, account backend, builds and distribution.
+The former menu app is integrated under `apps/macos`; there is no second product
+credential registry or embedded official Codex runtime.
 
-Completed implementation and local validation:
+The shared stdio backend now serves catalog, usage, browser/device login,
+presentation, unregister and native-default selection. Login identity contains
+both user and workspace. Revision checks reject stale reads and mutations across
+default changes. Account registration does not restore retired worker policy.
 
-- Menu app now uses the shared serial stdio backend for catalog, usage, login,
-  presentation, unregister and native-default selection. Its duplicate credential
-  registry, embedded official runtime and old process clients are removed.
-- Default/login revisions protect stale reads and mutations. Login identity includes
-  both user and workspace. Registration no longer silently changes retired worker
-  priority policy. Login cancellation before the challenge arrives is cleaned up.
-- Swift pipe transport reads available bytes instead of waiting to fill a buffer;
-  real backend integration confirms requests continue after validation errors.
-- Four UI languages, name/order/preferences and explicit opt-in activation remain.
-  Activation aliases share an identity schedule; old timing is migrated conservatively.
-- Go race tests and vet, Rust locked workspace tests/fmt/clippy, web typecheck/tests,
-  70 Swift tests including real bridge and rendered locale views passed locally.
-  The Rust TUI passed its isolated owned tmux PTY interaction/shutdown test.
-- A matching 0.7.0 CLI/TUI/macOS app build was produced. It is ad-hoc signed only.
-  The active host has no former menu registry to import; synthetic migration tests
-  cover identity reuse, copy-only import, source preservation and idempotence.
-- Build/install docs and a source-based Homebrew Formula template are being prepared.
-  The Go-only/npm packager is retired; native archives require both matching binaries.
+Four UI languages, display names/order/preferences and explicit opt-in activation
+remain. Activation aliases share a conservative identity schedule. Login
+cancellation and application shutdown clean up their owned helpers. Native
+conversations, active Codex work and account-server settings are preserved.
 
-Remaining release gates:
+The 0.7.0 source Formula builds matching CLI/TUI components on macOS and Linux,
+and the menu app on macOS. The macOS app is ad-hoc signed locally; a notarized
+Cask remains future work requiring Developer ID signing. Python is not a runtime
+dependency. Web remains optional compatibility, separate from the default product.
 
-1. Finish isolated official CLI/auth checks and controlled installed app verification.
-2. Finish packaging/CI and validate the source Formula on macOS and Linux.
-3. Sanitize all published Git objects, author/committer/message/tag metadata, names,
-   source paths and release assets in a separate clone. Re-scan for secrets and
-   encoded private identifiers; retain original private backups and license attribution.
-4. Publish the cleaned source repository/release/tap only after their checks pass.
-5. Remove the former menu app GitHub repository only after integrated distribution
-   verification and preserved rollback backups. No public release or repo removal
-   is complete at this checkpoint.
-
-Local evidence, raw audit reports and migration backups belong in private state
-outside this repository. `.home` owns no product builds or source copies.
+See [release validation](release-validation-0.7.0.md),
+[distribution](distribution.md) and [desktop design](desktop-integration.md).
+Private migration capsules, original Git backups, raw audit reports, credentials
+and local test evidence remain outside this repository. `.home` owns no product
+builds or source copies. Cross-machine history-sync remains retired.
