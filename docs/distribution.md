@@ -59,3 +59,8 @@ matching native pair lives in one immutable version and is replaced using fresh
 inodes. `.home` only registers installed tools and personal shell settings; it has no
 product clone/pin/build/update role. The old npm preparation and embedded Codex runtime
 are retired. No public artifact may contain the private migration/validation capsule.
+
+The 0.7.0 distribution uses the source Formula. Use `./install.sh --build` for a
+standalone source installation; the no-argument installer requires optional native
+archives, which are not promised for every release/platform. An incomplete native
+pair is rejected before switching an installed entrypoint.

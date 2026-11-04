@@ -45,6 +45,11 @@ func TestInstallerChecksArchiveBeforeReplacingCurrent(t *testing.T) {
 		t.Fatal(e)
 	}
 	tarWriter.Write(binary)
+	tui := []byte("#!/bin/sh\necho 'codexm-tui 0.1.0'\n")
+	if e = tarWriter.WriteHeader(&tar.Header{Name: "codexm-tui", Mode: 0755, Size: int64(len(tui))}); e != nil {
+		t.Fatal(e)
+	}
+	tarWriter.Write(tui)
 	tarWriter.Close()
 	gz.Close()
 	valid := append([]byte(nil), b.Bytes()...)
@@ -87,7 +92,25 @@ cp "$CODEXM_TEST_CHECKSUM" "$download_dest/SHA256SUMS"
 	if target, _ := os.Readlink(current); target != filepath.Join(old, "codexm") {
 		t.Fatal("failed download replaced current", target)
 	}
+	var incomplete bytes.Buffer
+	incompleteGzip := gzip.NewWriter(&incomplete)
+	incompleteTar := tar.NewWriter(incompleteGzip)
+	if e = incompleteTar.WriteHeader(&tar.Header{Name: "codexm", Mode: 0755, Size: int64(len(binary))}); e != nil {
+		t.Fatal(e)
+	}
+	incompleteTar.Write(binary)
+	incompleteTar.Close()
+	incompleteGzip.Close()
+	write(archive, incomplete.Bytes(), 0600)
+	write(checksum, []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(incomplete.Bytes()), asset)), 0600)
+	if e = run(); e == nil {
+		t.Fatal("Go-only release accepted without its matching TUI")
+	}
+	if target, _ := os.Readlink(current); target != filepath.Join(old, "codexm") {
+		t.Fatal("incomplete release replaced current", target)
+	}
 	write(archive, valid, 0600)
+	write(checksum, []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(valid), asset)), 0600)
 	if e = run(); e != nil {
 		t.Fatal(e)
 	}

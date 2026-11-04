@@ -69,9 +69,11 @@ Rust target과 해당 플랫폼 linker도 필요하다.
 
 `.home/tools/codexm/`, `config/home/codexm-revision.txt`, bootstrap의 제품 호출은
 제거했다. `.home`은 source 다운로드 캐시나 별도 제품 배포 주체가 아니다.
-유일한 설치 절차는 제품 저장소의 설치기이며, 향후 배포도 이 저장소에서 준비한다.
-**현재 Homebrew 등 공개 배포 작업은 보류**한다. 2026-11-02 사용자 요청으로
-local/mac-secondary/mac-mobile의 동일 변경 적용을 허용했다. 다른 장비에는 배포하지 않는다.
+독립 설치기는 이 저장소가 관리하며 Homebrew 배포도 여기의 검증된 소스로 빌드한다.
+공개 배포는 [배포 절차](distribution.md)를 따른다. Homebrew의 설치 위치는
+`$(brew --prefix codexm)`이며 macOS 앱과 포함된 CLI/TUI가 같은 버전으로 갱신된다.
+별도 소스 설치의 `~/.local/bin/codexm`이 PATH 앞에 남아 있다면 실행 버전을 확인하고
+명시적으로 사용할 설치를 선택한다. 기존 실행 프로세스는 강제로 교체하지 않는다.
 인증·대화·모델/effort·GUI 계정 설정은 장비 사이에 복사하지 않는다.
 
 과거 통합 중간 단계는 [검증 기록](consolidation-20261101.md)에 남겼다. 그 문서의

@@ -85,9 +85,12 @@ else
 case "$build" in
   true) install_mode=source; "$source_root/build.sh" "$target_os" "$target_arch" "$stage/payload/codexm" ;;
   false)
-    command -v gh >/dev/null 2>&1 || { echo 'Install gh and sign in, or use ./install.sh --build.' >&2; exit 1; }
+    command -v gh >/dev/null 2>&1 || { echo 'Use Homebrew or ./install.sh --build. Optional binary downloads require gh.' >&2; exit 1; }
     archive="codexm-$target_os-$target_arch.tar.gz"
-    gh release download "$release" --repo codeasy-digix/codexm --pattern "$archive" --pattern SHA256SUMS --dir "$stage"
+    gh release download "$release" --repo codeasy-digix/codexm --pattern "$archive" --pattern SHA256SUMS --dir "$stage" || {
+      echo 'No downloadable native pair for this release/platform. Use brew install codeasy-digix/tap/codexm or ./install.sh --build.' >&2
+      exit 1
+    }
     expected=$(awk -v file="$archive" '$2 == file {print $1}' "$stage/SHA256SUMS")
     test -n "$expected" || { echo 'Release checksum is missing.' >&2; exit 1; }
     if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$stage/$archive" | awk '{print $1}'); else actual=$(shasum -a 256 "$stage/$archive" | awk '{print $1}'); fi
@@ -97,9 +100,8 @@ case "$build" in
 esac
 fi
 [ "$("$stage/payload/codexm" --version)" = "codexm $version" ] || { echo 'Installed version would not match.' >&2; exit 1; }
-if [ -f "$stage/payload/codexm-tui" ]; then
-  [ "$("$stage/payload/codexm-tui" --version)" = "codexm-tui $version" ] || { echo 'Terminal component version would not match.' >&2; exit 1; }
-fi
+[ -f "$stage/payload/codexm-tui" ] || { echo 'Missing terminal component; existing installation was preserved.' >&2; exit 1; }
+[ "$("$stage/payload/codexm-tui" --version)" = "codexm-tui $version" ] || { echo 'Terminal component version would not match.' >&2; exit 1; }
 install_version=$release
 if [ "$install_mode" = source ]; then
   if [ -f "$stage/payload/codexm-tui" ]; then cat "$stage/payload/codexm" "$stage/payload/codexm-tui" > "$stage/native-components"; else cp "$stage/payload/codexm" "$stage/native-components"; fi

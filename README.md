@@ -159,6 +159,12 @@ HTTPS 프록시 구성·재시작·중지 방법은 [외부 접속 안내](docs/
 공식 Codex CLI를 먼저 설치하고 `codex --version`을 확인합니다.
 
 ```sh
+brew install codeasy-digix/tap/codexm
+codexm
+# macOS 메뉴 앱
+open "$(brew --prefix codexm)/CodexM.app"
+
+# Homebrew 대신 소스에서 설치할 때
 cd /path/to/codexm
 ./install.sh --build
 codexm doctor
@@ -167,8 +173,10 @@ codexm doctor
 소스·빌드·설치·업데이트는 이 제품 저장소에서만 관리합니다. `~/.home`은 이미 설치한
 명령의 등록과 개인 셸 로더만 관리합니다. 소스 빌드에는 Go와 Rust가 필요하고,
 설치 후 TUI/CLI에는 Python·Node·컴파일러가 필요 없습니다. 선택적인 이전 Meteor
-웹에는 별도 번들과 Node 24가 필요합니다. 이번 적용은 로컬 Mac으로 한정하며
-Homebrew/Release/npm 배포와 다른 장비의 codexm 업데이트는 보류합니다.
+웹에는 별도 번들과 Node 24가 필요합니다. Homebrew는 공개된 검증 소스로 CLI/TUI를
+빌드하고 macOS에서는 메뉴 앱도 함께 설치합니다. 앱은 로컬 ad-hoc 서명이며 Apple
+공증된 Cask는 아닙니다. [배포 방식](docs/distribution.md)을 참고하세요.
+설치·업데이트는 명령을 실행한 장비에만 적용하며 다른 장비를 자동 변경하지 않습니다.
 
 관리자 모델, 자동 worker/계정 교체, 스케줄링, 목표/예산 관리, watchdog, 자동 알림,
 이전 관리 플러그인과 history-sync는 새 공개 실행 경로에서 제외했습니다.
