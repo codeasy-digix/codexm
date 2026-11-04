@@ -1,0 +1,488 @@
+import CryptoKit
+import Foundation
+
+struct CodexAccountIdentity: Equatable, Sendable {
+  let fingerprint: String?
+  let email: String?
+  let planType: String?
+
+  init(fingerprint: String?, email: String?, planType: String?) {
+    self.fingerprint = Self.normalized(fingerprint)
+    self.email = Self.normalized(email)
+    self.planType = Self.normalizedPlanType(planType)
+  }
+
+  func matches(_ other: CodexAccountIdentity) -> Bool {
+    if let fingerprint, let otherFingerprint = other.fingerprint {
+      guard fingerprint == otherFingerprint else { return false }
+      if let email, let otherEmail = other.email {
+        return email == otherEmail
+      }
+      return true
+    }
+
+    guard let email, email == other.email else { return false }
+    if let planType, let otherPlanType = other.planType {
+      return planType == otherPlanType
+    }
+    return true
+  }
+
+  /// A private lookup key, never a display label. Both parts are required so
+  /// equal-email workspaces and different members of one workspace stay apart.
+  var workspaceNameKey: String? {
+    guard let fingerprint, let email else { return nil }
+    return SHA256.hash(data: Data("\(fingerprint)\u{0}\(email)".utf8))
+      .map { String(format: "%02x", $0) }.joined()
+  }
+
+  private static func normalized(_ value: String?) -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return normalized.isEmpty ? nil : normalized
+  }
+
+  private static func normalizedPlanType(_ value: String?) -> String? {
+    guard let normalized = normalized(value) else { return nil }
+    switch normalized {
+    case "business", "team", "self_serve_business_usage_based":
+      return "business"
+    case "enterprise", "enterprise_cbp_usage_based":
+      return "enterprise"
+    case "pro", "prolite":
+      return "pro"
+    default:
+      return normalized
+    }
+  }
+}
+
+struct CodexAccountIdentityReader: @unchecked Sendable {
+  private let fileManager: FileManager
+
+  init(fileManager: FileManager = .default) {
+    self.fileManager = fileManager
+  }
+
+  /// Uses only the account/workspace identifier. Access, refresh, and ID token
+  /// values are never used for matching or separately retained.
+  func fingerprint(codexHomeURL: URL) -> String? {
+    let authURL = codexHomeURL.appending(path: "auth.json", directoryHint: .notDirectory)
+    guard fileManager.isReadableFile(atPath: authURL.path),
+      let data = try? Data(contentsOf: authURL),
+      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+      return nil
+    }
+
+    let tokens = root["tokens"] as? [String: Any]
+    let rawIdentifier =
+      tokens?["account_id"] as? String
+      ?? root["account_id"] as? String
+      ?? root["chatgpt_account_id"] as? String
+    guard let identifier = Self.normalizedIdentifier(rawIdentifier) else { return nil }
+
+    return SHA256.hash(data: Data(identifier.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+  }
+
+  private static func normalizedIdentifier(_ value: String?) -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return normalized.isEmpty ? nil : normalized
+  }
+}
+
+enum UsageAccountKind: String, Codable, Equatable, Sendable {
+  case systemDefault
+  case managed
+}
+
+struct UsageAccount: Codable, Equatable, Identifiable, Sendable {
+  static let systemDefaultID = "system-default"
+
+  let id: String
+  let kind: UsageAccountKind
+  var displayName: String?
+  var lastKnownEmail: String?
+  var lastKnownPlanType: String?
+  var workspaceName: String? = nil
+  var lastKnownWorkspaceFingerprint: String? = nil
+  let createdAt: Date
+
+  static var systemDefault: UsageAccount {
+    UsageAccount(
+      id: systemDefaultID,
+      kind: .systemDefault,
+      displayName: nil,
+      lastKnownEmail: nil,
+      lastKnownPlanType: nil,
+      createdAt: .distantPast
+    )
+  }
+
+  var isSystemDefault: Bool { kind == .systemDefault }
+  var isManaged: Bool { kind == .managed }
+
+  var workspaceDisplayLabel: String? {
+    normalizedWorkspaceName.map { L10n.text("account.workspace_label", $0) }
+  }
+
+  var workspaceNameKey: String? {
+    CodexAccountIdentity(fingerprint: lastKnownWorkspaceFingerprint,
+      email: lastKnownEmail, planType: lastKnownPlanType).workspaceNameKey
+  }
+
+  var normalizedDisplayName: String? {
+    let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return name.isEmpty ? nil : name
+  }
+
+  var normalizedWorkspaceName: String? {
+    let trimmedName = workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmedName.isEmpty ? nil : trimmedName
+  }
+
+  var title: String {
+    if let normalizedDisplayName { return normalizedDisplayName }
+    if isSystemDefault { return L10n.text("account.default_name") }
+    let email = lastKnownEmail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return email.isEmpty ? L10n.text("account.managed_name") : email
+  }
+}
+
+enum UsageAccountRegistryError: LocalizedError, Equatable {
+  case invalidAccountIdentifier
+  case pendingAccountMissing
+  case managedAccountMissing
+  case unsafeManagedPath
+  case workspaceIdentityUnavailable
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidAccountIdentifier:
+      return L10n.text("account.invalid_id")
+    case .pendingAccountMissing:
+      return L10n.text("account.pending_missing")
+    case .managedAccountMissing:
+      return L10n.text("account.saved_missing")
+    case .unsafeManagedPath:
+      return L10n.text("account.unsafe_path")
+    case .workspaceIdentityUnavailable:
+      return L10n.text("account.workspace_identity_unavailable")
+    }
+  }
+}
+
+struct UsageAccountRegistry: @unchecked Sendable {
+  private struct Payload: Codable {
+    var version: Int
+    var accounts: [UsageAccount]
+    // Pre-v4 names were not bound to an identity. Retain them for recovery,
+    // but never attach an ambiguous old name to the current default login.
+    var systemDefaultWorkspaceName: String? = nil
+    var systemDefaultWorkspaceNames: [String: String]? = nil
+    var accountOrder: [String]? = nil
+  }
+
+  private let fileManager: FileManager
+  let applicationSupportURL: URL
+
+  init(
+    fileManager: FileManager = .default,
+    applicationSupportURL: URL? = nil
+  ) {
+    self.fileManager = fileManager
+    self.applicationSupportURL =
+      applicationSupportURL
+      ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appending(path: "Codex Usage", directoryHint: .isDirectory)
+  }
+
+  var accountsRootURL: URL {
+    applicationSupportURL.appending(path: "Accounts", directoryHint: .isDirectory)
+  }
+
+  var stagingRootURL: URL {
+    applicationSupportURL.appending(path: "Staging", directoryHint: .isDirectory)
+  }
+
+  var registryURL: URL {
+    applicationSupportURL.appending(path: "accounts.json", directoryHint: .notDirectory)
+  }
+
+  func loadAccounts() throws -> [UsageAccount] {
+    try prepareRootDirectories()
+    try discardAbandonedPendingAccounts()
+    try migrateLegacyManagedHomeIfNeeded()
+    let payload = try loadPayload()
+    // The store resolves the current default's name only after reading its
+    // live identity. Last launch's login must not leak into this launch's UI.
+    let accounts = [UsageAccount.systemDefault] + payload.accounts.filter(\.isManaged)
+      .sorted { $0.createdAt < $1.createdAt }
+    let order = AccountOrder.normalized(payload.accountOrder ?? [], availableIDs: accounts.map(\.id))
+    return order.compactMap { id in accounts.first { $0.id == id } }
+  }
+
+  /// Reads only registry metadata: reordering must not clean up an active device login.
+  func saveAccountOrder(_ accountIDs: [String]) throws {
+    var payload = try loadPayload()
+    payload.accountOrder = accountIDs
+    try savePayload(payload)
+  }
+
+  func workspaceName(forSystemDefaultAccount account: UsageAccount) throws -> String? {
+    guard account.isSystemDefault, let key = account.workspaceNameKey else { return nil }
+    return try loadPayload().systemDefaultWorkspaceNames?[key]
+  }
+
+  func beginManagedAccount() throws -> UsageAccount {
+    try prepareRootDirectories()
+    let identifier = UUID().uuidString.lowercased()
+    let account = UsageAccount(
+      id: identifier,
+      kind: .managed,
+      displayName: nil,
+      lastKnownEmail: nil,
+      lastKnownPlanType: nil,
+      createdAt: Date()
+    )
+    let root = try validatedChildURL(root: stagingRootURL, identifier: identifier)
+    let codexHome = root.appending(path: "CodexHome", directoryHint: .isDirectory)
+    try createPrivateDirectory(at: codexHome)
+    try writeManagedConfig(to: codexHome)
+    var resourceValues = URLResourceValues()
+    resourceValues.isExcludedFromBackup = true
+    var accountRoot = root
+    try? accountRoot.setResourceValues(resourceValues)
+    return account
+  }
+
+  func pendingCodexHomeURL(for account: UsageAccount) throws -> URL {
+    guard account.isManaged else { throw UsageAccountRegistryError.invalidAccountIdentifier }
+    let root = try validatedChildURL(root: stagingRootURL, identifier: account.id)
+    return root.appending(path: "CodexHome", directoryHint: .isDirectory)
+  }
+
+  func managedCodexHomeURL(for account: UsageAccount) throws -> URL {
+    guard account.isManaged else { throw UsageAccountRegistryError.invalidAccountIdentifier }
+    let root = try validatedChildURL(root: accountsRootURL, identifier: account.id)
+    let codexHome = root.appending(path: "CodexHome", directoryHint: .isDirectory)
+    if !fileManager.fileExists(atPath: codexHome.path) {
+      try createPrivateDirectory(at: root)
+      try createPrivateDirectory(at: codexHome)
+      try writeManagedConfig(to: codexHome)
+    }
+    return codexHome
+  }
+
+  func commitPendingAccount(_ account: UsageAccount) throws {
+    guard account.isManaged else { throw UsageAccountRegistryError.invalidAccountIdentifier }
+    let source = try validatedChildURL(root: stagingRootURL, identifier: account.id)
+    let destination = try validatedChildURL(root: accountsRootURL, identifier: account.id)
+    guard fileManager.fileExists(atPath: source.path) else {
+      throw UsageAccountRegistryError.pendingAccountMissing
+    }
+    guard !fileManager.fileExists(atPath: destination.path) else {
+      throw UsageAccountRegistryError.invalidAccountIdentifier
+    }
+
+    try fileManager.moveItem(at: source, to: destination)
+    do {
+      var managedAccounts = try loadManagedAccounts()
+      managedAccounts.append(account)
+      try saveManagedAccounts(managedAccounts)
+    } catch {
+      try? fileManager.moveItem(at: destination, to: source)
+      throw error
+    }
+  }
+
+  func discardPendingAccount(_ account: UsageAccount) throws {
+    guard account.isManaged else { return }
+    let root = try validatedChildURL(root: stagingRootURL, identifier: account.id)
+    if fileManager.fileExists(atPath: root.path) {
+      try fileManager.removeItem(at: root)
+    }
+  }
+
+  func updateAccount(_ account: UsageAccount) throws {
+    if account.isSystemDefault {
+      guard account.id == UsageAccount.systemDefaultID else {
+        throw UsageAccountRegistryError.invalidAccountIdentifier
+      }
+      guard let key = account.workspaceNameKey else {
+        throw UsageAccountRegistryError.workspaceIdentityUnavailable
+      }
+      var payload = try loadPayload()
+      var names = payload.systemDefaultWorkspaceNames ?? [:]
+      names[key] = account.normalizedWorkspaceName
+      payload.systemDefaultWorkspaceNames = names
+      try savePayload(payload)
+      return
+    }
+
+    guard account.isManaged else {
+      throw UsageAccountRegistryError.invalidAccountIdentifier
+    }
+    var managedAccounts = try loadManagedAccounts()
+    guard let index = managedAccounts.firstIndex(where: { $0.id == account.id }) else {
+      throw UsageAccountRegistryError.managedAccountMissing
+    }
+    managedAccounts[index] = account
+    try saveManagedAccounts(managedAccounts)
+  }
+
+  func removeManagedAccount(_ account: UsageAccount) throws {
+    guard account.isManaged else { return }
+    let root = try validatedChildURL(root: accountsRootURL, identifier: account.id)
+    let stagedRemoval = try validatedChildURL(root: stagingRootURL, identifier: account.id)
+    var managedAccounts = try loadManagedAccounts()
+    managedAccounts.removeAll { $0.id == account.id }
+
+    var movedForRemoval = false
+    if fileManager.fileExists(atPath: root.path) {
+      if fileManager.fileExists(atPath: stagedRemoval.path) {
+        try fileManager.removeItem(at: stagedRemoval)
+      }
+      try fileManager.moveItem(at: root, to: stagedRemoval)
+      movedForRemoval = true
+    }
+
+    do {
+      try saveManagedAccounts(managedAccounts)
+    } catch {
+      if movedForRemoval {
+        try? fileManager.moveItem(at: stagedRemoval, to: root)
+      }
+      throw error
+    }
+
+    if movedForRemoval {
+      // If immediate cleanup fails, the private staging directory is purged on
+      // the next launch instead of restoring an account that is already removed.
+      try? fileManager.removeItem(at: stagedRemoval)
+    }
+  }
+
+  private func prepareRootDirectories() throws {
+    try createPrivateDirectory(at: applicationSupportURL)
+    try createPrivateDirectory(at: accountsRootURL)
+    try createPrivateDirectory(at: stagingRootURL)
+  }
+
+  private func createPrivateDirectory(at url: URL) throws {
+    try fileManager.createDirectory(
+      at: url,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+  }
+
+  private func discardAbandonedPendingAccounts() throws {
+    let children = try fileManager.contentsOfDirectory(
+      at: stagingRootURL,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    )
+    for child in children {
+      try fileManager.removeItem(at: child)
+    }
+  }
+
+  private func writeManagedConfig(to codexHome: URL) throws {
+    let configURL = codexHome.appending(path: "config.toml", directoryHint: .notDirectory)
+    guard !fileManager.fileExists(atPath: configURL.path) else { return }
+    let config = "cli_auth_credentials_store = \"file\"\n"
+    try Data(config.utf8).write(to: configURL, options: .atomic)
+    try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+  }
+
+  private func loadManagedAccounts() throws -> [UsageAccount] {
+    try loadPayload().accounts.filter(\.isManaged)
+  }
+
+  private func loadPayload() throws -> Payload {
+    guard fileManager.fileExists(atPath: registryURL.path) else {
+      return Payload(version: 2, accounts: [])
+    }
+    let data = try Data(contentsOf: registryURL)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(Payload.self, from: data)
+  }
+
+  private func saveManagedAccounts(_ accounts: [UsageAccount]) throws {
+    var payload = try loadPayload()
+    payload.accounts = accounts
+    try savePayload(payload)
+  }
+
+  private func savePayload(_ original: Payload) throws {
+    try prepareRootDirectories()
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    var payload = original
+    payload.version = 4
+    payload.accountOrder = payload.accountOrder.map {
+      AccountOrder.normalized($0,
+        availableIDs: [UsageAccount.systemDefaultID] + payload.accounts.map(\.id))
+    }
+    let data = try encoder.encode(payload)
+    try data.write(to: registryURL, options: .atomic)
+    try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: registryURL.path)
+  }
+
+  private func validatedChildURL(root: URL, identifier: String) throws -> URL {
+    guard UUID(uuidString: identifier) != nil else {
+      throw UsageAccountRegistryError.invalidAccountIdentifier
+    }
+    let standardizedRoot = root.standardizedFileURL
+    let candidate = standardizedRoot.appending(path: identifier, directoryHint: .isDirectory)
+      .standardizedFileURL
+    let rootPrefix = standardizedRoot.path.hasSuffix("/")
+      ? standardizedRoot.path
+      : standardizedRoot.path + "/"
+    guard candidate.path.hasPrefix(rootPrefix) else {
+      throw UsageAccountRegistryError.unsafeManagedPath
+    }
+    return candidate
+  }
+
+  private func migrateLegacyManagedHomeIfNeeded() throws {
+    let legacyHome = applicationSupportURL.appending(
+      path: "CodexHome",
+      directoryHint: .isDirectory
+    )
+    let legacyAuth = legacyHome.appending(path: "auth.json", directoryHint: .notDirectory)
+    guard fileManager.isReadableFile(atPath: legacyAuth.path) else { return }
+
+    var managedAccounts = try loadManagedAccounts()
+    let identifier = UUID().uuidString.lowercased()
+    let accountRoot = try validatedChildURL(root: accountsRootURL, identifier: identifier)
+    try createPrivateDirectory(at: accountRoot)
+    let destination = accountRoot.appending(path: "CodexHome", directoryHint: .isDirectory)
+    do {
+      try fileManager.moveItem(at: legacyHome, to: destination)
+      let account = UsageAccount(
+        id: identifier,
+        kind: .managed,
+        displayName: nil,
+        lastKnownEmail: nil,
+        lastKnownPlanType: nil,
+        createdAt: Date()
+      )
+      managedAccounts.append(account)
+      try saveManagedAccounts(managedAccounts)
+    } catch {
+      if fileManager.fileExists(atPath: destination.path),
+        !fileManager.fileExists(atPath: legacyHome.path)
+      {
+        try? fileManager.moveItem(at: destination, to: legacyHome)
+      }
+      try? fileManager.removeItem(at: accountRoot)
+      throw error
+    }
+  }
+}
