@@ -29,6 +29,7 @@ class Codexm < Formula
     if OS.mac?
       ENV["CODEXM_NATIVE_BUILD_DIR"] = "#{buildpath}/native"
       ENV["CODEXM_APP_OUTPUT"] = "#{buildpath}/CodexM.app"
+      ENV["CODEXM_SWIFT_EXTERNAL_SANDBOX"] = "1"
       system "./apps/macos/scripts/build-app.sh"
       prefix.install "CodexM.app"
       bin.install_symlink prefix/"CodexM.app/Contents/Resources/native/codexm"

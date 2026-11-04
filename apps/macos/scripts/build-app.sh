@@ -16,7 +16,11 @@ version=$(cat "$product_root/VERSION")
 stage=$(mktemp -d "${TMPDIR:-/tmp}/codexm-app.XXXXXX")
 trap 'rm -rf "$stage"' EXIT HUP INT TERM
 cd "$app_root"
-swift build -c release --scratch-path "$stage/swift" -Xswiftc -file-prefix-map -Xswiftc "$product_root=." >&2
+set --
+# Homebrew already applies the outer build sandbox; macOS refuses nesting
+# SwiftPM's sandbox-exec inside it. Keep normal source builds sandboxed.
+if [ "${CODEXM_SWIFT_EXTERNAL_SANDBOX:-0}" = 1 ]; then set -- --disable-sandbox; fi
+swift build "$@" -c release --scratch-path "$stage/swift" -Xswiftc -file-prefix-map -Xswiftc "$product_root=." >&2
 app="$stage/CodexM.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/native"
 cp "$stage/swift/release/CodexUsageMenuBar" "$app/Contents/MacOS/CodexUsageMenuBar"
