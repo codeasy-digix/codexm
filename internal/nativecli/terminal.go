@@ -99,7 +99,7 @@ func ReusableTerminal(ctx context.Context, c config.Config, id, account string) 
 		if !l.Ready {
 			return nil, fmt.Errorf("existing CLI is still preparing this chat; inspect with codexm terminal %s", l.Session)
 		}
-		info, err := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_pid}|#{pane_current_command}")
+		info, err := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", paneTarget(l), "#{session_name}|#{pane_pid}|#{pane_current_command}")
 		if err != nil {
 			return nil, err
 		}
@@ -177,18 +177,12 @@ func Attach(ctx context.Context, c config.Config, session string) error {
 			return err
 		}
 		t.Launch = portal
-	} else if t.Launch.TmuxSession != "" {
-		view, err := workspaceView(ctx, t.Launch)
-		if err != nil {
-			return err
-		}
-		t.Launch = view
 	}
-	if t.Launch.TmuxSession != "" {
-		if _, err = tmux(ctx, t.Launch.TmuxServer, "select-pane", "-t", t.Launch.Pane); err != nil {
-			return err
-		}
+	view, err := workspaceView(ctx, t.Launch)
+	if err != nil {
+		return err
 	}
+	t.Launch = view
 	bin, err := exec.LookPath("tmux")
 	if err != nil {
 		return err
@@ -200,7 +194,18 @@ func Attach(ctx context.Context, c config.Config, session string) error {
 		return err
 	}
 	command, env := attachMode(os.Getenv("TMUX"), strings.TrimSpace(socket), os.Environ())
-	return syscall.Exec(bin, append([]string{bin}, tmuxArgs(t.Launch.TmuxServer, command, "-t", attachTarget(t.Launch))...), env)
+	if command == "switch-client" {
+		client, err := invokingClient(ctx, os.Getenv("TMUX_PANE"))
+		if err != nil {
+			return fmt.Errorf("%w; use %s", err, AttachCommand(t.Launch))
+		}
+		return switchClientToViewer(ctx, client, t.Launch)
+	}
+	name, err := newViewerName()
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(bin, append([]string{bin}, tmuxArgs(t.Launch.TmuxServer, viewerAttachArgs(name, t.Launch)...)...), env)
 }
 func attachMode(current, socket string, env []string) (string, []string) {
 	if current != "" && strings.Split(current, ",")[0] == socket {
@@ -215,17 +220,7 @@ func attachMode(current, socket string, env []string) (string, []string) {
 	return "attach-session", clean
 }
 func AttachCommand(l Launch) string {
-	server := l.TmuxServer
-	if server == "" {
-		server = "default"
-	}
-	if server == "codex" {
-		return "codexm terminal " + l.Session
-	}
-	if l.TmuxSession == WorkspaceSession {
-		return "tmux attach -t " + attachTarget(l)
-	}
-	return "tmux -L " + server + " attach -t " + attachTarget(l)
+	return "codexm terminal " + l.Session
 }
 
 // Open creates a named terminal only. There is no supervisor, RPC worker or model
@@ -429,7 +424,9 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 			if err != nil || len(fields) != 5 || fields[0] != l.Session || fields[1] != c.Path || fields[2] != l.Pane {
 				return t, errors.New("workspace pane ownership changed; the replacement was left untouched")
 			}
-			if l.Owner != nil && (fields[3] != strconv.Itoa(l.Owner.PID) || (fields[4] == "0" && !sameProcess(ctx, *l.Owner))) {
+			// tmux 3.8 omits pane_pid after exit. A dead, ownership-tagged
+			// workspace pane has no live replacement process to terminate.
+			if l.Owner != nil && ((fields[3] != strconv.Itoa(l.Owner.PID) && !(fields[4] == "1" && fields[3] == "")) || (fields[4] == "0" && !sameProcess(ctx, *l.Owner))) {
 				return t, errors.New("workspace CLI process changed; the replacement was left untouched")
 			}
 		}
@@ -445,7 +442,7 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 	if _, e = tmux(ctx, l.TmuxServer, "has-session", "-t", "="+containerSession(l)); e != nil {
 		return t, nil
 	}
-	value, e := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_dead}|#{pane_dead_status}")
+	value, e := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", paneTarget(l), "#{session_name}|#{pane_dead}|#{pane_dead_status}")
 	if e != nil {
 		if _, exists := tmux(ctx, l.TmuxServer, "has-session", "-t", "="+containerSession(l)); exists == nil {
 			return t, errors.New("recorded native pane is missing from an existing session; inspect it manually")

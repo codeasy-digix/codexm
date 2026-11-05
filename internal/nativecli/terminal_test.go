@@ -65,10 +65,15 @@ has-session) ` + map[bool]string{true: "exit 1", false: "exit 0"}[mode == "close
 display-message)
   case "$*" in
     *socket_path*) printf 'fixture-tmux\n' ;;
+    *window_id*) printf '@7\n' ;;
     *pane_current_command*) printf '` + l.Session + `|734567|codex\n' ;;
     *) printf '` + l.Session + `|0|\n' ;;
   esac ;;
 capture-pane) printf 'existing Codex\n' ;;
+list-windows) printf '@7\n' ;;
+list-clients) printf '/dev/fixture|%%456\n' ;;
+set-option) exit 0 ;;
+new-session) printf '%s\n' "$@" > "$HOME/attached"; printf '$88\n' ;;
 attach-session|switch-client) printf '%s\n' "$@" > "$HOME/attached" ;;
 *) printf '%s\n' "$@" > "$HOME/unexpected-tmux"; exit 8 ;;
 esac
@@ -127,7 +132,7 @@ func TestReusableTerminalRequiresCurrentThreadOwnerAndAccount(t *testing.T) {
 }
 
 func TestForegroundResumeReconnectsWithoutArchive(t *testing.T) {
-	c, l := reconnectFixture(t, "live")
+	c, _ := reconnectFixture(t, "live")
 	if err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -137,16 +142,19 @@ func TestForegroundResumeReconnectsWithoutArchive(t *testing.T) {
 		if nested {
 			tmuxEnv = "fixture-tmux"
 		}
-		cmd.Env = append(os.Environ(), "CODEXM_RECONNECT_HELPER="+c.Path, "TMUX="+tmuxEnv)
+		cmd.Env = append(os.Environ(), "CODEXM_RECONNECT_HELPER="+c.Path, "TMUX="+tmuxEnv, "TMUX_PANE=%456")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("reconnect: %v %s", err, out)
 		}
-		want := "attach-session"
-		if nested {
-			want = "switch-client"
-		}
 		data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "attached"))
-		if err != nil || string(data) != want+"\n-t\n="+l.Session+"\n" {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if nested {
+			if !strings.HasPrefix(string(data), "switch-client\n-c\n/dev/fixture\n-t\n$88:@7.%123\n") {
+				t.Fatalf("wrong switch args: %q", data)
+			}
+		} else if !strings.HasPrefix(string(data), "new-session\n-s\ncodexm-view-") || !strings.Contains(string(data), "\n-t\ncodexm\n") || !strings.Contains(string(data), "destroy-unattached\non\n") {
 			t.Fatalf("wrong attach args: %q %v", data, err)
 		}
 	}
@@ -167,7 +175,7 @@ func TestResumeReconnectionHelper(t *testing.T) {
 	if err = Resume(context.Background(), c, Launch{Thread: fixtureID, Account: "default"}); err != nil {
 		t.Fatal(err)
 	}
-	t.Fatal("reconnect did not exec")
+	// Inside tmux the bounded switch returns; outside it execs into a client.
 }
 
 func TestClosedSessionReceiptDoesNotUseTmuxCurrentPane(t *testing.T) {
@@ -235,10 +243,7 @@ esac
 			os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700)
 			t.Setenv("PATH", h+string(os.PathListSeparator)+os.Getenv("PATH"))
 			screen, err := Screen(context.Background(), c, l.Session)
-			wantAttach := "tmux -L " + expected + " attach -t =" + l.Session
-			if server == "codex" {
-				wantAttach = "codexm terminal " + l.Session
-			}
+			wantAttach := "codexm terminal " + l.Session
 			if err != nil || screen.Text != "correct server" || screen.Attach != wantAttach {
 				t.Fatalf("wrong server: %+v %v", screen, err)
 			}

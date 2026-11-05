@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -35,16 +36,6 @@ func containerSession(l Launch) string {
 		return l.TmuxSession
 	}
 	return l.Session // Older receipts used a separate session per conversation.
-}
-
-func attachTarget(l Launch) string {
-	if l.TmuxSession != "" {
-		if l.Window != "" {
-			return l.TmuxSession + ":" + l.Window
-		}
-		return l.Pane
-	}
-	return "=" + l.Session
 }
 
 // Link an existing default-server window into the workspace. The original
@@ -76,14 +67,18 @@ func workspaceView(ctx context.Context, l Launch) (Launch, error) {
 
 func ensureWorkspace(ctx context.Context) error {
 	if _, err := tmux(ctx, CodexTmuxServer, "has-session", "-t", "="+WorkspaceSession); err == nil {
-		return nil
+		_, err = tmux(ctx, CodexTmuxServer, "set-option", "-t", WorkspaceSession, "destroy-unattached", "off")
+		return err
 	}
 	_, err := tmux(ctx, CodexTmuxServer, "new-session", "-d", "-s", WorkspaceSession, "-n", "home")
 	if err != nil {
 		// Another launcher may have created the shared workspace concurrently.
 		if _, check := tmux(ctx, CodexTmuxServer, "has-session", "-t", "="+WorkspaceSession); check == nil {
-			return nil
+			err = nil
 		}
+	}
+	if err == nil {
+		_, err = tmux(ctx, CodexTmuxServer, "set-option", "-t", WorkspaceSession, "destroy-unattached", "off")
 	}
 	return err
 }
@@ -208,10 +203,15 @@ func discoverTerminal(ctx context.Context, c config.Config, id string) (*Launch,
 		if e != nil {
 			continue
 		} // An unused legacy socket need not exist.
+		lines := strings.Split(strings.TrimSpace(panes), "\n")
+		// Group members repeat the same pane. Receipts must outlive viewers.
+		sort.SliceStable(lines, func(i, j int) bool {
+			return strings.HasPrefix(lines[i], WorkspaceSession+"|") && !strings.HasPrefix(lines[j], WorkspaceSession+"|")
+		})
 		seen := map[string]bool{}
-		for _, line := range strings.Split(strings.TrimSpace(panes), "\n") {
+		for _, line := range lines {
 			parts := strings.Split(line, "|")
-			if len(parts) != 5 || parts[4] != "0" || seen[parts[2]] {
+			if len(parts) != 5 || parts[4] != "0" || seen[parts[2]] || viewerSessionName.MatchString(parts[0]) {
 				continue
 			}
 			seen[parts[2]] = true

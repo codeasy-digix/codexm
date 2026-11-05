@@ -84,9 +84,21 @@ func TestDiscoveredShellCLIIsReusedWithoutRestart(t *testing.T) {
 		t.Fatal("discovery restarted the CLI")
 	}
 	before, _ := os.ReadFile(filepath.Join(home, "events.jsonl"))
+	viewer := startViewer(t, *found)
 	reused, err := ReusableTerminal(ctx, c, fixtureID, "default")
 	if err != nil || reused == nil || reused.Owner.PID != found.Owner.PID {
 		t.Fatalf("cannot reuse: %+v %v", reused, err)
+	}
+	if reused.TmuxSession != WorkspaceSession {
+		t.Fatal("discovery persisted a temporary viewer as the owner")
+	}
+	_ = viewer.in.Close()
+	awaitViewer(t, func() bool {
+		_, err := tmux(ctx, "default", "has-session", "-t", "="+viewer.name)
+		return err != nil
+	})
+	if screen, err := Screen(ctx, c, reused.Session); err != nil || !screen.Alive {
+		t.Fatalf("viewer cleanup invalidated the durable receipt: %v", err)
 	}
 	after, _ := os.ReadFile(filepath.Join(home, "events.jsonl"))
 	if string(before) != string(after) {

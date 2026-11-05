@@ -64,7 +64,11 @@
   reap the owned bridge/auth helpers before exec into the official-CLI launcher.
   Do not block navigation on background reads or replay uncertain mutations.
 - The foreground launcher connects to a persistent official CLI window in the
-  default tmux server’s single codexm session. The web reads the same terminals,
+  default tmux server's single codexm workspace. Each terminal attaches through
+  its own temporary grouped viewer, with an independent current window. Reap
+  only that viewer when it disconnects; the workspace and jobs must survive.
+  Never persist a viewer as a chat's durable location or retarget other clients.
+  The web reads the same terminals,
   and forwards literal input. It does not interpret chat turns or run model logic.
   Closing a web viewer must not stop the CLI. Never replay uncertain input.
 - Before a fresh resume, find an existing interactive CLI by its writer file,
@@ -85,6 +89,7 @@
 - Keep running work and old metadata. During migration retire only verified idle
   legacy product services; do not stop official Codex, GUI or unrelated tmux jobs.
   All new jobs use named windows in the default server’s single `codexm` session.
+  Automatic `codexm-view-*` group members are terminal views, not job containers.
   Never kill this shared session or alias ordinary tmux. Legacy codex-server jobs
   remain alive behind workspace connection windows until they exit. Preserve old
   receipt routing. Cleanup targets only a verified owned pane/window.

@@ -548,8 +548,19 @@ func followTerminal(ctx context.Context, c config.Config, old, next Launch) {
 	if old.Owner == nil {
 		return
 	}
-	p, e := tmux(ctx, old.TmuxServer, "display-message", "-p", "-t", old.Pane, "#{pane_id}|#{pane_dead}|#{pane_pid}")
-	if e != nil || strings.TrimSpace(p) != fmt.Sprintf("%s|1|%d", old.Pane, old.Owner.PID) {
+	p, e := tmux(ctx, old.TmuxServer, "display-message", "-p", "-t", old.Pane, "#{pane_id}|#{pane_dead}|#{pane_pid}|#{window_id}|#{@codexm-terminal}|#{@codexm-config}")
+	fields := strings.Split(strings.TrimSpace(p), "|")
+	if e != nil || len(fields) != 6 || fields[0] != old.Pane || fields[1] != "1" {
+		return
+	}
+	if fields[2] != strconv.Itoa(old.Owner.PID) {
+		// tmux 3.8 clears pane_pid after exit. The already verified handoff may
+		// follow a dead pane only when its durable workspace ownership matches.
+		if fields[2] != "" || old.Window == "" || fields[3] != old.Window || fields[4] != old.Session || c.Path == "" || fields[5] != c.Path {
+			return
+		}
+	}
+	if next.TmuxServer != CodexTmuxServer || next.TmuxSession != WorkspaceSession || next.Window == "" {
 		return
 	}
 	clients, e := tmux(ctx, old.TmuxServer, "list-clients", "-F", "#{client_name}|#{pane_id}")
@@ -561,7 +572,7 @@ func followTerminal(ctx context.Context, c config.Config, old, next Launch) {
 		if !ok || pane != old.Pane {
 			continue
 		}
-		if _, e = tmux(ctx, old.TmuxServer, "switch-client", "-c", client, "-t", attachTarget(next)); e != nil {
+		if e = switchClientToViewer(ctx, client, next); e != nil {
 			return
 		}
 	}

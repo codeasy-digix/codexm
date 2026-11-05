@@ -118,7 +118,7 @@ seeded:
 	}
 	defer func() {
 		for _, s := range Sessions(c) {
-			_, _ = tmux(context.Background(), s.TmuxServer, "kill-session", "-t", "="+s.Session)
+			_ = removeTerminal(context.Background(), s)
 		}
 		server.CloseClientConnections()
 	}()
@@ -144,6 +144,7 @@ seeded:
 		ls, _ := exec.Command("lsof", "-nP", "-a", "-p", fmt.Sprint(source.Owner.PID), "-F", "pn").Output()
 		t.Fatalf("%v; %s; writer files: %s", e, screen.Text, ls)
 	}
+	viewer := startViewer(t, source)
 	target, e := Plan(ctx, c, l.Thread, "beta")
 	if e != nil {
 		t.Fatal(e)
@@ -160,10 +161,11 @@ seeded:
 		t.Fatal(e)
 	}
 	os.WriteFile(filepath.Join(dir, "armed"), []byte("fixture"), 0600)
-	if _, e = tmux(ctx, CodexTmuxServer, "new-session", "-d", "-s", s.Session, "-e", "PATH="+os.Getenv("PATH"), "-e", "HOME="+h, product, "--config", c.Path, "__handoff", file); e != nil {
+	helperPane, e := tmux(ctx, CodexTmuxServer, "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", WorkspaceSession+":", "-n", s.Session, "-e", "PATH="+os.Getenv("PATH"), "-e", "HOME="+h, product, "--config", c.Path, "__handoff", file)
+	if e != nil {
 		t.Fatal(e)
 	}
-	defer tmux(context.Background(), CodexTmuxServer, "kill-session", "-t", "="+s.Session)
+	defer tmux(context.Background(), CodexTmuxServer, "kill-pane", "-t", strings.TrimSpace(helperPane))
 	until := time.Now().Add(50 * time.Second)
 	for time.Now().Before(until) {
 		status, e := HandoffStatus(c, l.Thread)
@@ -190,6 +192,10 @@ replaced:
 	}
 	if e = verifyOwnedCLI(ctx, c, last); e != nil {
 		t.Fatal(e)
+	}
+	clients := viewerTmux(t, "list-clients", "-F", "#{session_name}|#{pane_id}")
+	if !strings.Contains(clients, "|"+last.Pane) || strings.Contains(clients, viewer.name+"|") {
+		t.Fatal("native handoff did not follow the independent viewer")
 	}
 	mu.Lock()
 	final := requests[len(requests)-1]

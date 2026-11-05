@@ -64,8 +64,12 @@ archive/resume이나 새 지시를 보내지 않습니다. 실행 중인 인증�
 재사용할 터미널이 없으면 계정별 `CODEX_HOME`과 같은 머신의 공용 대화 저장소를 준비하고,
 `codex --no-daemon --no-alt-screen resume ID`로
 default tmux 서버의 `codexm` 세션 안에 대화별 창을 만들고 현재 터미널을 연결합니다.
+접속에는 터미널별 임시 그룹 세션을 사용합니다. A 터미널에서 다른 채팅을 선택해도
+B 터미널의 화면은 바뀌지 않습니다. 같은 채팅을 양쪽에서 열면 화면과 입력을 공유합니다.
 터미널을 닫거나 `Ctrl-b d`로 분리해도 CLI는 계속 실행됩니다. `codexm`에서 다시 선택해 연결하세요.
-`tmux attach -t codexm`으로 전체 창에 접근하고 `tmux list-windows -t codexm`으로 접속 없이 조회합니다.
+접속 종료 시 임시 세션만 정리됩니다. `tmux list-windows -t codexm`으로 작업 창을 조회합니다.
+관리용 `tmux attach -t codexm` 직접 접속은 여전히 현재 창을 공유하므로, 독립적인 화면에는
+`codexm` 또는 출력된 `codexm terminal SESSION`을 사용하세요.
 다른 서버의 기존 작업은 `legacy-*` 연결 창을 사용하며 재시작하지 않습니다.
 잠금이 없는 일반 채팅은 보관/복원을 생략합니다. 이미 보관된 채팅에는 `unarchive`만 실행합니다.
 공식 공용 데몬이 선택한 채팅을 소유한 경우에는 그 데몬의 `thread/archive`로 진행 중인
@@ -123,7 +127,7 @@ codexm web logs
 `codexm` 세션의 `codexm-cli-<id>` 창에 공식 CLI를 엽니다. 웹에는 CLI가 출력한 기록과
 현재 화면을 표시하고, 입력은 그 터미널로 전달합니다. 별도 app-server worker나
 자체 답변 렌더링·목표 관리 엔진을 만들지 않습니다. 기본 키·슬래시 명령을 전달할 수
-있으며 고급 터미널 조작은 화면에 표시한 `tmux attach -t codexm`로 접속합니다.
+있으며 고급 터미널 조작은 화면에 표시한 `codexm terminal SESSION`으로 접속합니다.
 
 계정 화면에서 추가·재로그인(기기 코드/브라우저)·기본 지정·등록 해제를 할 수 있습니다.
 등록 해제는 인증 파일과 대화, 실행 중인 작업을 보존합니다. 로그인은 임시 인증 전용
