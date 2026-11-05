@@ -43,7 +43,7 @@
   writer release before unarchive/resume. Never start/restart the daemon or change
   its authentication for a handoff. Fail before resume if mutations fail, and never
   replay uncertain archive requests. Never delete native writer locks, edit native
-  SQLite/rollouts, kill an external CLI, silently fork, or assume unarchive
+  SQLite/rollouts, kill an unverified external CLI, silently fork, or assume unarchive
   guarantees takeover of a live writer. Preserve IDs, credentials, goals and budgets.
 - A verified macOS GUI writer may be stopped with SIGTERM only after an explicit
   foreground terminal confirmation for that execution. Show that all GUI jobs
@@ -51,6 +51,15 @@
   SIGKILL the GUI, or retry uncertain archive mutations via process termination.
   Arm the bounded GUI-reopen helper before stopping it, reopen after the selected
   CLI owns its writer or on failure, and preserve unrelated CLI/daemon processes.
+- A verified external `codex exec` writer may be taken over only after fresh
+  foreground terminal consent (default No). Verify current user, exact configured
+  runtime, OS argv command, PID incarnation and exactly one loaded chat; revalidate
+  after consent. Signal that PID once with SIGTERM and wait for both exit and writer
+  release. Never kill its launcher, a shared app-server, another CLI or an ancestor
+  of the requesting process. No piped/persisted approval, SIGKILL or automatic retry.
+  Resume the same ID/account in the official CLI without an implicit new prompt.
+  A replacement writer must fail the prepared launch, not trigger another archive
+  or takeover. Thread creation source and old launch records are not ownership proof.
 - Account selection changes authentication only. Preserve shared model/effort
   preferences and each account's GUI state and model cache. Never synchronize
   account-server preferences or copy one account's state onto another.

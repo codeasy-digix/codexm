@@ -1,4 +1,4 @@
-# GUI 인계와 tmux 작업 공간
+# GUI·외부 exec 인계와 tmux 작업 공간
 
 ## 매 실행마다 확인하는 GUI 재시작
 
@@ -25,12 +25,42 @@ GUI가 실행하던 다른 대화는 자동으로 이어지지 않는다. 이 �
 비공개 IPC/앱 번들을 변경하지 않는다. GUI 종료 실패·불명확한 RPC 결과를 성공으로 간주하지 않는다.
 
 `--terminal`과 호환 웹의 분리 실행은 대화형 승인을 대신하지 않는다. 필요한 경우 위의
-foreground resume 명령에서 인계한다. Linux와 독립 CLI writer는 소유자가 직접 해제한다.
+foreground resume 명령에서 인계한다. GUI 재시작은 macOS에서만 지원한다.
 
 복구 영수증은 `~/.local/state/codexm/native-cli/gui-restarts/`의 0600 파일이다.
 GUI 자동 복구 자체가 실패하면 `result.json`의 이유를 확인하고 기록된 앱을
 `open -a /Applications/ChatGPT.app`처럼 직접 연다. 앱 이름/경로는 설치에 따라 다르다.
 복구 도우미는 잠깐만 실행하며 daemon이나 자동 승인 설정을 남기지 않는다.
+
+## 외부 `codex exec` 인계
+
+TUI에서 채팅·계정을 선택하거나 아래처럼 실행한다. macOS와 Linux의 foreground 터미널을
+지원하며, 별도의 강제 종료 옵션이나 상주 서비스는 없다.
+
+```sh
+codexm resume THREAD_ID --account ACCOUNT
+```
+
+GUI 목록에 보이는 대화라도 실행 중인 writer는 별도 `codex exec`일 수 있다. 생성 기록의
+`source=exec`만으로 종료하지 않는다. 현재 사용자의 정확한 native 실행 파일과 OS argv의
+실제 `exec`/`e` 명령, PID 시작 식별자, 선택한 채팅 하나만 소유하는지 확인한다. 프롬프트나
+설정 값에 들어 있는 `exec` 문자열은 명령으로 취급하지 않는다. 명령 인자·환경·프롬프트는
+진단 출력이나 영구 기록에 저장하지 않는다.
+
+확인 화면에는 채팅 ID, exec PID, 선택 계정과 현재 작업 중단의 영향을 표시한다. 기본값은
+`N`이며 매 실행 다시 확인한다. 거절하거나 `yes | ...`처럼 입력을 넘기면 기존 작업을 유지한다.
+승인 후 소유자와 대상 계정·프로젝트를 다시 검증하고 해당 PID에 SIGTERM을 한 번만 보낸다.
+프로세스 종료와 writer 해제를 모두 확인한 뒤 같은 ID를 공식 CLI로 연다. 기본 resume는
+새 지시를 자동 전송하지 않으며, 이미 수행한 외부 작업을 되돌리거나 재실행하지 않는다.
+
+다른 CLI, 부모 실행기, 공용 app-server 및 daemon은 종료 대상이 아니다. 호출자가 해당 exec의
+자식이면 자신의 종료를 승인할 수 없다. 실행기가 자동 재시작하여 writer를 다시 잡으면 새
+CLI를 시작하지 않고 중단한다. 종료 거부·불확실한 결과에는 SIGKILL이나 재시도가 없다.
+설치된 runtime과 다른 실행 파일, 해석할 수 없는 argv, 다중 writer는 소유자의 환경에서
+먼저 해제해야 한다. 계정 자동 인계의 종료 권한을 외부 exec에 확대하는 기능은 아니다.
+
+새 CLI를 준비하는 동안 다른 writer가 나타나도 자동 archive 또는 추가 종료로 넘겨받지
+않는다. native lock/DB/rollout을 직접 바꾸지 않으며 채팅 ID, 기존 문맥·목표·예산을 유지한다.
 
 ## 단일 tmux 작업 공간
 

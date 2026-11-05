@@ -229,15 +229,22 @@ func Open(ctx context.Context, c config.Config, self, id, account string) (Launc
 	return OpenContinuation(ctx, c, self, id, account, false, "")
 }
 func OpenContinuation(ctx context.Context, c config.Config, self, id, account string, continuation bool, switchID string) (Launch, error) {
+	return openContinuation(ctx, c, self, id, account, continuation, switchID, false)
+}
+
+func openContinuation(ctx context.Context, c config.Config, self, id, account string, continuation bool, switchID string, requireFreeWriter bool) (Launch, error) {
 	l, e := Plan(ctx, c, id, account)
 	if e != nil {
 		return l, e
 	}
-	l.Continue, l.SwitchID = continuation, switchID
+	l.Continue, l.SwitchID, l.RequireFreeWriter = continuation, switchID, requireFreeWriter
 	if !continuation && switchID == "" {
 		if existing, err := ReusableTerminal(ctx, c, id, account); err != nil {
 			return l, err
 		} else if existing != nil {
+			if requireFreeWriter {
+				return l, errors.New("another CLI acquired this chat after preparation; no second CLI was started")
+			}
 			return *existing, nil
 		}
 	}
@@ -264,6 +271,9 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 		if existing, err := ReusableTerminal(ctx, c, id, account); err != nil {
 			return l, err
 		} else if existing != nil {
+			if requireFreeWriter {
+				return l, errors.New("another CLI acquired this chat after preparation; no second CLI was started")
+			}
 			return *existing, nil
 		}
 	}
@@ -273,7 +283,7 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 			return l, e
 		}
 		if screen.Alive {
-			if continuation || switchID != "" {
+			if continuation || switchID != "" || requireFreeWriter {
 				return l, errors.New("target terminal already exists; no continuation was replayed")
 			}
 			return old, nil
@@ -369,7 +379,7 @@ func RunSession(ctx context.Context, c config.Config, filename string) error {
 		}
 	}
 	if e == nil {
-		e = prepare(ctx, c, l, l.SwitchID == "")
+		e = prepare(ctx, c, l, l.SwitchID == "" && !l.RequireFreeWriter)
 	}
 	if e != nil {
 		l.Error = e.Error()

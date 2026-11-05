@@ -166,14 +166,17 @@ func discoverTerminal(ctx context.Context, c config.Config, id string) (*Launch,
 		return nil, nil
 	}
 	// Reject shared app-server/daemon ownership even if it was started in tmux.
-	argv, err := exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(owner.PID), "-o", "args=").Output()
+	argv, err := processArguments(owner.PID)
 	if err != nil {
 		return nil, err
 	}
-	for _, arg := range strings.Fields(string(argv)) {
-		if arg == "app-server" || arg == "daemon" || arg == "exec" {
-			return nil, nil
-		}
+	command, known := nativeCommand(argv)
+	if !known {
+		return nil, nil
+	}
+	switch command {
+	case "app-server", "daemon", "exec", "e", "exec-server", "remote-control", "review":
+		return nil, nil
 	}
 	files, err := exec.CommandContext(ctx, "lsof", "-nP", "-a", "-p", strconv.Itoa(owner.PID), "-F", "pn").Output()
 	if err != nil {

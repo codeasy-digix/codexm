@@ -60,7 +60,7 @@ func TestDiscoveredShellCLIIsReusedWithoutRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The shell remains the pane PID while the native CLI is its child.
-	pane, err := tmux(ctx, "default", "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", WorkspaceSession+":", "-n", "verify-discovery", "-e", "HOME="+home, "-e", "CODEX_SQLITE_HOME="+c.Runtime.SharedCodexHome, "/bin/sh", "-c", `"$1" resume "$2"; exit $?`, "fixture-shell", c.Runtime.CodexBinary, fixtureID)
+	pane, err := tmux(ctx, "default", "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", WorkspaceSession+":", "-n", "verify-discovery", "-e", "HOME="+home, "-e", "CODEX_SQLITE_HOME="+c.Runtime.SharedCodexHome, "/bin/sh", "-c", `"$1" resume "$2" "Inspect exec and app-server without restarting them"; exit $?`, "fixture-shell", c.Runtime.CodexBinary, fixtureID)
 	if err != nil {
 		t.Fatal(err)
 	}

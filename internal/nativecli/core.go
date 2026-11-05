@@ -110,27 +110,28 @@ func Accounts(c config.Config) ([]Account, error) {
 }
 
 type Launch struct {
-	Thread      string           `json:"thread_id"`
-	Title       string           `json:"title,omitempty"`
-	Account     string           `json:"account"`
-	Cwd         string           `json:"cwd"`
-	Session     string           `json:"session,omitempty"`
-	TmuxServer  string           `json:"tmux_server,omitempty"`
-	TmuxSession string           `json:"tmux_session,omitempty"`
-	Window      string           `json:"window,omitempty"`
-	External    bool             `json:"external,omitempty"`
-	Pane        string           `json:"pane,omitempty"`
-	At          int64            `json:"at"`
-	Binary      string           `json:"binary"`
-	Config      string           `json:"config"`
-	Ready       bool             `json:"ready"`
-	Error       string           `json:"error,omitempty"`
-	Continue    bool             `json:"continue,omitempty"`
-	Owner       *processIdentity `json:"owner,omitempty"`
-	OwnerKey    string           `json:"owner_key,omitempty"`
-	AuthKey     string           `json:"auth_key,omitempty"`
-	SwitchID    string           `json:"switch_id,omitempty"`
-	Model       string           `json:"model,omitempty"`
+	Thread            string           `json:"thread_id"`
+	Title             string           `json:"title,omitempty"`
+	Account           string           `json:"account"`
+	Cwd               string           `json:"cwd"`
+	Session           string           `json:"session,omitempty"`
+	TmuxServer        string           `json:"tmux_server,omitempty"`
+	TmuxSession       string           `json:"tmux_session,omitempty"`
+	Window            string           `json:"window,omitempty"`
+	External          bool             `json:"external,omitempty"`
+	Pane              string           `json:"pane,omitempty"`
+	At                int64            `json:"at"`
+	Binary            string           `json:"binary"`
+	Config            string           `json:"config"`
+	Ready             bool             `json:"ready"`
+	Error             string           `json:"error,omitempty"`
+	Continue          bool             `json:"continue,omitempty"`
+	RequireFreeWriter bool             `json:"require_free_writer,omitempty"`
+	Owner             *processIdentity `json:"owner,omitempty"`
+	OwnerKey          string           `json:"owner_key,omitempty"`
+	AuthKey           string           `json:"auth_key,omitempty"`
+	SwitchID          string           `json:"switch_id,omitempty"`
+	Model             string           `json:"model,omitempty"`
 }
 
 func root(c config.Config) string { return filepath.Join(c.StateDir(), "native-cli") }
@@ -370,7 +371,7 @@ func Resume(ctx context.Context, c config.Config, l Launch) error {
 		return err
 	}
 	self, _ = filepath.EvalSymlinks(self)
-	running, err := OpenContinuation(ctx, c, self, l.Thread, l.Account, l.Continue, l.SwitchID)
+	running, err := openContinuation(ctx, c, self, l.Thread, l.Account, l.Continue, l.SwitchID, true)
 	if err != nil {
 		return err
 	}

@@ -23,12 +23,12 @@ import (
 	"golang.org/x/term"
 )
 
-// Only this certain, unmutated failure can offer GUI recovery. Uncertain archive
+// Only this certain, unmutated failure can offer GUI/exec takeover. Uncertain archive
 // RPCs and unarchive errors must never become a process-termination fallback.
 type ForeignWriterError struct{ Thread string }
 
 func (e *ForeignWriterError) Error() string {
-	return fmt.Sprintf("chat %s still has an active writer; resume was not started. Retry in an interactive terminal to confirm a verified GUI restart, or release the chat in its owning GUI/CLI", e.Thread)
+	return fmt.Sprintf("chat %s still has an active writer; resume was not started. Retry in a foreground terminal for a verified GUI restart or exec takeover, or release the chat in its owner", e.Thread)
 }
 
 func confirmGUIRestart(in io.Reader, out io.Writer, interactive bool, id string, owner guiOwner) bool {
@@ -77,14 +77,26 @@ func prepareInteractive(ctx context.Context, c config.Config, l Launch) (func(),
 	if !errors.As(err, &foreign) {
 		return noop, err
 	}
+	shared := config.Expand(c.Runtime.SharedCodexHome)
+	if !cr.WriterBusy(shared, l.Thread) {
+		return noop, prepare(ctx, c, l, false)
+	}
+	// An exec worker may itself descend from a GUI tool. Prefer its bounded
+	// single-process handoff over shutting down the whole verified GUI.
+	external, execErr := findExecOwner(ctx, c, l)
+	if execErr == nil {
+		return noop, prepareExecHandoff(ctx, c, l, external)
+	}
 	owner, inspectErr := findGUIOwner(ctx, c, l.Thread)
 	if inspectErr != nil {
-		return noop, fmt.Errorf("%w (%v)", err, inspectErr)
+		if !cr.WriterBusy(shared, l.Thread) {
+			return noop, prepare(ctx, c, l, false)
+		}
+		return noop, fmt.Errorf("%w (GUI: %v; exec: %v)", err, inspectErr, execErr)
 	}
 	if !confirmGUIRestart(os.Stdin, os.Stderr, term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stderr.Fd())), l.Thread, owner) {
 		return noop, fmt.Errorf("GUI restart was not confirmed; GUI and its work were left running; %w", err)
 	}
-	shared := config.Expand(c.Runtime.SharedCodexHome)
 	if !cr.WriterBusy(shared, l.Thread) {
 		return noop, Prepare(ctx, c, l)
 	}

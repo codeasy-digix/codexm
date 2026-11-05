@@ -24,9 +24,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Install tmux on Linux
+      - name: Install terminal and ownership tools on Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux lsof
       - name: Ensure tmux on macOS
         if: runner.os == 'macOS'
         run: command -v tmux || brew install tmux
