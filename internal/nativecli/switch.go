@@ -374,7 +374,10 @@ func RequestHandoff(ctx context.Context, c config.Config, self, id, account stri
 	if e = writeJSON(file, s); e != nil {
 		return s, e
 	}
-	args := []string{"new-session", "-d", "-s", s.Session, "-c", os.TempDir()}
+	if e = ensureWorkspace(ctx); e != nil {
+		return s, e
+	}
+	args := []string{"new-window", "-d", "-t", WorkspaceSession + ":", "-n", s.Session, "-c", os.TempDir()}
 	for _, key := range []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
 		if v, ok := os.LookupEnv(key); ok {
 			args = append(args, "-e", key+"="+v)
@@ -436,7 +439,7 @@ func RunHandoff(ctx context.Context, c config.Config, self, file string) (result
 	if pane := os.Getenv("TMUX_PANE"); pane == "" {
 		return errors.New("handoff helper must run in its owned tmux pane")
 	} else {
-		identity, e := tmux(ctx, CodexTmuxServer, "display-message", "-p", "-t", pane, "#{session_name}|#{pane_pid}")
+		identity, e := tmux(ctx, CodexTmuxServer, "display-message", "-p", "-t", pane, "#{window_name}|#{pane_pid}")
 		if e != nil || strings.TrimSpace(identity) != fmt.Sprintf("%s|%d", s.Session, os.Getpid()) {
 			return errors.New("handoff helper pane ownership changed")
 		}
@@ -447,7 +450,7 @@ func RunHandoff(ctx context.Context, c config.Config, self, file string) (result
 		}
 	}()
 	// Never leave a dead helper pane or reuse a claimed request.
-	_, _ = tmux(ctx, CodexTmuxServer, "set-option", "-w", "-t", s.Session, "remain-on-exit", "off")
+	_, _ = tmux(ctx, CodexTmuxServer, "set-option", "-w", "-t", WorkspaceSession+":"+s.Session, "remain-on-exit", "off")
 	if e = os.Mkdir(filepath.Join(switchDir(c, id), "claimed"), 0700); e != nil {
 		return errors.New("handoff request was already claimed; not replayed")
 	}
@@ -541,19 +544,26 @@ func followTerminal(ctx context.Context, c config.Config, old, next Launch) {
 	if old.Session == "" || old.TmuxServer != CodexTmuxServer {
 		return
 	}
-	// Only our single, now-dead pane qualifies for cleanup/client following.
-	p, e := tmux(ctx, old.TmuxServer, "list-panes", "-s", "-t", "="+old.Session, "-F", "#{pane_id}|#{pane_dead}|#{pane_pid}")
+	// A handoff follows only viewers of this pane, never every workspace client.
+	if old.Owner == nil {
+		return
+	}
+	p, e := tmux(ctx, old.TmuxServer, "display-message", "-p", "-t", old.Pane, "#{pane_id}|#{pane_dead}|#{pane_pid}")
 	if e != nil || strings.TrimSpace(p) != fmt.Sprintf("%s|1|%d", old.Pane, old.Owner.PID) {
 		return
 	}
-	clients, e := tmux(ctx, old.TmuxServer, "list-clients", "-t", "="+old.Session, "-F", "#{client_name}")
+	clients, e := tmux(ctx, old.TmuxServer, "list-clients", "-F", "#{client_name}|#{pane_id}")
 	if e != nil {
 		return
 	}
-	for _, client := range strings.Fields(clients) {
-		if _, e = tmux(ctx, old.TmuxServer, "switch-client", "-c", client, "-t", "="+next.Session); e != nil {
+	for _, line := range strings.Split(strings.TrimSpace(clients), "\n") {
+		client, pane, ok := strings.Cut(line, "|")
+		if !ok || pane != old.Pane {
+			continue
+		}
+		if _, e = tmux(ctx, old.TmuxServer, "switch-client", "-c", client, "-t", attachTarget(next)); e != nil {
 			return
 		}
 	}
-	_, _ = tmux(ctx, old.TmuxServer, "kill-session", "-t", "="+old.Session)
+	_ = removeTerminal(ctx, old)
 }

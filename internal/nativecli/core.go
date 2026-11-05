@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
@@ -111,23 +110,27 @@ func Accounts(c config.Config) ([]Account, error) {
 }
 
 type Launch struct {
-	Thread     string           `json:"thread_id"`
-	Account    string           `json:"account"`
-	Cwd        string           `json:"cwd"`
-	Session    string           `json:"session,omitempty"`
-	TmuxServer string           `json:"tmux_server,omitempty"`
-	Pane       string           `json:"pane,omitempty"`
-	At         int64            `json:"at"`
-	Binary     string           `json:"binary"`
-	Config     string           `json:"config"`
-	Ready      bool             `json:"ready"`
-	Error      string           `json:"error,omitempty"`
-	Continue   bool             `json:"continue,omitempty"`
-	Owner      *processIdentity `json:"owner,omitempty"`
-	OwnerKey   string           `json:"owner_key,omitempty"`
-	AuthKey    string           `json:"auth_key,omitempty"`
-	SwitchID   string           `json:"switch_id,omitempty"`
-	Model      string           `json:"model,omitempty"`
+	Thread      string           `json:"thread_id"`
+	Title       string           `json:"title,omitempty"`
+	Account     string           `json:"account"`
+	Cwd         string           `json:"cwd"`
+	Session     string           `json:"session,omitempty"`
+	TmuxServer  string           `json:"tmux_server,omitempty"`
+	TmuxSession string           `json:"tmux_session,omitempty"`
+	Window      string           `json:"window,omitempty"`
+	External    bool             `json:"external,omitempty"`
+	Pane        string           `json:"pane,omitempty"`
+	At          int64            `json:"at"`
+	Binary      string           `json:"binary"`
+	Config      string           `json:"config"`
+	Ready       bool             `json:"ready"`
+	Error       string           `json:"error,omitempty"`
+	Continue    bool             `json:"continue,omitempty"`
+	Owner       *processIdentity `json:"owner,omitempty"`
+	OwnerKey    string           `json:"owner_key,omitempty"`
+	AuthKey     string           `json:"auth_key,omitempty"`
+	SwitchID    string           `json:"switch_id,omitempty"`
+	Model       string           `json:"model,omitempty"`
 }
 
 func root(c config.Config) string { return filepath.Join(c.StateDir(), "native-cli") }
@@ -185,6 +188,7 @@ func Plan(ctx context.Context, c config.Config, id, account string) (Launch, err
 	for _, e := range list.Sessions {
 		if e.ID == id {
 			l.Cwd = e.Cwd
+			l.Title = e.Title
 			l.Model = e.Model
 			found = true
 			break
@@ -361,19 +365,14 @@ func Resume(ctx context.Context, c config.Config, l Launch) error {
 		return err
 	}
 	defer cleanup()
-	l.Ready = true
-	if err := trackLaunch(ctx, c, &l); err != nil {
+	self, err := os.Executable()
+	if err != nil {
 		return err
 	}
-	if err := writeReceipt(c, l); err != nil {
+	self, _ = filepath.EvalSymlinks(self)
+	running, err := OpenContinuation(ctx, c, self, l.Thread, l.Account, l.Continue, l.SwitchID)
+	if err != nil {
 		return err
 	}
-	if err := os.Chdir(l.Cwd); err != nil {
-		return err
-	}
-	// Replace codexm: the official CLI owns terminal input, signals and exit code.
-	err = syscall.Exec(l.Binary, ResumeArgs(l), launchEnvironment(c, l))
-	l.Ready = false
-	_ = writeReceipt(c, l)
-	return err
+	return Attach(ctx, c, running.Session)
 }

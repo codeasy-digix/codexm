@@ -103,8 +103,8 @@ func TestReusableTerminalRequiresCurrentThreadOwnerAndAccount(t *testing.T) {
 			}
 			got, err := ReusableTerminal(context.Background(), c, l.Thread, selected)
 			if mode == "different-account" {
-				if err == nil || !strings.Contains(err.Error(), "selected account other was not applied") {
-					t.Fatalf("account switch was hidden: %v", err)
+				if err != nil || got == nil || got.Account != "default" {
+					t.Fatalf("running authentication changed: %+v %v", got, err)
 				}
 			} else if mode == "multiple-chats" {
 				if err == nil || !strings.Contains(err.Error(), "multiple loaded chats") {
@@ -113,7 +113,7 @@ func TestReusableTerminalRequiresCurrentThreadOwnerAndAccount(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			if (got != nil) != (mode == "live") {
+			if (got != nil) != (mode == "live" || mode == "different-account") {
 				t.Fatalf("wrong reconnect decision: %+v %v", got, err)
 			}
 			if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), "argv")); !os.IsNotExist(err) {
@@ -207,7 +207,7 @@ func TestDeadOwnedPaneExposesExitCodeAndHandoffError(t *testing.T) {
 }
 
 func TestTmuxNamespaceRoutesNewAndLegacyReceipts(t *testing.T) {
-	for _, server := range []string{"", CodexTmuxServer} {
+	for _, server := range []string{"", "codex", CodexTmuxServer} {
 		t.Run("server="+server, func(t *testing.T) {
 			c := fixture(t)
 			h := os.Getenv("HOME")
@@ -228,14 +228,14 @@ has-session) exit 0;;
 display-message) printf '` + l.Session + `|0|\n';;
 capture-pane) printf 'correct server\n';;
 load-buffer) cat > "$HOME/input-text";;
-paste-buffer|send-keys|delete-buffer|kill-session) exit 0;;
+paste-buffer|send-keys|delete-buffer|kill-pane) exit 0;;
 *) exit 98;;
 esac
 `
 			os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700)
 			t.Setenv("PATH", h+string(os.PathListSeparator)+os.Getenv("PATH"))
 			screen, err := Screen(context.Background(), c, l.Session)
-			if err != nil || screen.Text != "correct server" || screen.Attach != "tmux -L "+expected+" attach -t "+l.Session {
+			if err != nil || screen.Text != "correct server" || screen.Attach != "tmux -L "+expected+" attach -t ="+l.Session {
 				t.Fatalf("wrong server: %+v %v", screen, err)
 			}
 			if err = Input(context.Background(), c, l.Session, "literal $(do-not-run)", ""); err != nil {
@@ -271,7 +271,7 @@ func TestTmuxAttachSwitchesOnlyWithinSameServer(t *testing.T) {
 }
 
 // Real tmux, synthetic history/login, fake official CLI. No real chat is opened.
-func TestNativeTerminalUsesDedicatedServer(t *testing.T) {
+func TestNativeTerminalUsesSharedWorkspace(t *testing.T) {
 	self := os.Getenv("CODEXM_TUI_TEST_BINARY")
 	if self == "" {
 		t.Skip("opt-in built native launcher")
@@ -293,8 +293,23 @@ printf 'NAMESPACE_TEST_FINISHED\n'
 	}
 	defer Close(context.Background(), c, l.Session)
 	if l.TmuxServer != CodexTmuxServer {
-		t.Fatal("new terminal was not isolated")
+		t.Fatal("new terminal used the wrong server")
 	}
+	if l.TmuxSession != WorkspaceSession || l.Window == "" {
+		t.Fatalf("missing workspace identity: %+v", l)
+	}
+	other, err := tmux(context.Background(), "default", "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", WorkspaceSession+":", "-n", "verify-neighbor", "/bin/sleep", "60")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other = strings.TrimSpace(other)
+	defer tmux(context.Background(), "default", "kill-pane", "-t", other)
+	defer func() {
+		_ = Close(context.Background(), c, l.Session)
+		if _, err := tmux(context.Background(), "default", "display-message", "-p", "-t", other, "#{pane_pid}"); err != nil {
+			t.Fatal("closing one chat killed another workspace window")
+		}
+	}()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		screen, e := Screen(context.Background(), c, l.Session)

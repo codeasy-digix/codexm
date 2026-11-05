@@ -21,7 +21,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const CodexTmuxServer = "codex"
+const CodexTmuxServer = "default"
+const WorkspaceSession = "codexm"
 
 var sessionName = regexp.MustCompile(`^codexm-cli-[a-f0-9]{16}$`)
 
@@ -62,7 +63,7 @@ func readSession(c config.Config, s string) (Launch, error) {
 		return l, e
 	}
 	e = json.Unmarshal(b, &l)
-	if e == nil && ((l.TmuxServer != "" && l.TmuxServer != CodexTmuxServer) || l.Session != s || !threadID.MatchString(l.Thread) || !regexp.MustCompile(`^%[0-9]+$`).MatchString(l.Pane)) {
+	if e == nil && ((l.TmuxServer != "" && l.TmuxServer != "default" && l.TmuxServer != "codex") || l.Session != s || !threadID.MatchString(l.Thread) || !regexp.MustCompile(`^%[0-9]+$`).MatchString(l.Pane)) {
 		e = errors.New("invalid native session receipt")
 	}
 	return l, e
@@ -78,11 +79,18 @@ func terminalName(c config.Config, id, account string) string {
 // live pane must still run Codex and hold this chat's writer-lock file open.
 func ReusableTerminal(ctx context.Context, c config.Config, id, account string) (*Launch, error) {
 	for _, l := range Sessions(c) {
+		if l.External {
+			continue
+		}
 		if l.Thread != id || l.Session != terminalName(c, l.Thread, l.Account) {
 			continue
 		}
 		screen, err := Screen(ctx, c, l.Session)
 		if err != nil {
+			// Its window may have moved. Locate the actual writer before deciding.
+			if discovered, discoverErr := discoverTerminal(ctx, c, id); discoverErr != nil || discovered != nil {
+				return discovered, discoverErr
+			}
 			return nil, err
 		}
 		if !screen.Alive {
@@ -96,7 +104,7 @@ func ReusableTerminal(ctx context.Context, c config.Config, id, account string) 
 			return nil, err
 		}
 		parts := strings.Split(strings.TrimSpace(info), "|")
-		if len(parts) != 3 || parts[0] != l.Session || parts[2] != filepath.Base(l.Binary) {
+		if len(parts) != 3 || parts[0] != containerSession(l) || parts[2] != filepath.Base(l.Binary) {
 			return nil, fmt.Errorf("recorded terminal no longer identifies the expected Codex process; inspect with codexm terminal %s", l.Session)
 		}
 		pid, err := strconv.Atoi(parts[1])
@@ -145,12 +153,9 @@ func ReusableTerminal(ctx context.Context, c config.Config, id, account string) 
 		if len(loaded) != 1 {
 			return nil, fmt.Errorf("existing CLI has multiple loaded chats; its current view cannot be verified. Connect explicitly with codexm terminal %s", l.Session)
 		}
-		if l.Account != account {
-			return nil, fmt.Errorf("this chat is already running under account %s in %s; selected account %s was not applied. Reconnect with codexm terminal %s, or exit that CLI before changing accounts", l.Account, l.Session, account, l.Session)
-		}
 		return &l, nil
 	}
-	return nil, nil
+	return discoverTerminal(ctx, c, id)
 }
 
 // Attach never detaches another client or stops the existing CLI. Inside tmux,
@@ -160,8 +165,29 @@ func Attach(ctx context.Context, c config.Config, session string) error {
 	if err != nil {
 		return err
 	}
-	if _, err = tmux(ctx, t.Launch.TmuxServer, "has-session", "-t", "="+session); err != nil {
+	if _, err = tmux(ctx, t.Launch.TmuxServer, "has-session", "-t", "="+containerSession(t.Launch)); err != nil {
 		return err
+	}
+	if t.Launch.External && (t.Launch.Owner == nil || !sameProcess(ctx, *t.Launch.Owner)) {
+		return errors.New("existing CLI exited; no terminal was attached")
+	}
+	if t.Launch.TmuxServer == "codex" {
+		portal, err := legacyPortal(ctx, t.Launch)
+		if err != nil {
+			return err
+		}
+		t.Launch = portal
+	} else if t.Launch.TmuxSession != "" {
+		view, err := workspaceView(ctx, t.Launch)
+		if err != nil {
+			return err
+		}
+		t.Launch = view
+	}
+	if t.Launch.TmuxSession != "" {
+		if _, err = tmux(ctx, t.Launch.TmuxServer, "select-pane", "-t", t.Launch.Pane); err != nil {
+			return err
+		}
 	}
 	bin, err := exec.LookPath("tmux")
 	if err != nil {
@@ -174,7 +200,7 @@ func Attach(ctx context.Context, c config.Config, session string) error {
 		return err
 	}
 	command, env := attachMode(os.Getenv("TMUX"), strings.TrimSpace(socket), os.Environ())
-	return syscall.Exec(bin, append([]string{bin}, tmuxArgs(t.Launch.TmuxServer, command, "-t", "="+session)...), env)
+	return syscall.Exec(bin, append([]string{bin}, tmuxArgs(t.Launch.TmuxServer, command, "-t", attachTarget(t.Launch))...), env)
 }
 func attachMode(current, socket string, env []string) (string, []string) {
 	if current != "" && strings.Split(current, ",")[0] == socket {
@@ -193,7 +219,7 @@ func AttachCommand(l Launch) string {
 	if server == "" {
 		server = "default"
 	}
-	return "tmux -L " + server + " attach -t " + l.Session
+	return "tmux -L " + server + " attach -t " + attachTarget(l)
 }
 
 // Open creates a named terminal only. There is no supervisor, RPC worker or model
@@ -207,11 +233,19 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 		return l, e
 	}
 	l.Continue, l.SwitchID = continuation, switchID
+	if !continuation && switchID == "" {
+		if existing, err := ReusableTerminal(ctx, c, id, account); err != nil {
+			return l, err
+		} else if existing != nil {
+			return *existing, nil
+		}
+	}
 	if _, e = exec.LookPath("tmux"); e != nil {
 		return l, errors.New("tmux is required for web/native terminal sessions")
 	}
 	l.Session = terminalName(c, id, account)
 	l.TmuxServer = CodexTmuxServer
+	l.TmuxSession = WorkspaceSession
 	if e = os.MkdirAll(root(c), 0700); e != nil {
 		return l, e
 	}
@@ -224,6 +258,14 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 		return l, e
 	}
 	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	// Recheck after serializing competing open requests for the same chat.
+	if !continuation && switchID == "" {
+		if existing, err := ReusableTerminal(ctx, c, id, account); err != nil {
+			return l, err
+		} else if existing != nil {
+			return *existing, nil
+		}
+	}
 	if old, e := readSession(c, l.Session); e == nil {
 		screen, e := Screen(ctx, c, l.Session)
 		if e != nil {
@@ -235,9 +277,16 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 			}
 			return old, nil
 		}
-		_, _ = tmux(ctx, old.TmuxServer, "kill-session", "-t", "="+l.Session)
+		if screen.ExitCode != nil || screen.Text != "" {
+			if e = removeTerminal(ctx, old); e != nil {
+				return l, e
+			}
+		}
 	}
-	args := []string{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", l.Session, "-x", "110", "-y", "36", "-c", l.Cwd}
+	if e = ensureWorkspace(ctx); e != nil {
+		return l, e
+	}
+	args := []string{"new-window", "-d", "-P", "-F", "#{pane_id}", "-t", WorkspaceSession + ":", "-n", windowLabel(l), "-c", l.Cwd}
 	// A long-lived tmux server can retain an obsolete PATH/locale. Resolve the
 	// native CLI and XDG paths in the same environment as the requesting client.
 	for _, key := range []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
@@ -251,10 +300,16 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 		return l, e
 	}
 	l.Pane = strings.TrimSpace(pane)
+	window, e := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", l.Pane, "#{window_id}")
+	if e != nil {
+		_, _ = tmux(ctx, l.TmuxServer, "kill-pane", "-t", l.Pane)
+		return l, e
+	}
+	l.Window = strings.TrimSpace(window)
 	complete := false
 	defer func() {
 		if !complete {
-			_, _ = tmux(context.Background(), l.TmuxServer, "kill-session", "-t", "="+l.Session)
+			_, _ = tmux(context.Background(), l.TmuxServer, "kill-pane", "-t", l.Pane)
 		}
 	}()
 	if _, e = tmux(ctx, l.TmuxServer, "set-option", "-w", "-t", l.Pane, "remain-on-exit", "on"); e != nil {
@@ -262,13 +317,20 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 	}
 	// set-option's session target does not accept the '=' exact-match prefix on
 	// supported tmux versions; this exact, freshly-created name is already owned.
-	if _, e = tmux(ctx, l.TmuxServer, "set-option", "-t", l.Session, "history-limit", "10000"); e != nil {
+	if _, e = tmux(ctx, l.TmuxServer, "set-option", "-t", WorkspaceSession, "history-limit", "10000"); e != nil {
 		return l, e
 	}
 	if e = saveSession(c, l); e != nil {
 		return l, e
 	}
-	if _, e = tmux(ctx, l.TmuxServer, "respawn-pane", "-k", "-t", l.Pane, "-c", l.Cwd, self, "--config", c.Path, "__native-run", sessionPath(c, l.Session)); e != nil {
+	respawn := []string{"respawn-pane", "-k", "-t", l.Pane, "-c", l.Cwd}
+	for _, key := range []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+		if value, ok := os.LookupEnv(key); ok {
+			respawn = append(respawn, "-e", key+"="+value)
+		}
+	}
+	respawn = append(respawn, self, "--config", c.Path, "__native-run", sessionPath(c, l.Session))
+	if _, e = tmux(ctx, l.TmuxServer, respawn...); e != nil {
 		return l, e
 	}
 	complete = true
@@ -342,20 +404,29 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 		return Terminal{}, e
 	}
 	t := Terminal{Launch: l, Attach: AttachCommand(l)}
+	if l.External && (l.Owner == nil || !sameProcess(ctx, *l.Owner)) {
+		return t, nil
+	}
+	if l.Window != "" {
+		windows, err := tmux(ctx, l.TmuxServer, "list-windows", "-a", "-F", "#{window_id}")
+		if err != nil || !strings.Contains("\n"+windows, "\n"+l.Window+"\n") {
+			return t, nil
+		}
+	}
 	// tmux display-message can fall back to its current pane for a stale target.
 	// A closed session is simply exited, even while its last receipt remains.
-	if _, e = tmux(ctx, l.TmuxServer, "has-session", "-t", "="+s); e != nil {
+	if _, e = tmux(ctx, l.TmuxServer, "has-session", "-t", "="+containerSession(l)); e != nil {
 		return t, nil
 	}
 	value, e := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", l.Pane, "#{session_name}|#{pane_dead}|#{pane_dead_status}")
 	if e != nil {
-		if _, exists := tmux(ctx, l.TmuxServer, "has-session", "-t", "="+s); exists == nil {
+		if _, exists := tmux(ctx, l.TmuxServer, "has-session", "-t", "="+containerSession(l)); exists == nil {
 			return t, errors.New("recorded native pane is missing from an existing session; inspect it manually")
 		}
 		return t, nil
 	}
 	parts := strings.Split(strings.TrimSpace(value), "|")
-	if (len(parts) != 2 && len(parts) != 3) || parts[0] != s {
+	if (len(parts) != 2 && len(parts) != 3) || parts[0] != containerSession(l) {
 		return t, errors.New("native pane no longer belongs to the recorded session")
 	}
 	t.Alive = parts[1] == "0"
@@ -418,11 +489,13 @@ func Close(ctx context.Context, c config.Config, s string) error {
 	if e != nil {
 		return e
 	}
-	if _, e = tmux(ctx, t.Launch.TmuxServer, "has-session", "-t", "="+t.Launch.Session); e != nil {
+	if t.Launch.External {
+		return errors.New("discovered terminal belongs to an existing CLI; exit it there")
+	}
+	if !t.Alive && t.ExitCode == nil && t.Text == "" {
 		return nil
 	}
-	_, e = tmux(ctx, t.Launch.TmuxServer, "kill-session", "-t", "="+t.Launch.Session)
-	return e
+	return removeTerminal(ctx, t.Launch)
 }
 func Sessions(c config.Config) []Launch {
 	all := []Launch{}

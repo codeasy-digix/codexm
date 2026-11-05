@@ -146,7 +146,7 @@ func testAccountReplacement(t *testing.T, ignoreTerm bool) {
 	}
 	t.Cleanup(func() {
 		for _, s := range Sessions(c) {
-			_, _ = tmux(context.Background(), s.TmuxServer, "kill-session", "-t", "="+s.Session)
+			_ = removeTerminal(context.Background(), s)
 		}
 	})
 	await := func(what string, ok func() bool) {

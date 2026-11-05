@@ -4,9 +4,9 @@
 공식 Codex CLI에 현재 터미널을 넘긴다. 직전 계정을 모르거나 등록 해제했다면
 `default`를 사용한다. 별도 계정 질문을 거치지 않는다.
 
-같은 대화·계정의 codexm CLI가 이미 tmux에서 실행 중이면 새 archive/resume 대신
-그 터미널로 연결한다. 프로세스와 대화 writer 파일 소유를 확인하며, 계정이 다르면
-기존 터미널/계정을 안내하고 자동 변경하지 않는다. 새 기본 인증 지정 후 예전 `default`
+해당 대화의 일반 Codex CLI 또는 codexm CLI가 tmux에서 실행 중이면 새 archive/resume 대신
+그 화면으로 연결한다. writer·프로세스·pane의 부모 관계를 확인한다. 선택 계정과 달라도
+실행 중인 계정으로 연결하며 인증을 변경하지 않는다. 계정 변경은 명시적인 handoff다. 새 기본 인증 지정 후 예전 `default`
 터미널에 연결하는 경우도 실행 중 인증을 유지한다. 새 인증은 그 CLI 종료 후 새 실행에 적용한다.
 
 ## 화면과 키
@@ -56,8 +56,8 @@ codexm (Go 진입점)
            └─ 소유한 codexm bridge --stdio 하나 (Go 계정/읽기 전용 목록/공식 보관·복원)
   Enter → 터미널 복구 → bridge/임시 인증 정리
         → exec codexm resume ID --account NAME
-        → 검증된 동일 계정 CLI가 있으면 tmux 연결
-        → 없으면 공식 archive/unarchive → exec 공식 Codex CLI
+        → 검증된 실행 중 CLI가 있으면 해당 화면 연결
+        → 없으면 필요 시 공식 unarchive → default/codexm의 새 창 → 공식 CLI
 ```
 
 TUI는 Ratatui/Crossterm으로 작성했다. 검증된 Go 인증/목록/CLI 인계는 로컬 stdio
@@ -73,15 +73,14 @@ PTY가 닫혀 입력 reader가 기다리더라도 주 루프는 신호를 처리
 검증된 macOS GUI가 writer를 소유하면 TUI를 정상 복구한 뒤 터미널에서 매번 GUI 재시작을
 확인한다. 다른 GUI 작업도 중단되고 자동 재개되지 않음을 알리며 기본값은 취소다.
 공식 CLI가 잠금을 받은 뒤 GUI를 복구한다. 독립 CLI·비대화형 실행은 자동 종료하지 않는다.
-[GUI 인계와 전용 tmux](gui-handoff.md)에 실패 복구와 기존 세션 호환성을 설명한다.
+[GUI 인계와 tmux 작업 공간](gui-handoff.md)에 실패 복구와 기존 세션 호환성을 설명한다.
 잠금 파일 삭제·DB 수정·자동 fork를 하지 않는다.
 
 `build.sh`는 Go와 Rust 실행 파일을 함께 만든다. 설치기는 두 파일의 버전과 내용을
 검증하고 두 파일을 합친 해시로 immutable 설치 디렉터리를 구분한다. Rust만 변경해도
 새 설치가 된다. 공개 명령은 `codexm` 하나이며 `codexm-tui`는 같은 디렉터리의 내부 구성이다.
 이미 실행한 Mach-O 파일은 덮어쓰지 않고 새 inode로 교체하여 macOS 서명 캐시와 충돌하지 않는다.
-소스 빌드에는 Go/Rust, 설치 후에는 공식 Codex만 필요하다. 현재 터미널 재개에는 tmux도
-필수가 아니다. 다른 OS를 교차 빌드하려면 Rust target과 해당 플랫폼 linker가 필요하다.
+소스 빌드에는 Go/Rust, 지속되는 CLI 실행에는 공식 Codex와 tmux가 필요하다. 재연결 소유자 확인에는 lsof도 필요하다. 다른 OS를 교차 빌드하려면 Rust target과 해당 플랫폼 linker가 필요하다.
 
 웹 소스/명시적 명령은 호환용으로 남기고 기본 설치에는 웹 번들을 넣지 않는다.
 기존 웹의 이름 있는 CLI 세션은 웹을 중지해도 그대로 사용할 수 있다.

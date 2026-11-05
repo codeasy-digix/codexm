@@ -59,10 +59,9 @@ codexm handoff-status THREAD_ID
   거절한다. 직접 실행한 `codex`와 업데이트 전 실행은 자동 종료 대상으로 삼지 않는다.
 - SIGTERM 뒤 기존 프로세스와 잠금이 모두 없어져야 새 CLI를 시작한다. 제한 시간 안에
   종료되지 않으면 실패로 남기며 SIGKILL이나 잠금 파일 삭제를 하지 않는다.
-- 새 CLI는 `tmux -L codex`의 `codexm-cli-*` 세션에서 실행된다. 기존 CLI도 그 서버의
-  전용 단일 pane이었다면 연결된 클라이언트를 새 세션으로 옮기고 종료된 옛 세션을
-  정리한다. 일반 터미널에서 직접 실행 중이었다면 그 셸은 돌아오고 작업은 새 tmux에서
-  계속된다. 출력된 `tmux -L codex attach -t SESSION`으로 연결할 수 있다.
+- 새 CLI는 default 서버의 `codexm` 세션 안에 대화별 창으로 실행된다. 검증된 종료 pane을
+  보고 있던 클라이언트만 새 창으로 연결하고 다른 창은 유지한다. 옛 pane만 정리한다.
+  `tmux attach -t codexm` 또는 출력된 `codexm terminal SESSION`으로 다시 연결한다.
 - GUI 소유 대화는 실제 foreground 터미널에서 실행한 명령만 기존의 매번 확인하는
   GUI 재시작 경로를 쓸 수 있다. GUI 안의 에이전트 도구 호출이나 `--if-low`로는
   GUI 종료를 승인하지 않는다. 다른 GUI 작업까지 중단된다는 안내는 유지한다.

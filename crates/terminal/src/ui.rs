@@ -164,7 +164,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else {
         match app.view {
             View::Chats => {
-                "↑↓ 이동 · Enter 바로 재개 · → 상세/계정 · / 검색 · A 보관 · R 갱신 · Q 종료"
+                "↑↓ 이동 · Enter 연결/재개 · → 상세/계정 · / 검색 · A 보관 · R 갱신 · Q 종료"
             }
             View::Detail => "↑↓ 이번 계정 선택 · Enter 적용 후 목록 · → 채팅 관리 · ←/Esc 목록",
             View::ChatManage => "↑↓ 메뉴 · Enter 선택 · ←/Esc 계정 선택 · F2 설정",
@@ -381,7 +381,7 @@ fn settings(frame: &mut Frame, area: Rect, app: &App) {
         parts[1],
         "현재 환경",
         format!(
-            "대화 저장소: {}\n계정 저장소: {}\n설정 파일: {}\n\nTUI는 계정·채팅 선택과 보관/복원을 관리합니다.\nEnter로 넘긴 뒤에는 공식 Codex CLI가 작업을 이어갑니다.\n웹 서버·자동 계정 교체·history-sync는 필요하지 않습니다.",
+            "대화 저장소: {}\n계정 저장소: {}\n설정 파일: {}\n\nTUI는 계정·채팅 선택과 보관/복원을 관리합니다.\nEnter로 실행 중인 CLI 화면에 연결하거나 새 CLI 창을 엽니다.\n터미널을 닫아도 tmux 안의 작업은 계속됩니다.\n웹 서버·자동 계정 교체·history-sync는 필요하지 않습니다.",
             clean(app.snapshot.paths["history"].as_str().unwrap_or("")),
             clean(app.snapshot.paths["accounts"].as_str().unwrap_or("")),
             clean(app.snapshot.paths["config"].as_str().unwrap_or(""))

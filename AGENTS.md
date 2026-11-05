@@ -31,7 +31,7 @@
   current codexm launch receipt, PID incarnation, executable and exactly one
   native writer before SIGTERM. Wait for both process exit and writer release
   before starting the same ID with one continuation prompt. Never SIGKILL or
-  replay uncertain prompts. The temporary helper uses `tmux -L codex` and exits.
+  replay uncertain prompts. The temporary helper uses one window in default/codexm and exits.
   `--if-low 5` uses fresh 5h/week limits; unknown limits are not permission to
   switch, aliases of the same login are not another account. GUI requests still
   require a real foreground terminal and confirmation each time. See
@@ -63,14 +63,15 @@
   code. No HTTP listener or per-keystroke subprocess. Restore terminal state and
   reap the owned bridge/auth helpers before exec into the official-CLI launcher.
   Do not block navigation on background reads or replay uncertain mutations.
-- The foreground launcher replaces itself with the installed official CLI. The
-  web launches that CLI in named codexm-cli-* tmux terminals, reads their output,
+- The foreground launcher connects to a persistent official CLI window in the
+  default tmux server’s single codexm session. The web reads the same terminals,
   and forwards literal input. It does not interpret chat turns or run model logic.
   Closing a web viewer must not stop the CLI. Never replay uncertain input.
-- Before a fresh foreground resume, reuse a matching live codexm tmux CLI only
-  after verifying the receipt, pane/process and that process's open thread-writer
-  file. Preserve running authentication, including old default sessions. Refuse
-  an account mismatch instead of silently reusing a different selection. A GUI
+- Before a fresh resume, find an existing interactive CLI by its writer file,
+  process incarnation and pane ancestry, including ordinary codex launches.
+  Connecting preserves the running authentication and submits no continuation.
+  Explain that changing accounts requires an explicit handoff. Discovery never
+  grants process-termination authority. A GUI
   stdio owner needs owner-side archive or the explicitly confirmed GUI restart;
   a new CLI archive cannot release that writer. The desktop's optional shared-daemon mode is not enabled by codexm.
 - Keep the TUI event reader separate from the main signal/shutdown loop. Test
@@ -83,9 +84,10 @@
   of thread IDs, account names, input, directory names or terminal keys.
 - Keep running work and old metadata. During migration retire only verified idle
   legacy product services; do not stop official Codex, GUI or unrelated tmux jobs.
-  New Codex-related sessions use `tmux -L codex` for create/list/attach/control.
-  Never alias all tmux globally. Receipts without a server retain `-L default`;
-  do not move or kill live legacy sessions. Test sessions are cleaned up afterward.
+  All new jobs use named windows in the default server’s single `codexm` session.
+  Never kill this shared session or alias ordinary tmux. Legacy codex-server jobs
+  remain alive behind workspace connection windows until they exit. Preserve old
+  receipt routing. Cleanup targets only a verified owned pane/window.
 - Run Go race tests/vet and relevant isolated official-CLI tests; run web checks
   when changing web behavior. Exercise Rust TUI keys/account mutations/handoff in
   an isolated tmux PTY. Use synthetic accounts/chats for handoff tests.

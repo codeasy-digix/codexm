@@ -134,7 +134,10 @@ func armGUIReopen(ctx context.Context, c config.Config, l Launch, owner guiOwner
 	if err = writeJSON(filepath.Join(dir, "request.json"), spec); err != nil {
 		return nil, err
 	}
-	args := []string{"new-session", "-d", "-s", session, "-e", "PATH=" + os.Getenv("PATH"), "-e", "HOME=" + os.Getenv("HOME")}
+	if err := ensureWorkspace(ctx); err != nil {
+		return nil, err
+	}
+	args := []string{"new-window", "-d", "-t", WorkspaceSession + ":", "-n", session, "-e", "PATH=" + os.Getenv("PATH"), "-e", "HOME=" + os.Getenv("HOME")}
 	for _, key := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
 		if value, ok := os.LookupEnv(key); ok {
 			args = append(args, "-e", key+"="+value)
@@ -145,7 +148,7 @@ func armGUIReopen(ctx context.Context, c config.Config, l Launch, owner guiOwner
 		return nil, err
 	}
 	// Force cleanup on exit even if personal tmux configuration keeps dead panes.
-	if _, err = tmux(ctx, CodexTmuxServer, "set-option", "-w", "-t", session, "remain-on-exit", "off"); err != nil {
+	if _, err = tmux(ctx, CodexTmuxServer, "set-option", "-w", "-t", WorkspaceSession+":"+session, "remain-on-exit", "off"); err != nil {
 		return nil, err
 	}
 	recovery := &guiRecovery{dir: dir}
@@ -155,7 +158,7 @@ func armGUIReopen(ctx context.Context, c config.Config, l Launch, owner guiOwner
 		if b, e := os.ReadFile(filepath.Join(dir, "ready.json")); e == nil {
 			var helper processIdentity
 			if json.Unmarshal(b, &helper) == nil && sameProcess(ctx, helper) {
-				fmt.Fprintf(os.Stderr, "GUI recovery: %s\n%s\n", session, "tmux -L codex attach -t "+session)
+				fmt.Fprintf(os.Stderr, "GUI recovery: %s\n%s\n", session, "tmux attach -t codexm")
 				return recovery, nil
 			}
 		}

@@ -13,7 +13,7 @@
 | CLI 셸 함수 | 제품의 `internal/shellinit/`; `codexm shell-init zsh`로 출력 |
 | 이미 설치된 명령과 의존성 목록 | `.home/manifests/home.json`의 외부 도구 등록 |
 | 개인 zsh 로드 설정 | `.home/config/codexm/shell.zsh`; 제품 함수를 로드하는 짧은 설정 |
-| 실행 생명주기 | 공식 CLI 직접 실행; 웹과 별도 CLI는 `tmux -L codex`의 이름 있는 세션 |
+| 실행 생명주기 | 공식 CLI 직접 실행; 웹과 별도 CLI는 default 서버의 `codexm` 세션 안에 이름 있는 창 |
 | 장비 간 history-sync | 제거. 코드·서비스·활성 환경 등록 없음 |
 
 `.home`에는 codexm source clone, revision pin, build/install/update 호출, 제품
@@ -108,5 +108,5 @@ relay 통합·`.home` pin/build 설명은 현재 정책이 아니다. 제거한 
 
 공통 에이전트 지침은 `.home/templates/codex/AGENTS.md`에서 관리하고
 `~/.codex/AGENTS.md`로 링크한다. 제품 소스의 개발 규칙과는 별개다.
-새 Codex 작업은 `tmux -L codex`; 실행 중인 기존 default 세션은 보존한다.
+새 Codex 작업은 default/codexm의 창이며 기존 다른 서버의 실행 중 작업은 연결 창으로 보존한다.
 [GUI 인계·tmux 운영](gui-handoff.md)을 따른다.

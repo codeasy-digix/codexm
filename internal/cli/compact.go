@@ -46,8 +46,9 @@ codexm shell-init zsh                        Shell integration
 Unlocked chats resume directly; archived chats are unarchived first.
 An owning shared daemon can archive/release the selected chat before resume.
 A verified macOS GUI can restart after confirmation EACH time (all GUI work stops).
-Without an interactive terminal, or for another CLI, its owner must release it.
-New managed terminals use tmux -L codex; live legacy terminals stay on default.
+Existing interactive tmux CLIs reconnect without stopping or resuming their work.
+New terminals are windows in the default server’s single codexm session.
+Legacy servers remain reachable through connection windows without restarts.
 Then codex --no-daemon --no-alt-screen resume THREAD owns all subsequent work.
 No manager model, unattended account rotation, scheduling or history sync.
 Existing manager data is read-only metadata; old worker services are not started.
@@ -157,7 +158,7 @@ func Main(args []string) error {
 			}
 			return e
 		}
-		fmt.Printf("Handoff accepted, not yet completed: %s → %s\nThread: %s\nCheck: codexm handoff-status %s\nAfter replacement: tmux -L codex attach -t %s\n", s.Source.Account, s.Target.Account, id, id, nativecli.TargetTerminal(c, s))
+		fmt.Printf("Handoff accepted, not yet completed: %s → %s\nThread: %s\nCheck: codexm handoff-status %s\nAfter replacement: codexm terminal %s\n", s.Source.Account, s.Target.Account, id, id, nativecli.TargetTerminal(c, s))
 		return nil
 	case "usage":
 		f := flag.NewFlagSet("usage", flag.ContinueOnError)
