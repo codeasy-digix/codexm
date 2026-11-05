@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/nativecli"
 )
 
 // Opt-in PTY exercise of the installed Rust/Go pair. All auth/history is synthetic.
@@ -74,15 +76,25 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	session := fmt.Sprintf("codexm-tui-test-%d", os.Getpid())
 	tmux := func(args ...string) string {
 		t.Helper()
-		out, e := exec.Command("tmux", append([]string{"-L", "codex"}, args...)...).CombinedOutput()
+		out, e := exec.Command("tmux", append([]string{"-L", "default"}, args...)...).CombinedOutput()
 		if e != nil {
 			t.Fatalf("tmux %s: %v %s", args[0], e, out)
 		}
 		return string(out)
 	}
 	// Ensure startup begins with a terminal's normal modes; the fake CLI observes them after exec.
-	pane := strings.TrimSpace(tmux("new-session", "-d", "-P", "-F", "#{pane_id}", "-s", session, "-x", "120", "-y", "38", "-e", "PATH="+os.Getenv("PATH"), "-e", "HOME="+root, "-e", "CODEX_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_SQLITE_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_ACCOUNT=default", "/bin/sleep", "60"))
-	t.Cleanup(func() { exec.Command("tmux", "-L", "codex", "kill-session", "-t", "="+session).Run() })
+	if exec.Command("tmux", "-L", "default", "has-session", "-t", "=codexm").Run() != nil {
+		tmux("new-session", "-d", "-s", "codexm", "-n", "home")
+	}
+	pane := strings.TrimSpace(tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "-t", "codexm:", "-n", session, "-e", "PATH="+os.Getenv("PATH"), "-e", "HOME="+root, "-e", "CODEX_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_SQLITE_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_ACCOUNT=default", "/bin/sleep", "60"))
+	pickerPane := pane
+	t.Cleanup(func() {
+		exec.Command("tmux", "-L", "default", "kill-pane", "-t", pickerPane).Run()
+		for _, launch := range nativecli.Sessions(c) {
+			_ = nativecli.Close(context.Background(), c, launch.Session)
+		}
+	})
+	tmux("resize-window", "-t", pane, "-x", "120", "-y", "38")
 	tmux("set-option", "-w", "-t", pane, "remain-on-exit", "on")
 	terminalModes := func() string {
 		t.Helper()
@@ -101,12 +113,12 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 		return string(out)
 	}
 	originalModes := terminalModes()
-	tmux("respawn-pane", "-k", "-t", pane, binary, "--config", c.Path)
+	tmux("respawn-pane", "-k", "-t", pane, "-e", "PATH="+os.Getenv("PATH"), "-e", "HOME="+root, "-e", "CODEX_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_SQLITE_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_ACCOUNT=default", binary, "--config", c.Path)
 	waitText := func(text string) {
 		t.Helper()
 		until := time.Now().Add(12 * time.Second)
 		for time.Now().Before(until) {
-			out, e := exec.Command("tmux", "-L", "codex", "capture-pane", "-p", "-t", pane).CombinedOutput()
+			out, e := exec.Command("tmux", "-L", "default", "capture-pane", "-p", "-t", pane).CombinedOutput()
 			if e == nil && strings.Contains(string(out), text) {
 				return
 			}
@@ -132,7 +144,7 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	send("Right")
 	waitText("Enter 적용 후 목록")
 	send("Left")
-	waitText("Enter 바로 재개")
+	waitText("Enter 연결/재개")
 	send("F2")
 	waitText("전역 설정")
 	send("Down", "Enter")
@@ -186,6 +198,20 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	waitText("보관 작업")
 	// Return to the original active row and resume with its last registered beta account.
 	send("Home", "Enter")
+	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
+		for _, launch := range nativecli.Sessions(c) {
+			if launch.Thread == id && launch.Ready {
+				pane = launch.Pane
+			}
+		}
+		if pane != pickerPane {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if pane == pickerPane {
+		t.Fatal("TUI did not create a persistent CLI window")
+	}
 	waitText("Selected account: beta")
 	send("후속 작업 확인", "Enter")
 	waitText("Received: 후속 작업 확인")
@@ -218,8 +244,9 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	}
 	// Closing a terminal while Crossterm is waiting must not leave the UI or
 	// bridge spinning in the background. Only these synthetic children are used.
+	pane = pickerPane
 	for _, closePTY := range []bool{false, true} {
-		tmux("respawn-pane", "-k", "-t", pane, binary, "--config", c.Path)
+		tmux("respawn-pane", "-k", "-t", pane, "-e", "PATH="+os.Getenv("PATH"), "-e", "HOME="+root, "-e", "CODEX_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_SQLITE_HOME="+c.Runtime.SharedCodexHome, "-e", "CODEX_ACCOUNT=default", binary, "--config", c.Path)
 		waitText("한글 진행 작업")
 		uiPIDText := strings.TrimSpace(tmux("display-message", "-p", "-t", pane, "#{pane_pid}"))
 		uiPID, err := strconv.Atoi(uiPIDText)
@@ -247,7 +274,7 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 			}
 		})
 		if closePTY {
-			tmux("kill-session", "-t", "="+session)
+			tmux("kill-pane", "-t", pane)
 		} else if err := syscall.Kill(uiPID, syscall.SIGTERM); err != nil {
 			t.Fatal(err)
 		}

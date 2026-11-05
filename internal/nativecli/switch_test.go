@@ -172,6 +172,20 @@ func testAccountReplacement(t *testing.T, ignoreTerm bool) {
 	if verifyOwnedCLI(context.Background(), c, stale) == nil {
 		t.Fatal("stale process accepted")
 	}
+	// GUI recovery follows the new workspace CLI, not the launcher's/viewer's PID.
+	guiSpec := guiRestartSpec{Thread: fixtureID, Shared: c.Runtime.SharedCodexHome, Account: "default", Created: time.Now().Unix() - 1, Caller: processIdentity{PID: os.Getpid()}}
+	if !guiCLIReady(context.Background(), c, guiSpec) {
+		t.Fatal("workspace CLI readiness was not recognized for GUI recovery")
+	}
+	guiSpec.Account = "beta"
+	if guiCLIReady(context.Background(), c, guiSpec) {
+		t.Fatal("another account incorrectly satisfied GUI recovery")
+	}
+	guiSpec.Account = "default"
+	guiSpec.Created = time.Now().Unix() + 10
+	if guiCLIReady(context.Background(), c, guiSpec) {
+		t.Fatal("an old receipt incorrectly satisfied GUI recovery")
+	}
 	// Same real login under another nickname is not a usable replacement.
 	_, e = RequestHandoff(context.Background(), c, binary, fixtureID, "alias", -1)
 	if e == nil || !strings.Contains(e.Error(), "same login") {

@@ -265,9 +265,9 @@ func Main(args []string) error {
 			}
 		}
 		if *jsonOutput {
-			return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "native-cli", "codex": r.Binary, "chats": len(list.Sessions), "archived": archived, "history": config.Expand(c.Runtime.SharedCodexHome), "manager": false, "scheduler": false, "history_sync": false, "tmux_server": nativecli.CodexTmuxServer, "gui_restart": "confirm-each-time"})
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "native-cli", "codex": r.Binary, "chats": len(list.Sessions), "archived": archived, "history": config.Expand(c.Runtime.SharedCodexHome), "manager": false, "scheduler": false, "history_sync": false, "tmux_server": nativecli.CodexTmuxServer, "tmux_session": nativecli.WorkspaceSession, "gui_restart": "confirm-each-time"})
 		}
-		fmt.Printf("Mode: official CLI handoff\nCodex: %s\nLocal chats: %d (%d archived)\nHistory: %s\nTmux server: codex; GUI restart: confirm each time\nManager/scheduler/history-sync: excluded\n", r.Binary, len(list.Sessions), archived, config.Expand(c.Runtime.SharedCodexHome))
+		fmt.Printf("Mode: official CLI handoff\nCodex: %s\nLocal chats: %d (%d archived)\nHistory: %s\nTmux: %s / session %s; GUI restart: confirm each time\nManager/scheduler/history-sync: excluded\n", r.Binary, len(list.Sessions), archived, config.Expand(c.Runtime.SharedCodexHome), nativecli.CodexTmuxServer, nativecli.WorkspaceSession)
 		return nil
 	case "terminal":
 		if len(args) != 1 {

@@ -318,6 +318,11 @@ func OpenContinuation(ctx context.Context, c config.Config, self, id, account st
 			_, _ = tmux(context.Background(), l.TmuxServer, "kill-pane", "-t", l.Pane)
 		}
 	}()
+	for key, value := range map[string]string{"@codexm-terminal": l.Session, "@codexm-config": c.Path} {
+		if _, e = tmux(ctx, l.TmuxServer, "set-option", "-w", "-t", l.Pane, key, value); e != nil {
+			return l, e
+		}
+	}
 	if _, e = tmux(ctx, l.TmuxServer, "set-option", "-w", "-t", l.Pane, "remain-on-exit", "on"); e != nil {
 		return l, e
 	}
@@ -417,6 +422,22 @@ func Screen(ctx context.Context, c config.Config, s string) (Terminal, error) {
 		windows, err := tmux(ctx, l.TmuxServer, "list-windows", "-a", "-F", "#{window_id}")
 		if err != nil || !strings.Contains("\n"+windows, "\n"+l.Window+"\n") {
 			return t, nil
+		}
+		if !l.External {
+			identity, err := tmux(ctx, l.TmuxServer, "display-message", "-p", "-t", l.Pane, "#{@codexm-terminal}|#{@codexm-config}|#{pane_id}|#{pane_pid}|#{pane_dead}")
+			fields := strings.Split(strings.TrimSpace(identity), "|")
+			if err != nil || len(fields) != 5 || fields[0] != l.Session || fields[1] != c.Path || fields[2] != l.Pane {
+				return t, errors.New("workspace pane ownership changed; the replacement was left untouched")
+			}
+			if l.Owner != nil && (fields[3] != strconv.Itoa(l.Owner.PID) || (fields[4] == "0" && !sameProcess(ctx, *l.Owner))) {
+				return t, errors.New("workspace CLI process changed; the replacement was left untouched")
+			}
+		}
+	}
+	if l.External {
+		owners, err := writerProcesses(ctx, config.Expand(c.Runtime.SharedCodexHome), l.Thread)
+		if err != nil || len(owners) != 1 || owners[0] != l.Owner.PID {
+			return t, errors.New("existing CLI no longer owns the selected conversation")
 		}
 	}
 	// tmux display-message can fall back to its current pane for a stale target.

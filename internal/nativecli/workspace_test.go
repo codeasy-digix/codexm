@@ -11,6 +11,34 @@ import (
 	"time"
 )
 
+func TestWorkspaceStaleReceiptCannotCloseReplacement(t *testing.T) {
+	c := fixture(t)
+	home := os.Getenv("HOME")
+	l := Launch{Session: terminalName(c, fixtureID, "default"), Thread: fixtureID, Account: "default", TmuxServer: "default", TmuxSession: WorkspaceSession, Window: "@7", Pane: "%9", Ready: true}
+	if err := saveSession(c, l); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+shift 2
+case "$1" in
+list-windows) printf '@7\n';;
+display-message) printf 'another-chat|another-config|%%9|999|0\n';;
+kill-pane|kill-window|kill-session) touch "$HOME/killed";;
+*) exit 1;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(home, "tmux"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", home+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := Close(context.Background(), c, l.Session); err == nil {
+		t.Fatal("reused pane IDs were trusted")
+	}
+	if _, err := os.Stat(filepath.Join(home, "killed")); !os.IsNotExist(err) {
+		t.Fatal("unrelated replacement was killed")
+	}
+}
+
 // A real detached PTY and a native fixture with a real writer lock. This tests
 // adoption of a CLI launched by a shell, without any codexm launch receipt.
 func TestDiscoveredShellCLIIsReusedWithoutRestart(t *testing.T) {

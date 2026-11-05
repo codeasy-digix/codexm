@@ -172,13 +172,17 @@ func TestChatManagementThroughTUI(t *testing.T) {
 	}
 	session := fmt.Sprintf("codexm-chat-actions-test-%d", os.Getpid())
 	ctx := context.Background()
-	pane, e := tmux(ctx, CodexTmuxServer, "new-session", "-d", "-P", "-F", "#{pane_id}", "-s", session, "-x", "120", "-y", "38", "-e", "HOME="+h, "-e", "PATH="+os.Getenv("PATH"), "-e", "CODEXM_CHAT_TEST_ROOT="+h, "/bin/sleep", "60")
+	if e := ensureWorkspace(ctx); e != nil {
+		t.Fatal(e)
+	}
+	pane, e := tmux(ctx, CodexTmuxServer, "new-window", "-d", "-P", "-F", "#{pane_id}", "-t", WorkspaceSession+":", "-n", session, "-e", "HOME="+h, "-e", "PATH="+os.Getenv("PATH"), "-e", "CODEXM_CHAT_TEST_ROOT="+h, "/bin/sleep", "60")
 	if e != nil {
 		t.Fatal(e)
 	}
 	pane = strings.TrimSpace(pane)
-	t.Cleanup(func() { _, _ = tmux(context.Background(), CodexTmuxServer, "kill-session", "-t", "="+session) })
-	if _, e = tmux(ctx, CodexTmuxServer, "respawn-pane", "-k", "-t", pane, binary, "--config", c.Path); e != nil {
+	t.Cleanup(func() { _, _ = tmux(context.Background(), CodexTmuxServer, "kill-pane", "-t", pane) })
+	_, _ = tmux(ctx, CodexTmuxServer, "resize-window", "-t", pane, "-x", "120", "-y", "38")
+	if _, e = tmux(ctx, CodexTmuxServer, "respawn-pane", "-k", "-t", pane, "-e", "HOME="+h, "-e", "PATH="+os.Getenv("PATH"), "-e", "CODEXM_CHAT_TEST_ROOT="+h, binary, "--config", c.Path); e != nil {
 		t.Fatal(e)
 	}
 	waitText := func(text string) {
@@ -238,6 +242,6 @@ func TestChatManagementThroughTUI(t *testing.T) {
 		t.Fatal("failed native archive changed state")
 	}
 	send("Left", "Left")
-	waitText("Enter 바로 재개")
+	waitText("Enter 연결/재개")
 	send("q")
 }

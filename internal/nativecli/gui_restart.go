@@ -51,6 +51,7 @@ type guiRestartSpec struct {
 	Owner   guiOwner        `json:"owner"`
 	Caller  processIdentity `json:"caller"`
 	Thread  string          `json:"thread"`
+	Account string          `json:"account,omitempty"`
 	Shared  string          `json:"shared"`
 	Session string          `json:"session"`
 	Created int64           `json:"created"`
@@ -130,7 +131,7 @@ func armGUIReopen(ctx context.Context, c config.Config, l Launch, owner guiOwner
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	spec := guiRestartSpec{Owner: owner, Caller: caller, Thread: l.Thread, Shared: config.Expand(c.Runtime.SharedCodexHome), Session: session, Created: time.Now().Unix()}
+	spec := guiRestartSpec{Owner: owner, Caller: caller, Thread: l.Thread, Account: l.Account, Shared: config.Expand(c.Runtime.SharedCodexHome), Session: session, Created: time.Now().Unix()}
 	if err = writeJSON(filepath.Join(dir, "request.json"), spec); err != nil {
 		return nil, err
 	}
@@ -219,8 +220,25 @@ func finishGUIHandoff(ctx context.Context, c config.Config, l Launch, owner guiO
 	return recovery.fail, nil
 }
 
-// A successful handoff reopens only after the caller acquired the native writer.
+// A successful handoff reopens only after the selected CLI acquired the writer.
 // A failed/disappearing caller still restores the GUI, without resuming anything.
+func guiCLIReady(ctx context.Context, c config.Config, spec guiRestartSpec) bool {
+	pids, err := writerProcesses(ctx, spec.Shared, spec.Thread)
+	if err != nil || len(pids) != 1 || !cr.WriterBusy(spec.Shared, spec.Thread) {
+		return false
+	}
+	if pids[0] == spec.Caller.PID {
+		return true
+	} // Earlier foreground callers exec'd Codex.
+	// The new launcher becomes a tmux client; its CLI has an independent PID.
+	// Match the fresh, verified child receipt instead of waiting for the viewer
+	// itself to acquire a writer lock, which it will never own.
+	launch, err := readLast(c, spec.Thread)
+	return err == nil && launch.Account == spec.Account && launch.At >= spec.Created*1000 &&
+		launch.TmuxServer == CodexTmuxServer && launch.TmuxSession == WorkspaceSession &&
+		launch.Owner.PID == pids[0] && verifyOwnedCLI(ctx, c, launch) == nil
+}
+
 func guiRecoveryAction(stopped, callerAlive, guiAlive, failed, timedOut, owns bool) string {
 	if !stopped && (failed || !callerAlive || timedOut) {
 		return "cancel"
@@ -294,8 +312,7 @@ func RunGUIReopen(ctx context.Context, c config.Config, file string) (resultErr 
 		timedOut := time.Now().After(deadline) || ctx.Err() != nil
 		owns := false
 		if stopped && callerAlive && !guiAlive {
-			pids, _ := writerProcesses(context.Background(), spec.Shared, spec.Thread)
-			owns = len(pids) == 1 && pids[0] == spec.Caller.PID && cr.WriterBusy(spec.Shared, spec.Thread)
+			owns = guiCLIReady(context.Background(), c, spec)
 		}
 		switch guiRecoveryAction(stopped, callerAlive, guiAlive, failed, timedOut, owns) {
 		case "cancel":
