@@ -219,6 +219,12 @@ func AttachCommand(l Launch) string {
 	if server == "" {
 		server = "default"
 	}
+	if server == "codex" {
+		return "codexm terminal " + l.Session
+	}
+	if l.TmuxSession == WorkspaceSession {
+		return "tmux attach -t " + attachTarget(l)
+	}
 	return "tmux -L " + server + " attach -t " + attachTarget(l)
 }
 

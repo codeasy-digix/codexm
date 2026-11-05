@@ -235,7 +235,11 @@ esac
 			os.WriteFile(filepath.Join(h, "tmux"), []byte(script), 0700)
 			t.Setenv("PATH", h+string(os.PathListSeparator)+os.Getenv("PATH"))
 			screen, err := Screen(context.Background(), c, l.Session)
-			if err != nil || screen.Text != "correct server" || screen.Attach != "tmux -L "+expected+" attach -t ="+l.Session {
+			wantAttach := "tmux -L " + expected + " attach -t =" + l.Session
+			if server == "codex" {
+				wantAttach = "codexm terminal " + l.Session
+			}
+			if err != nil || screen.Text != "correct server" || screen.Attach != wantAttach {
 				t.Fatalf("wrong server: %+v %v", screen, err)
 			}
 			if err = Input(context.Background(), c, l.Session, "literal $(do-not-run)", ""); err != nil {
