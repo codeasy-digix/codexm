@@ -34,6 +34,7 @@ type guiControlFixture struct {
 	once    sync.Once
 	mu      sync.Mutex
 	bodies  []string
+	keys    []string // Synthetic local-provider credentials only.
 }
 
 func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
@@ -62,6 +63,7 @@ func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
 		body, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		f.bodies = append(f.bodies, string(body))
+		f.keys = append(f.keys, r.Header.Get("Authorization"))
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"fixture-response\"}}\n\n")
@@ -85,7 +87,7 @@ func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
 	if err := os.MkdirAll(f.c.Runtime.SharedCodexHome, 0700); err != nil {
 		t.Fatal(err)
 	}
-	settings := fmt.Sprintf("model='fixture'\nmodel_provider='fixture'\ncli_auth_credentials_store='file'\ncheck_for_update_on_startup=false\napproval_policy='never'\n[model_providers.fixture]\nname='fixture'\nbase_url=%q\nwire_api='responses'\nrequires_openai_auth=false\n[projects.%q]\ntrust_level='trusted'\n", server.URL, home)
+	settings := fmt.Sprintf("model='fixture'\nmodel_provider='fixture'\ncli_auth_credentials_store='file'\ncheck_for_update_on_startup=false\napproval_policy='never'\n[model_providers.fixture]\nname='fixture'\nbase_url=%q\nwire_api='responses'\nenv_key='CODEXM_GUI_FIXTURE_KEY'\nrequires_openai_auth=false\n[projects.%q]\ntrust_level='trusted'\n", server.URL, home)
 	if err := os.WriteFile(filepath.Join(f.c.Runtime.SharedCodexHome, "config.toml"), []byte(settings), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +103,7 @@ func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
 	}
 	f.cmd = exec.CommandContext(ctx, binary, "--no-daemon", "--disable", "plugins", "--disable", "apps", "--disable", "hooks", "--enable", "skip_host_skill_discovery", "app-server", "--listen", endpoint)
 	f.cmd.Env, f.cmd.Dir = environment(f.c, "default"), home
+	f.cmd.Env = append(f.cmd.Env, "CODEXM_GUI_FIXTURE_KEY=fixture-owner-a")
 	var err error
 	var processDone <-chan struct{}
 	if transport == "stdio" {

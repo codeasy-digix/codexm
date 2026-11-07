@@ -5,6 +5,42 @@ CLI 인계, 설치본과 Homebrew 패키지는 그대로 유지한다. 새 제�
 `crates/gui-control`에 있고, Go 진입점은 `gui_experiment` build tag로만 활성화된다.
 새 서버 서비스나 GUI 패치, Accessibility 키 입력, 비공개 앱 IPC를 사용하지 않는다.
 
+## GUI 우선과 다중 계정의 경계
+
+`gui resume THREAD`는 **이미 검증된 GUI 소유자가 있으면 GUI를 유지**한다.
+그렇지 않으면 기존 공식 CLI 런처를 사용한다. `--account NAME`을 명시하면
+GUI의 로그인과 같다고 추측하지 않고 항상 해당 계정의 CLI 경로를 요청한다.
+`gui new`도 선택 계정의 공식 CLI에서 시작한다. 계정 선택·기존 tmux 창·독립
+터미널 뷰어는 검증된 Go 모듈을 재사용하고, GUI 전달은 기존 Rust 제어기가 맡는다.
+
+| 요청과 현재 소유자 | 실험 빌드 동작 |
+| --- | --- |
+| 기존 채팅, 계정 미지정, GUI가 소유 | GUI에서 같은 채팅 열기; 로그인·입력 변경 없음 |
+| 기존 채팅, writer 없음 | 마지막 등록 계정, 없거나 삭제됐으면 default로 CLI 재개 |
+| 기존 채팅, `--account NAME`, writer 없음 | 지정 계정으로 같은 ID를 CLI 재개 |
+| 기존 CLI가 소유, 계정 미지정 | 검증된 기존 터미널에 연결; 실행 중 인증 유지 |
+| 기존 CLI가 소유, 계정 명시 | 현재 프로세스와 launch 영수증의 로그인 일치 시에만 재연결 |
+| GUI가 소유, 계정 명시 | `needs-gui-release`; 해당 채팅을 GUI에서 보관한 뒤 재실행 안내 |
+| 새 채팅 | 공식 CLI가 새 ID를 생성; codexm은 숨은 대화나 첫 프롬프트를 만들지 않음 |
+
+실험 경로에서는 **GUI 종료/재시작 확인창도 열지 않는다.** 재개 준비 후 다른
+writer가 생겨도 이를 해제하지 않고 중단한다. 보관된 채팅만 공식 unarchive를
+사용한다. 기존 운영의 `codexm resume`/TUI 확인식 인계는 바꾸지 않았다.
+
+GUI의 `account/login/start`는 채팅 ID를 받지 않는 서버 로그인 API다.
+확인한 runtime의 queue/turn/start/resume 파라미터에도 채팅별 계정 선택 항목은
+없다. 다른 계정 home에서 큐를 등록해도 **실행은 기존 GUI 소유자의 인증**으로
+진행됐다. `default` 파일이나 마지막 실행 영수증도 현재 GUI의 메모리상 로그인
+증거가 아니므로, 명시한 계정을 GUI 현재 계정과 임의로 같다고 판단하지 않는다.
+
+전체 GUI를 유지한 계정 변경은 **원래 GUI가 해당 채팅만 해제하면 가능**하다.
+현재 독립 CLI에서 실행 중인 GUI의 소유 연결에 접근하는 공개 경로는 확인하지
+못했다. 별도 연결의 `thread/unsubscribe`는 그 연결의 구독만 해제하며 GUI의
+writer를 해제하지 않는다. 따라서 자동·무중단 인계가 완성됐다고 표시하지 않는다.
+GUI에서 해당 채팅을 보관하고 `gui resume THREAD --account NAME`을 다시 실행하면
+공식 unarchive 후 같은 ID를 CLI에서 연다. 보관은 native 동작상 하위 채팅에도
+영향을 줄 수 있으므로, 하위 작업이 있는 실제 채팅을 자동 보관하지 않는다.
+
 ## 확인한 연결 방식
 
 1. 서명 검증한 공식 앱에 `codex://threads/THREAD_ID`를 LaunchServices로 연다.
@@ -48,19 +84,32 @@ tmux -L default new-window -d -t codexm: -n gui-build \
 /path/to/experiment/codexm gui status
 /path/to/experiment/codexm gui list --limit 30
 /path/to/experiment/codexm gui list --archived --limit 30
+/path/to/experiment/codexm gui resume THREAD_ID --plan
+/path/to/experiment/codexm gui resume THREAD_ID
+/path/to/experiment/codexm gui resume THREAD_ID --account ACCOUNT_NAME --plan
+/path/to/experiment/codexm gui resume THREAD_ID --account ACCOUNT_NAME
+/path/to/experiment/codexm gui new --account ACCOUNT_NAME --cwd /absolute/project/path
 /path/to/experiment/codexm gui open THREAD_ID
 printf '%s' '남은 검증을 이어서 진행해줘.' | \
   /path/to/experiment/codexm gui send THREAD_ID --message-stdin --wait 15
 /path/to/experiment/codexm gui status REQUEST_ID
-/path/to/experiment/codexm gui new --cwd /absolute/project/path
+/path/to/experiment/codexm gui draft --cwd /absolute/project/path
 printf '%s' '이 프로젝트 구조를 설명해줘.' | \
-  /path/to/experiment/codexm gui new --cwd /absolute/project/path --message-stdin
+  /path/to/experiment/codexm gui draft --cwd /absolute/project/path --message-stdin
 ```
 
-- `open`: GUI 실행/탐색 요청 후 실제 GUI writer 확인. 메시지를 보내지 않는다.
+- `resume`: 위 표의 GUI 우선/명시적 CLI 계정 경로. `--plan`은 읽기만 한다.
+  CLI 연결에는 실제 터미널이 필요하다. `--terminal`은 default/codexm 창을 남기고
+  돌아온다. 자동 continuation 메시지는 보내지 않는다.
+- `new`: 선택 계정(생략 시 default)의 공식 CLI를 새 tmux 창에서 실행한다.
+  native ID가 아직 없으므로 창을 가짜 채팅 ID로 등록하지 않는다. 최초 저장 후
+  기존 codexm 목록/실행 중 CLI 검색으로 찾을 수 있다. 새 창의 로그인은 실행 시
+  선택한 계정으로 유지되지만 기존 resume 영수증이 없으므로 이후 명시적 계정
+  재연결의 로그인 증명이 부족하면 보수적으로 거절한다.
+- `open`: 명시적으로 GUI 실행/탐색 요청 후 실제 GUI writer 확인. 메시지를 보내지 않는다.
 - `send`: 기존 채팅에 텍스트를 **큐**로 전달한다. 진행 중인 턴은 끝까지 실행하고
   이어서 입력을 처리한다. 즉시 방향을 바꾸는 steer와는 다르다.
-- `new`: 공식 링크로 새 채팅의 **초안**을 연다. 사용자가 GUI에서 Send를 눌러야 한다.
+- `draft`: 이전 실험의 `gui new`를 이름 변경했다. 공식 링크로 새 채팅의 **초안**을 연다. 사용자가 GUI에서 Send를 눌러야 한다.
   자동 전송을 가장하거나 보이지 않는 빈 대화를 DB에 만들어 놓지 않는다.
 - `status REQUEST_ID`: 이미 보낸 요청을 읽기 전용으로 다시 확인한다.
 - `list`: native 저장 목록의 페이지를 조회한다. 다음 페이지에는 `--cursor`를 사용한다.
@@ -73,7 +122,7 @@ macOS 외에는 실험 명령이 지원되지 않으며 기존 macOS/Linux CLI�
 
 ## 접수와 완료를 구분하기
 
-출력은 JSON 한 개다. `accepted`는 큐 접수, `started`는 해당 입력의 턴이 기록됨,
+GUI 전달 명령의 출력은 JSON 한 개다. `accepted`는 큐 접수, `started`는 해당 입력의 턴이 기록됨,
 `completed`는 완료 기록을 확인했음을 뜻한다. `failed`는 명시적인 native 오류다.
 `not_sent`는 검증 단계에서 전달하지 않은 경우, `unknown`은 전달 결과가 불명확한
 경우다. `owner_changed`는 원래 GUI 소유자가 없어지거나 바뀐 경우,
@@ -92,8 +141,9 @@ macOS 외에는 실험 명령이 지원되지 않으며 기존 macOS/Linux CLI�
 
 ## 범위와 부작용
 
-- GUI가 현재 사용하는 계정으로 실행한다. CLI에서 고른 `CODEX_HOME`이나
-  `--account`를 GUI에 주입하지 않는다. 계정 변경 기능은 기존 경로를 유지한다.
+- `send/open/draft`는 GUI가 현재 사용하는 계정으로 실행한다. CLI에서 고른
+  `CODEX_HOME`이나 `--account`를 GUI에 주입하지 않는다. `resume/new --account`는
+  공식 CLI용이며, GUI 로그인 파일이나 서버 로그인을 바꾸지 않는다.
 - 앱 링크는 앱을 활성화하고 보이는 채팅을 바꾼다. 새 초안은 사용자에게 보인다.
   초안용 prompt 링크의 텍스트는 OS URL 전달 인자에 들어간다. `send`의 텍스트는
   stdin/stdio로만 전달되고 영수증에는 저장되지 않는다.
@@ -104,7 +154,7 @@ macOS 외에는 실험 명령이 지원되지 않으며 기존 macOS/Linux CLI�
 - 공식 API를 통하더라도 native queue/이력이 갱신된다. 직접 SQLite/rollout/lock을
   수정하지 않는다는 뜻이지 디스크에 아무 변화도 없다는 뜻은 아니다.
 - 보관된 채팅은 GUI에서 먼저 복원해야 한다. 다른 CLI의 실행도 종료하지 않는다.
-- 새 채팅 **자동 생성·첫 전송**, 즉시 steer, GUI 내부 계정 전환은 이 실험의
+- GUI에서 새 채팅 **자동 생성·첫 전송**, 즉시 steer, GUI 내부 계정 전환은 이 실험의
   지원 범위에 들지 않는다. 공개 링크는 초안만 지원하며 이를 우회하는 UI 자동화나
   내부 app-tools 호출을 추가하지 않았다.
 - GUI가 꺼져 있는 경우의 실제 종료/재기동 시험은 진행 중인 GUI 작업을 보존하기
@@ -142,6 +192,35 @@ Rust workspace fmt/check/test/clippy, Go 전체 race/vet 및 실험 build-tag �
 두 공식 runtime 버전의 격리 시험을 통과했다. `TestGUIControlDirectQueueRPCNeverLoadsTheRelay`는
 queue RPC 후에도 보조 서버의 loaded 목록이 비어 있고 원래 writer가 유지되며
 native 이력에 client ID가 남는지 확인한다.
+
+### 다중 계정 후속 검증
+
+같은 날짜에 두 runtime 버전으로 격리된 model endpoint와 **합성 인증 표식**을
+사용했다. 실제 계정 토큰은 복사하거나 다른 서버에 전송하지 않았다.
+
+| 시험 | 결과 |
+| --- | --- |
+| B의 별도 home에서 A 소유 채팅에 큐 등록 | 모델 요청의 인증 표식은 A; 제출자의 계정으로 변경되지 않음 |
+| 별도 연결의 unsubscribe/resume | unsubscribe는 `notLoaded`; resume는 writer 충돌; A 유지 |
+| 소유 연결에서 선택 채팅 archive → B에서 unarchive/resume | 같은 ID로 B 실행; A의 다른 채팅은 진행 중인 턴·writer·PID 유지 |
+| 실제 공식 CLI를 선택 계정 B로 tmux 재개 | 같은 ID와 B의 인증 영수증 검증; 자동 continuation 없음 |
+| 실행 중 B에 명시적 C로 재연결 | 거절; B 프로세스와 작업 유지 |
+| 새 공식 CLI 시작 | 새 default/codexm 창에서 TUI 표시; codexm의 추가 프롬프트 없음 |
+| 새 CLI의 실제 PTY 접속/분리 | 독립 grouped viewer 생성; 분리 시 viewer만 제거하고 CLI 유지 |
+| 실제 GUI 임시 채팅, 계정 미지정 | 검증된 기존 GUI로 연결; 메시지 전송 없음 |
+| 실제 GUI 임시 채팅, 명시적 default | `needs-gui-release`; native 기본 로그인 파일 해시 유지 |
+| 실제 GUI 쪽에서 임시 채팅만 보관 | writer 해제 및 CLI 경로 전환 확인; GUI PID/시작 시각 유지 |
+
+실제 GUI에서 실계정 B로 모델 작업을 실행한 시험은 아니다. **GUI 쪽 선택 해제와
+프로세스 보존은 실제 앱**, **계정별 실행 인증과 동시에 진행 중인 옆 채팅 보존은
+격리 공식 runtime**에서 각각 검증했다. 공개 외부 CLI만으로 GUI 소유 연결을
+호출하는 기능은 제공하지 않으며, 이 한계를 account override로 숨기지 않는다.
+
+추가 시험은 `TestGUIControlAccount*`, `TestGUIHybrid*`다. 후자는
+`-tags gui_experiment`가 필요하고 공식 PTY 시험에는 `CODEXM_GUI_CONTROL_TEST=1`,
+`CODEXM_NATIVE_RUNTIME=/absolute/official/codex`,
+`CODEXM_GUI_EXPERIMENT_BINARY=/absolute/experiment/codexm`을 지정한다.
+macOS 실제 PTY 시험은 `/usr/bin/script`를 사용하고 자신이 만든 창만 정리한다.
 
 공식 문서:
 - [앱 링크와 새 채팅 초안](https://learn.chatgpt.com/docs/reference/commands#deep-links)

@@ -25,6 +25,14 @@
   not automatic submissions. Receipt IDs forbid replay, including unknown results.
   Passive reads can temporarily label an unfinished GUI turn `interrupted`; do
   not treat that as terminal. See docs/gui-control-experiment.md.
+- Experimental `gui resume` prioritizes a verified existing GUI owner only when
+  no account is explicitly requested. Explicit `--account` and `gui new` use the
+  official CLI. Never equate disk default/last-account metadata with the GUI's
+  cached login. A GUI-owned chat requires owner-side release before another
+  account can resume; this experimental route never offers or triggers whole-GUI
+  restart. Revalidate free ownership in the durable launcher; do not silently
+  reconnect an explicitly requested account to a different/unknown running login.
+  `gui draft` remains the explicit GUI composer link, with no automatic submission.
 - A second Right from the account panel opens per-chat archive/restore controls.
   Freeze the selected thread ID across refresh and confirmation; default to cancel.
   Use only official CLI archive/unarchive or the verified existing owner's RPC.

@@ -14,3 +14,25 @@ func TestGUIExperimentDoesNotInterceptNativeCommands(t *testing.T) {
 		t.Fatal("GUI mode must reject CLI account/config overrides")
 	}
 }
+
+func TestGUIHybridKeepsExplicitAccountIntent(t *testing.T) {
+	for _, args := range [][]string{
+		{"resume"},
+		{"resume", "fixture", "--account", ""},
+		{"resume", "fixture", "--plan", "--terminal"},
+		{"new", "--message-stdin"},
+		{"new", "--force"},
+	} {
+		if _, err := parseGUIHybrid(args); err == nil {
+			t.Fatalf("accepted unsupported input %q", args)
+		}
+	}
+	o, err := parseGUIHybrid([]string{"resume", "fixture", "--account", "default", "--plan"})
+	if err != nil || o.account != "default" || !o.plan {
+		t.Fatal("explicit default must still require CLI routing", o, err)
+	}
+	o, err = parseGUIHybrid([]string{"resume", "fixture"})
+	if err != nil || o.account != "" {
+		t.Fatal("omitted account must keep GUI priority", o, err)
+	}
+}

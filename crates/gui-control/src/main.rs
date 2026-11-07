@@ -13,15 +13,21 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 const HELP: &str = "codexm gui — experimental GUI-owned chat control (macOS)\n\n\
+codexm gui resume THREAD [--account NAME] [--plan|--terminal]\n\
+codexm gui new [--account NAME] [--cwd ABSOLUTE_PATH] [--terminal]\n\
 codexm gui status [REQUEST_ID]                 App info / reconcile a saved request\n\
 codexm gui list [--limit N] [--cursor CURSOR] [--archived]\n\
 codexm gui open THREAD                        Start/open GUI and verify its writer\n\
 codexm gui send THREAD --message-stdin [--wait SECONDS] [--request-id UUID]\n\
-codexm gui new [--cwd ABSOLUTE_PATH] [--message-stdin]\n\n\
+codexm gui draft [--cwd ABSOLUTE_PATH] [--message-stdin]\n\n\
+resume prioritizes an existing GUI owner unless --account explicitly requests CLI.\n\
+new starts the official CLI with the selected login (default if omitted).\n\
+CLI routes reuse codexm's named tmux windows and independent terminal viewers.\n\
+An explicit account never changes the GUI login: release that chat in its GUI first.\n\
 --app ABSOLUTE_APP_PATH selects a verified official app bundle.\n\
 send reads UTF-8 text from stdin and queues it once for the verified GUI owner.\n\
 An active turn finishes before queued input runs; this is not immediate steering.\n\
-new opens a draft; the user must press Send in the GUI. It does not create a hidden chat.\n\
+draft opens a GUI draft; the user must press Send. It does not create a hidden chat.\n\
 No account/model overrides, GUI termination, archive/restore, daemon changes or lock edits.\n\
 The GUI uses its existing login. A foreign CLI writer is rejected.\n\
 Receipts contain IDs/hashes/status, never prompt text. Reusing a request ID never resends.\n\
@@ -53,7 +59,7 @@ fn parse(args: Vec<String>) -> Result<Options, String> {
     if ["-h", "--help"].contains(&o.action.as_str()) {
         o.action = "help".into();
     }
-    if !["help", "list", "status", "open", "new", "send"].contains(&o.action.as_str()) {
+    if !["help", "list", "status", "open", "draft", "send"].contains(&o.action.as_str()) {
         return Err("unknown gui command; use codexm gui help".into());
     }
     let mut seen = std::collections::HashSet::new();
@@ -63,10 +69,12 @@ fn parse(args: Vec<String>) -> Result<Options, String> {
         }
         match arg.as_str() {
             "--app" => o.app = Some(PathBuf::from(args.next().ok_or("missing --app path")?)),
-            "--cwd" if o.action == "new" => {
+            "--cwd" if o.action == "draft" => {
                 o.cwd = Some(PathBuf::from(args.next().ok_or("missing --cwd path")?))
             }
-            "--message-stdin" if o.action == "new" || o.action == "send" => o.message_stdin = true,
+            "--message-stdin" if o.action == "draft" || o.action == "send" => {
+                o.message_stdin = true
+            }
             "--request-id" if o.action == "send" => {
                 o.request_id = Some(args.next().ok_or("missing request ID")?)
             }
@@ -211,7 +219,7 @@ fn execute(o: Options) -> Result<i32, String> {
         None
     };
     let desktop = Desktop::discover(o.app, cancelled.clone())?;
-    if o.action == "new" {
+    if o.action == "draft" {
         let url = draft_url(o.cwd.as_deref(), message.as_deref())?;
         desktop.open_url(&url)?;
         print(
@@ -313,7 +321,7 @@ mod tests {
     fn rejects_unsupported_account_takeover_and_mutation_options() {
         for v in [
             vec!["send", "--account", "default"],
-            vec!["new", "--send"],
+            vec!["draft", "--send"],
             vec!["open", "--force"],
             vec!["list", "--limit", "0"],
             vec!["send", "--wait", "999"],
