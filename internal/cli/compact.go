@@ -58,7 +58,7 @@ func Main(args []string) error {
 	f := flag.NewFlagSet("codexm", flag.ContinueOnError)
 	path := f.String("config", "", "configuration file")
 	version := f.Bool("version", false, "version")
-	f.Usage = func() { fmt.Print(compactHelp) }
+	f.Usage = func() { fmt.Print(compactHelp + guiExperimentHelp) }
 	if e := f.Parse(args); e != nil {
 		if errors.Is(e, flag.ErrHelp) {
 			return nil
@@ -73,6 +73,9 @@ func Main(args []string) error {
 	command := ""
 	if len(args) > 0 {
 		command, args = args[0], args[1:]
+	}
+	if handled, err := runGUIExperiment(command, args, *path); handled {
+		return err
 	}
 	if command == "history-sync" {
 		return errors.New("history-sync has been removed; codexm does not synchronize conversations across machines")
@@ -103,7 +106,7 @@ func Main(args []string) error {
 		return nil
 	}
 	if command == "help" {
-		fmt.Print(compactHelp)
+		fmt.Print(compactHelp + guiExperimentHelp)
 		return nil
 	}
 	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "migrate-toolbar": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}

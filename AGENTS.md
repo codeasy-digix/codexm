@@ -16,6 +16,15 @@
 - Running `codexm` opens the Rust TUI in crates/terminal. Enter directly resumes
   with the last registered account or default; Right/Left move to/from details,
   and F2 opens settings/account management. Keep explicit choices across polling.
+- The `gui-control-way` experiment is isolated behind the `gui_experiment` Go
+  build tag and the Rust `crates/gui-control` sibling. Normal builds/installations
+  do not enable it. Its short-lived official stdio client may read the catalog and
+  submit one `thread/queue/add` after verifying the selected GUI writer; never
+  load/resume/archive a chat in that relay or connect to private app-tools IPC.
+  Use official deep links to start/navigate the GUI. New-chat links open drafts,
+  not automatic submissions. Receipt IDs forbid replay, including unknown results.
+  Passive reads can temporarily label an unfinished GUI turn `interrupted`; do
+  not treat that as terminal. See docs/gui-control-experiment.md.
 - A second Right from the account panel opens per-chat archive/restore controls.
   Freeze the selected thread ID across refresh and confirmation; default to cancel.
   Use only official CLI archive/unarchive or the verified existing owner's RPC.

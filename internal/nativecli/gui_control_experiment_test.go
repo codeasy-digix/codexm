@@ -221,6 +221,64 @@ func (f *guiControlFixture) queue(id, text string) {
 	}
 }
 
+func TestGUIControlDirectQueueRPCNeverLoadsTheRelay(t *testing.T) {
+	f := newGUIControlFixture(t, "stdio")
+	id := f.thread()
+	f.start(id, "GUI_FIXTURE_ACTIVE")
+	select {
+	case <-f.active:
+	case <-f.ctx.Done():
+		t.Fatal("owner did not start its turn")
+	}
+	cmd := exec.CommandContext(f.ctx, f.binary, "--no-daemon", "--disable", "plugins", "--disable", "apps", "--disable", "hooks", "--enable", "skip_host_skill_discovery", "app-server", "--listen", "stdio://")
+	cmd.Env, cmd.Dir = environment(f.c, "default"), f.cmd.Dir
+	relay, err := cr.StartStdio(f.ctx, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		relay.Close()
+		select {
+		case <-relay.ProcessDone:
+		case <-time.After(3 * time.Second):
+			t.Error("owned unloaded relay did not exit on stdin EOF")
+			_ = cmd.Process.Kill() // Isolated fixture only.
+			<-relay.ProcessDone
+		}
+	})
+	request := "00000000-0000-4000-8000-000000000012"
+	var ack struct {
+		QueuedSubmission struct {
+			ID                  string `json:"id"`
+			ClientUserMessageID string `json:"clientUserMessageId"`
+		}
+	}
+	err = relay.Call(f.ctx, "thread/queue/add", map[string]any{"threadId": id, "clientUserMessageId": request, "input": cr.TextInput("GUI_FIXTURE_DIRECT_QUEUE")}, &ack)
+	if err != nil || ack.QueuedSubmission.ClientUserMessageID != request || ack.QueuedSubmission.ID == "" {
+		t.Fatal("direct queue acknowledgement", err)
+	}
+	var loaded struct{ Data []string }
+	if err := relay.Call(f.ctx, "thread/loaded/list", map[string]any{}, &loaded); err != nil || len(loaded.Data) != 0 {
+		t.Fatal("queue relay must not own or resume any chat", err)
+	}
+	if f.requests() != 1 {
+		t.Fatal("queue interrupted the active GUI-like turn")
+	}
+	f.once.Do(func() { close(f.release) })
+	f.completed(id, 2)
+	var page struct{ Data []json.RawMessage }
+	if err := relay.Call(f.ctx, "thread/turns/list", map[string]any{"threadId": id, "limit": 5, "itemsView": "full", "sortDirection": "desc"}, &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Data) != 2 || !strings.Contains(string(page.Data[0]), request) || !strings.Contains(string(page.Data[0]), `"completed"`) {
+		t.Fatal("native transcript did not preserve the client request ID")
+	}
+	writers, err := writerProcesses(f.ctx, f.c.Runtime.SharedCodexHome, id)
+	if err != nil || len(writers) != 1 || writers[0] != f.cmd.Process.Pid {
+		t.Fatal("direct queue replaced its GUI-like owner", err)
+	}
+}
+
 func (f *guiControlFixture) requests() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

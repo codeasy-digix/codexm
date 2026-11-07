@@ -66,6 +66,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "codexm-gui"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "nix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+]
+
+[[package]]
 name = "codexm-state-audit"
 version = "0.1.0"
 dependencies = [

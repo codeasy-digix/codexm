@@ -12,6 +12,10 @@ macOS 메뉴 앱도 같은 계정·인증·기본 계정을 사용합니다. 메
 
 지원: **support@digix.kr** · 소스: https://github.com/codeasy-digix/codexm
 
+`gui-control-way`의 [GUI 제어 실험](docs/gui-control-experiment.md)은 별도 빌드에서만
+실행합니다. GUI를 종료하지 않고 기존 GUI 채팅에 후속 지시를 보내는 경로이며,
+기본 TUI·설치본·Homebrew 배포에는 적용되지 않습니다.
+
 ## 기본 흐름
 
 ```sh
