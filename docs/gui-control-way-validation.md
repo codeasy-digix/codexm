@@ -128,3 +128,45 @@ go test -race ./internal/nativecli -run '^TestGUIControl' -count=1 -v
 - [Codex CLI reference: queue](https://learn.chatgpt.com/docs/cli/reference#codex-queue)
 - [App-server: lifecycle and turn/steer](https://learn.chatgpt.com/docs/app-server)
 - [Prompting: steering and queuing](https://learn.chatgpt.com/docs/prompting)
+
+## 2026-11-08: 계정별 공식 daemon
+
+macOS arm64에서 공식 packaged CLI `0.167.0`과 태그가 적용된 별도 codexm 빌드로
+검증했다. 운영 로그인 대신 synthetic ChatGPT 계정 두 개와 loopback 계정/routing·
+모델 응답 서버를 사용했다. 모델 제공자/프롬프트/프로젝트는 격리 저장소에만 설정했다.
+
+| 항목 | 관측 결과 |
+| --- | --- |
+| 계정별 `daemon start` | 서로 다른 home, Unix socket, PID, 현재 user/workspace 확인 |
+| 실행 중인 daemon 다시 등록 | 기존 PID와 시작 시각 유지; start/restart 재호출 없음 |
+| 같은 ID A → B 인계 | A의 첫 턴 이력을 유지하고 B의 다른 인증으로 두 번째 턴 완료; fork 없음 |
+| 다른 채팅 동시 실행 | A의 이웃 채팅이 active 상태와 원래 writer를 유지 |
+| 활성 턴 인계 | 기본 요청은 거절; `--interrupt` 요청은 선택한 턴만 중단하고 B → A 인계 |
+| 같은 request ID 재호출 | 기존 상태/시각 반환; archive나 continuation 재전송 없음 |
+| unknown 요청 | 새 ID로 우회한 재시도도 거절; 영수증을 유지 |
+| 자식 채팅/대기 입력 | preflight 검사에서 거절하는 기본 테스트 통과 |
+| 실제 native CLI의 PTY 제거 | frontend PID 종료 뒤에도 동일 daemon/turn ID가 active를 유지하고 완료 |
+| native CLI에 SIGTERM | 검증한 frontend PID만 종료; daemon과 모델 턴 유지 |
+| 컨트롤러 독립성 | seed 구독을 닫고 시험; 모델 완료 동안 관측용 연결도 닫은 뒤 재연결하여 확인 |
+| GUI 방식의 `/rpc` Unix WebSocket | initialize 성공 |
+| 공식 `app-server proxy --sock` | stdio의 raw WebSocket 터널로 같은 daemon의 채팅 조회; proxy EOF 종료 확인 |
+| 실제 운영 GUI | main/app-server의 PID와 시작 시각 유지; 기본 daemon 소켓 생성 없음 |
+
+PTY 시험은 tmux 뷰어에서 detach하는 데 그치지 않고, 시험용 native frontend가
+실제로 사라지는 것까지 확인한다. 단순 연결 유지, 새 턴의 자동 재실행이나 tmux
+프로세스 생존을 daemon의 작업 유지라고 잘못 판단하지 않도록 turn ID도 비교한다.
+
+기본/실험 build tag 각각의 전체 Go race 테스트와 vet가 통과했다. 기본 빌드에서
+`gui`와 `daemon` 진입점이 활성화되지 않는 테스트가 있다. Rust/Swift/웹 코드는
+이 변경에서 수정하지 않았다. 공식 runtime은 수집된 시험용 임시 디렉터리에서만
+시작·정리하며 운영 바이너리와 Homebrew는 교체하지 않는다.
+
+연속 PTY 시험에서 idle unload가 loaded 목록 제거와 writer 해제를 순차 처리하는
+경계를 확인했다. attach에 한해 검증된 같은 daemon의 해제를 짧게 관찰하도록
+보완한 뒤 전체 daemon 시험을 함께 통과했다. archive에는 계속 loaded 증명이 필요하다.
+
+실제 GUI의 서버 연결 변경은 시험하지 않았다. 현재 GUI는 config override가 있는
+별도 stdio 서버이며, 관찰한 앱의 local-daemon 분기 조건에 맞지 않는다. protocol
+호환성 성공을 GUI 전환 성공으로 표시하지 않는다. GUI 계정별 서버 선택과 실제
+OpenAI 인증/과금·quota, 새 daemon 경로의 Discord 답장 전달은 이번 격리 시험의
+검증 결과에 포함되지 않는다. 세부 사용법과 제한은 [daemon-experiment.md](daemon-experiment.md).

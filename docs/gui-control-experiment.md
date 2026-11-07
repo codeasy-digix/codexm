@@ -5,6 +5,10 @@ CLI 인계, 설치본과 Homebrew 패키지는 그대로 유지한다. 새 제�
 `crates/gui-control`에 있고, Go 진입점은 `gui_experiment` build tag로만 활성화된다.
 새 서버 서비스나 GUI 패치, Accessibility 키 입력, 비공개 앱 IPC를 사용하지 않는다.
 
+추가된 **계정별 공식 daemon 연결 실험**은 [daemon-experiment.md](daemon-experiment.md)에
+분리했다. 아래 GUI queue relay의 권한을 넓힌 것이 아니라, 명시적으로 시작·등록한
+공식 서버에 연결하는 별도 `daemon` 명령이다. 기존 `gui` 경로와 일반 설치는 그대로다.
+
 ## GUI 우선과 다중 계정의 경계
 
 `gui resume THREAD`는 **이미 검증된 GUI 소유자가 있으면 GUI를 유지**한다.

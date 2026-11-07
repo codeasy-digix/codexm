@@ -16,9 +16,12 @@ import (
 	"golang.org/x/term"
 )
 
-const guiExperimentHelp = "\nExperimental build: codexm gui [help|resume|new|draft|list|open|send|status]\n"
+const guiExperimentHelp = "\nExperimental build: codexm gui [help|resume|new|draft|list|open|send|status]\n" + daemonExperimentHelp
 
 func runGUIExperiment(command string, args []string, configPath string) (bool, error) {
+	if command == "daemon" {
+		return true, runDaemonExperiment(args, configPath)
+	}
 	if command != "gui" {
 		return false, nil
 	}

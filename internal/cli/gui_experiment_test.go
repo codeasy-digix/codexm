@@ -36,3 +36,12 @@ func TestGUIHybridKeepsExplicitAccountIntent(t *testing.T) {
 		t.Fatal("omitted account must keep GUI priority", o, err)
 	}
 }
+
+func TestDaemonExperimentRequiresExplicitBoundedCommands(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, args := range [][]string{{"restart"}, {"stop"}, {"start"}, {"start", "--account", "default"}, {"resume"}, {"switch", "thread", "--account", "alpha"}, {"new", "--account", "alpha", "--force"}} {
+		if err := runDaemonExperiment(args, ""); err == nil {
+			t.Fatalf("unsafe/unsupported daemon args accepted: %q", args)
+		}
+	}
+}

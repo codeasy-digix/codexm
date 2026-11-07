@@ -33,6 +33,16 @@
   restart. Revalidate free ownership in the durable launcher; do not silently
   reconnect an explicitly requested account to a different/unknown running login.
   `gui draft` remains the explicit GUI composer link, with no automatic submission.
+- The tagged `daemon` experiment explicitly starts/registers named-account
+  official daemons only; never start/restart the default/GUI server. Connect to
+  a verified Unix socket/PID incarnation and live user/workspace, pinned in a
+  private receipt. Native terminals use `--remote`, not `--no-daemon`. Explicit
+  same-ID transfers release only the source daemon's loaded chat, using official
+  interrupt (only with `--interrupt`), archive/unarchive and resume. Refuse child
+  trees, queued input, foreign owners, stale logins and unresolved receipts; no
+  prompts, automatic retry, process termination or auth mutation. Leave the GUI
+  unchanged. This is the bounded exception to the no-daemon-start rule below;
+  normal builds/handoffs do not enable it. See docs/daemon-experiment.md.
 - A second Right from the account panel opens per-chat archive/restore controls.
   Freeze the selected thread ID across refresh and confirmation; default to cancel.
   Use only official CLI archive/unarchive or the verified existing owner's RPC.
