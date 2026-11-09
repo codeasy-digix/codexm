@@ -46,6 +46,18 @@ impl App {
         if self.blocking {
             return Action::None;
         }
+        let mut key = key;
+        if key.modifiers.is_empty()
+            && matches!(self.view, View::Chats | View::Detail | View::ChatManage)
+        {
+            key.code = match key.code {
+                KeyCode::Char('i') => KeyCode::Up,
+                KeyCode::Char('j') => KeyCode::Left,
+                KeyCode::Char('k') => KeyCode::Down,
+                KeyCode::Char('l') => KeyCode::Right,
+                code => code,
+            };
+        }
         match self.view {
             View::Chats => match key.code {
                 KeyCode::Up => self.selected = self.selected.saturating_sub(1),
