@@ -95,6 +95,13 @@
   and TUI account management may use a temporary isolated official auth server for
   add/re-login; never start conversation workers or restore retired policy.
   Keep login URLs/codes owner-scoped and out of logs/durable receipts.
+- The optional web catalog shares the desktop's native index, sections and
+  read-only legacy GUI project metadata. Preserve GUI project aliases, explicit
+  assignments/projectless choices and section order; never repair/import the
+  original data while listing it. Use keyset pagination over the read-only index,
+  independent of the selected login. Keep native-only projects separately visible.
+  Pin mutations use official section APIs, not a second web pin registry. Polling
+  must refresh all visible pages so moved/archived/deleted rows do not linger.
 - The Rust TUI owns one serial local stdio bridge to validated Go account/catalog
   code. No HTTP listener or per-keystroke subprocess. Restore terminal state and
   reap the owned bridge/auth helpers before exec into the official-CLI launcher.

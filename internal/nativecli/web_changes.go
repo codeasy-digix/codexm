@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
@@ -29,6 +30,16 @@ func webDirectory(path string) (string, error) {
 }
 
 func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p webParams) (any, error) {
+	if p.Project != "" && (r.Method == "web.create" || r.Method == "web.move") {
+		d, err := catalog.ReadDesktop(ctx, config.Expand(w.c.Runtime.SharedCodexHome))
+		if err != nil {
+			return nil, err
+		}
+		p.Project, err = d.NativeProject(p.Project)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if r.Method == "web.projectCreate" {
 		cwd, err := webDirectory(p.Cwd)
 		if err != nil {
@@ -70,12 +81,21 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 	}
 	defer unlock()
 	if r.Method == "web.pin" {
-		if p.Pinned {
-			if _, err := c.client.Read(ctx, p.Thread, false); err != nil {
-				return nil, err
-			}
+		d, err := catalog.ReadDesktop(ctx, config.Expand(w.c.Runtime.SharedCodexHome))
+		if err != nil {
+			return nil, err
 		}
-		return w.pin(p.Thread, p.Pinned)
+		var section any
+		if p.Pinned {
+			if d.PinnedSection == "" {
+				return nil, errors.New("native Pinned section is unavailable")
+			}
+			section = d.PinnedSection
+		}
+		if err := c.client.Call(ctx, "thread/section/move", map[string]any{"threadId": p.Thread, "sectionId": section}, nil); err != nil {
+			return nil, err
+		}
+		return map[string]any{"thread_id": p.Thread, "pinned": p.Pinned}, nil
 	}
 	if r.Method == "web.send" {
 		return w.send(ctx, c, r, p)

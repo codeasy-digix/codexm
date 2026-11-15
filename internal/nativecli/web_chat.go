@@ -287,6 +287,9 @@ func (w *WebChat) Dispatch(ctx context.Context, r Request) (any, error) {
 }
 
 func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, error) {
+	if r.Method == "web.catalog" {
+		return w.catalog(ctx, nil, p)
+	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {
 		return nil, err

@@ -5,3 +5,4 @@
 /* Keep visually hidden message labels inside the transcript's scroll clip. */
 .message-scroll{position:relative}
 @media(max-width:979px){.sidebar{padding-top:16px}.brand{margin-bottom:18px}.sections{display:grid;grid-template-columns:1fr 1fr;gap:2px}.sections button{padding:9px 8px;font-size:12px;gap:7px}.project-group{display:none}.project-group.expanded{display:block}.chat-list{min-height:0}.list-heading{padding-top:18px}}
+.project-group>summary{padding:9px 7px;color:var(--muted);font-size:12px;cursor:pointer}

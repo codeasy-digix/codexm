@@ -85,21 +85,19 @@ func TestWebBridgeRetiresTerminalControlsAndFullCatalogPolling(t *testing.T) {
 	}
 }
 
-func TestWebPinIsPrivatePresentationOnly(t *testing.T) {
+func TestWebAccountPreferencePreservesRetiredPinsWithoutUsingThem(t *testing.T) {
 	c := config.Defaults()
 	c.Storage.StateDir = t.TempDir()
 	c.Runtime.SharedCodexHome = filepath.Join(t.TempDir(), "native-untouched")
 	w := NewWebChat(context.Background(), c)
 	defer w.Close()
 	id := "10000000-0000-4000-8000-000000000001"
-	if _, err := w.pin(id, true); err != nil {
+	if err := w.editPreferences(func(p *webPreferences) error { p.Pinned = []string{id}; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.pin(id, true); err != nil {
-		t.Fatal(err)
-	}
+	w.rememberAccount(id, "example")
 	p, err := w.preferences()
-	if err != nil || len(p.Pinned) != 1 {
+	if err != nil || len(p.Pinned) != 1 || p.Accounts[id] != "example" {
 		t.Fatal(p, err)
 	}
 	path := filepath.Join(c.StateDir(), "web-chat", "preferences.json")
@@ -109,13 +107,6 @@ func TestWebPinIsPrivatePresentationOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(config.Expand(c.Runtime.SharedCodexHome)); !os.IsNotExist(err) {
 		t.Fatal("pin modified native home", err)
-	}
-	if _, err := w.pin(id, false); err != nil {
-		t.Fatal(err)
-	}
-	p, _ = w.preferences()
-	if len(p.Pinned) != 0 {
-		t.Fatal("pin was not removed")
 	}
 }
 

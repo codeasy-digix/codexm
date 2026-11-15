@@ -2,6 +2,7 @@ package nativecli
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
@@ -38,9 +39,20 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	if err := c.client.Call(ctx, "thread/read", map[string]any{"threadId": p.Thread, "includeTurns": false}, &read); err != nil {
 		return nil, err
 	}
-	if archived, err := catalog.Archived(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread); err == nil {
-		read.Thread.Archived = archived
+	entry, err := catalog.Lookup(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
 	}
+	if errors.Is(err, sql.ErrNoRows) {
+		entry = catalog.Entry{ID: p.Thread, Cwd: read.Thread.Cwd, ProjectID: read.Thread.Project}
+	}
+	desktop, err := catalog.ReadDesktop(ctx, config.Expand(w.c.Runtime.SharedCodexHome))
+	if err != nil {
+		return nil, err
+	}
+	read.Thread.Archived = entry.Archived
+	read.Thread.Pinned = desktop.IsPinned(entry)
+	read.Thread.Project = desktop.ProjectFor(entry)
 	owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err

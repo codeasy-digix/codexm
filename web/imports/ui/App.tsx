@@ -19,6 +19,7 @@ export function App() {
   const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
   const catalogState=useCatalog(access.ready,account,query,project,section==="archived");
   const {catalog}=catalogState;
+  const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
   const chatState=useChatHistory(access.ready,selected?.id||"",account);
   const {history}=chatState;
   const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null),olderBusy=useRef(false);
@@ -41,7 +42,7 @@ export function App() {
   function filter(next:Section,id="") {setSection(next);setProject(id);}
   function openDialog(next:Dialog) {
     setError("");setMenu(false);setFormName("");
-    const target=next.kind==="new"?catalog?.projects.find(p=>p.id===project):undefined;
+    const target=next.kind==="new"?projects.find(p=>p.id===project):undefined;
     setFormPath(target?.roots[0]?.path||catalog?.defaultCwd||"");
     setFormProject("chat"in next?next.chat.projectId||"":target?.id||"");setDialog(next);
   }
@@ -93,7 +94,8 @@ export function App() {
       <div className={`project-group ${section==="projects"?"expanded":""}`}><div className="project-heading"><span>프로젝트</span><button aria-label="프로젝트 추가" onClick={()=>openDialog({kind:"project"})}>＋</button></div>
       <div className="project-list">{catalog?.projects.map(p=><button className={project===p.id?"selected":""} key={p.id} onClick={()=>filter("projects",p.id)} title={p.roots.map(r=>r.path).join("\n")}><span>▱</span>{p.name}</button>)}{catalog&&!catalog.projects.length&&<p className="muted small">프로젝트를 추가해 작업을 모아보세요.</p>}</div>
       </div>
-      <div className="list-heading"><span>{section==="pinned"?"고정한 채팅":section==="archived"?"보관된 채팅":project?catalog?.projects.find(p=>p.id===project)?.name||"프로젝트 채팅":"최근 채팅"}</span>{catalogState.loading&&<small>갱신 중</small>}</div>
+      {!!catalog?.otherProjects?.length&&<details className={`project-group ${section==="projects"?"expanded":""}`}><summary>다른 로컬 프로젝트</summary><div className="project-list">{catalog.otherProjects.map(p=><button className={project===p.id?"selected":""} key={p.id} onClick={()=>filter("projects",p.id)} title={p.roots.map(r=>r.path).join("\n")}><span>▱</span>{p.name}</button>)}</div></details>}
+      <div className="list-heading"><span>{section==="pinned"?"고정한 채팅":section==="archived"?"보관된 채팅":project?projects.find(p=>p.id===project)?.name||"프로젝트 채팅":"최근 채팅"}</span>{catalogState.loading&&<small>갱신 중</small>}</div>
       <div className="chat-list" aria-label="채팅 목록">{displayChats.map(t=><button key={t.id} className={selected?.id===t.id?"selected":""} onClick={()=>choose(t)} title={chatTitle(t)}><strong>{chatTitle(t)}</strong><small>{t.cwd.split("/").filter(Boolean).pop()||t.cwd}</small></button>)}
         {!displayChats.length&&catalog&&!catalogState.loading&&<p className="muted empty-list">표시할 채팅이 없습니다.</p>}
         {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
@@ -113,7 +115,7 @@ export function App() {
           {chatState.loading&&<p className="loading-message" role="status">최근 대화를 불러오는 중…</p>}
           {chatState.error&&<p role="alert" className="inline-error">{chatState.error}</p>}
           {history&&<ChatMessages thread={selected.id} turns={history.turns} account={account} external={history.thread.externalOwner}/>}
-          {history&&!history.turns.length&&<div className="empty-conversation"><h2>새 채팅이 준비됐습니다</h2><p>아래에 요청을 입력하세요.</p></div>}
+          {history&&!history.turns.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
           {history?.pending.map(p=><Approval key={p.request_id} request={p} thread={selected.id} account={account} onDone={()=>void chatState.refresh()}/>)}
         </div>:<div className="welcome"><span className="welcome-mark">C</span><p className="eyebrow">CODEXM · LOCAL WORKSPACE</p><h2>{first}</h2><p>최근 채팅을 이어가거나,<br/>프로젝트에서 새 작업을 시작하세요.</p><button className="primary" disabled={!catalog} onClick={()=>openDialog({kind:"new"})}>＋ 새 채팅 시작</button></div>}
       </div>
@@ -123,7 +125,7 @@ export function App() {
     {dialog&&<Modal title={dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
       {dialog.kind==="accounts"?<Accounts accounts={accounts}/>:<form className="dialog-form" onSubmit={e=>void submitDialog(e)}>
         {"chat"in dialog&&<p className="dialog-chat-title">{chatTitle(dialog.chat)}</p>}
-        {(dialog.kind==="new"||dialog.kind==="move")&&<label>프로젝트<select aria-label="프로젝트" value={formProject} onChange={e=>{setFormProject(e.target.value);const chosen=catalog?.projects.find(p=>p.id===e.target.value);if(chosen?.roots[0])setFormPath(chosen.roots[0].path);}}><option value="">프로젝트 없음</option>{catalog?.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
+        {(dialog.kind==="new"||dialog.kind==="move")&&<label>프로젝트<select aria-label="프로젝트" value={formProject} onChange={e=>{setFormProject(e.target.value);const chosen=projects.find(p=>p.id===e.target.value);if(chosen?.roots[0])setFormPath(chosen.roots[0].path);}}><option value="">프로젝트 없음</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
         {dialog.kind==="project"&&<label>프로젝트 이름<input value={formName} onChange={e=>setFormName(e.target.value)} placeholder="폴더 이름 사용" maxLength={200}/></label>}
         {(dialog.kind==="new"||dialog.kind==="project")&&<label>이 머신의 작업 폴더<input value={formPath} onChange={e=>setFormPath(e.target.value)} placeholder="/absolute/project/path" required spellCheck={false}/></label>}
         {dialog.kind==="move"&&<p className="muted">채팅의 프로젝트 소속을 변경합니다. 작업 폴더와 파일을 옮기지는 않습니다.</p>}

@@ -4,23 +4,33 @@ import { mergeTurns, type ChatHistory, type Catalog } from "../contracts/web";
 
 export function useCatalog(ready:boolean,account:string,search:string,project:string,archived:boolean) {
   const [catalog,setCatalog]=useState<Catalog>(),[error,setError]=useState(""),[loading,setLoading]=useState(false);
-  const generation=useRef(0),busy=useRef(false);
+  const generation=useRef(0),busy=useRef(false),visibleCount=useRef(50);
   const refresh=useCallback(async(cursor?:string|null,reset=false)=>{
     const epoch=generation.current;
     if (!ready||busy.current) return;
     busy.current=true;setLoading(true);
-    try {const page=await call<Catalog>("web.catalog",{account,search,project_id:project,archived,...(cursor?{cursor}:{})});
+    try {const params={account,search,project_id:project,archived};
+      let page=await call<Catalog>("web.catalog",{...params,...(cursor?{cursor}:{})});
+      // Refresh every page already on screen. Retaining an old tail made
+      // GUI-archived/deleted/moved chats linger until the browser was reloaded.
+      if(!cursor){const seen=new Set<string>();let rounds=0;
+        while(page.nextCursor&&page.threads.length<visibleCount.current&&rounds++<200){
+          if(seen.has(page.nextCursor))throw new Error("목록 페이지가 진행되지 않습니다. 새로고침해 주세요.");seen.add(page.nextCursor);
+          const more=await call<Catalog>("web.catalog",{...params,cursor:page.nextCursor});
+          if(epoch!==generation.current)return;
+          const ids=new Set(page.threads.map(t=>t.id));page={...page,threads:[...page.threads,...more.threads.filter(t=>!ids.has(t.id))],nextCursor:more.nextCursor};
+        }
+      }
       if(epoch!==generation.current)return;
       setCatalog(old=>{
-        if(cursor&&old)return {...old,threads:[...old.threads,...(page.threads||[]).filter(t=>!old.threads.some(x=>x.id===t.id))],nextCursor:page.nextCursor};
+        if(cursor&&old){const threads=[...old.threads,...(page.threads||[]).filter(t=>!old.threads.some(x=>x.id===t.id))];visibleCount.current=threads.length;return {...old,threads,nextCursor:page.nextCursor};}
         const next={...page,threads:page.threads||[],projects:page.projects||[],pinned:page.pinned||[]};
-        if(!reset&&old&&old.threads.length>next.threads.length){const ids=new Set(next.threads.map(t=>t.id));return {...next,threads:[...next.threads,...old.threads.filter(t=>!ids.has(t.id))],nextCursor:old.nextCursor};}
         return next;
       });setError("");
     }catch(e){if(epoch===generation.current)setError((e as Error).message);}finally{if(epoch===generation.current){busy.current=false;setLoading(false);}}
   },[ready,account,search,project,archived]);
   useEffect(()=>{
-    generation.current++;busy.current=false;setCatalog(undefined);setError("");
+    generation.current++;busy.current=false;visibleCount.current=50;setCatalog(undefined);setError("");
     if(!ready)return;
     const initial=setTimeout(()=>void refresh(),search?250:0);
     const timer=setInterval(()=>{if(document.visibilityState!=="hidden")void refresh();},7000);
