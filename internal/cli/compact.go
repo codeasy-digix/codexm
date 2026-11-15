@@ -238,11 +238,14 @@ func Main(args []string) error {
 		}
 		return nativecli.RunSession(ctx, c, args[0])
 	case "bridge":
-		if len(args) != 1 || args[0] != "--stdio" {
-			return errors.New("usage: codexm bridge --stdio")
+		if (len(args) != 1 && len(args) != 2) || args[0] != "--stdio" || (len(args) == 2 && args[1] != "--web") {
+			return errors.New("usage: codexm bridge --stdio [--web]")
 		}
 		bridgectx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
+		if len(args) == 2 {
+			return nativecli.ServeWeb(bridgectx, c, self, os.Stdin, os.Stdout)
+		}
 		return nativecli.Serve(bridgectx, c, self, os.Stdin, os.Stdout)
 	case "doctor", "status":
 		f := flag.NewFlagSet(command, flag.ContinueOnError)

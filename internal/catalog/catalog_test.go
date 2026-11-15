@@ -94,6 +94,31 @@ INSERT INTO threads VALUES('cli-old','old title','saved title','/work','cli',1,1
 	}
 }
 
+func TestArchivedReadsOnlySelectedRowAndSeesWALUpdates(t *testing.T) {
+	home := t.TempDir()
+	filename := filepath.Join(home, "state_5.sqlite")
+	db := writer(t, filename, `CREATE TABLE threads(id TEXT PRIMARY KEY,archived INTEGER);INSERT INTO threads VALUES('selected',0),('another',1);`)
+	before, _ := os.ReadFile(filename + "-wal")
+	value, err := Archived(context.Background(), home, "selected")
+	if err != nil || value {
+		t.Fatal(value, err)
+	}
+	after, _ := os.ReadFile(filename + "-wal")
+	if sha256.Sum256(before) != sha256.Sum256(after) {
+		t.Fatal("archive read changed native WAL")
+	}
+	if _, err = db.Exec(`UPDATE threads SET archived=1 WHERE id='selected'`); err != nil {
+		t.Fatal(err)
+	}
+	value, err = Archived(context.Background(), home, "selected")
+	if err != nil || !value {
+		t.Fatal("missed committed WAL", value, err)
+	}
+	if _, err = Archived(context.Background(), home, "missing"); err != sql.ErrNoRows {
+		t.Fatal("missing chat became unarchived", err)
+	}
+}
+
 func TestNativeSchemaVersionsAndMissingIndexAreSafe(t *testing.T) {
 	home := t.TempDir()
 	list, err := Read(context.Background(), home)

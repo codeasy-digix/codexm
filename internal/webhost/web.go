@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/config"
-	cr "github.com/codeasy-digix/codexm/internal/runtime"
+	"github.com/codeasy-digix/codexm/internal/service"
 	"github.com/codeasy-digix/codexm/internal/webbundle"
 	"golang.org/x/sys/unix"
 )
@@ -31,6 +31,7 @@ type Spec struct {
 	Listen                                                     string
 	TmuxServer                                                 string `json:"tmux_server,omitempty"`
 	Workspace                                                  bool   `json:"workspace,omitempty"`
+	Service                                                    bool   `json:"service,omitempty"`
 	Args                                                       []string
 	PID                                                        int
 }
@@ -52,6 +53,9 @@ func webTarget(spec Spec) string {
 	return spec.Session + ":"
 }
 func webAlive(ctx context.Context, spec Spec) bool {
+	if spec.Service {
+		return webService(spec).Status(ctx).Running
+	}
 	if spec.Session == "" {
 		return false
 	}
@@ -60,6 +64,13 @@ func webAlive(ctx context.Context, spec Spec) bool {
 	}
 	b, err := webTmux(ctx, spec, "list-panes", "-t", webTarget(spec), "-F", "#{window_name}").Output()
 	return err == nil && strings.TrimSpace(string(b)) == spec.Session
+}
+
+func webService(spec Spec) service.Manager {
+	c := config.Defaults()
+	c.Path = spec.Config
+	c.Storage.StateDir = filepath.Dir(spec.State)
+	return service.Manager{Config: c, Self: spec.Binary, Kind: "web"}
 }
 
 func Command(ctx context.Context, c config.Config, self string, args []string, out io.Writer) error {
@@ -107,7 +118,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		}
 		return json.NewEncoder(out).Encode(m)
 	case "status":
-		return json.NewEncoder(out).Encode(map[string]any{"running": alive && ready(state, spec.Origin), "starting": alive && !ready(state, spec.Origin), "url": spec.Origin, "session": spec.Session, "state": state, "tmux_server": webTmuxServer(spec)})
+		return json.NewEncoder(out).Encode(map[string]any{"running": alive && ready(state, spec.Origin), "starting": alive && !ready(state, spec.Origin), "url": spec.Origin, "session": spec.Session, "state": state, "tmux_server": webTmuxServer(spec), "os_service": spec.Service})
 	case "logs":
 		b, err := os.ReadFile(filepath.Join(state, "web.log"))
 		if err != nil {
@@ -119,6 +130,13 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		_, err = out.Write(b)
 		return err
 	case "stop":
+		if spec.Service {
+			if err := webService(spec).Stop(ctx); err != nil {
+				return err
+			}
+			fmt.Fprintln(out, "Web service stopped. Its web tasks stop; unrelated native GUI/CLI work is preserved.")
+			return nil
+		}
 		if !alive {
 			fmt.Fprintln(out, "Local web is stopped.")
 			return nil
@@ -134,9 +152,18 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 			time.Sleep(100 * time.Millisecond)
 		}
 		return errors.New("web shutdown did not finish; inspect its named tmux session")
+	case "uninstall":
+		if !spec.Service {
+			return errors.New("no managed web service is registered for this configuration")
+		}
+		if err := webService(spec).Uninstall(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "Web service registration removed; local web data preserved.")
+		return nil
 	case "start":
 	default:
-		return errors.New("usage: codexm web [status|stop|logs|user] [--public-origin https://HOST] [--no-open]")
+		return errors.New("usage: codexm web [status|stop|logs|user|uninstall] [--public-origin https://HOST] [--no-open]")
 	}
 	if alive {
 		if !ready(state, spec.Origin) {
@@ -184,6 +211,9 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	} else {
 		spec.Directory = config.Expand(*bundle)
 		spec.Args = []string{"main.js"}
+		spec.Service = true
+		spec.Session = ""
+		spec.Workspace = false
 	}
 	if err != nil {
 		return err
@@ -215,16 +245,29 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		return err
 	}
 	_ = os.Remove(filepath.Join(state, "ready.json"))
-	command := cr.ShellQuote(self) + " --config " + cr.ShellQuote(c.Path) + " __web " + cr.ShellQuote(path)
-	if webTmux(ctx, spec, "has-session", "-t", "=codexm").Run() != nil {
-		if err = webTmux(ctx, spec, "new-session", "-d", "-s", "codexm", "-n", "home").Run(); err != nil {
+	if spec.Service {
+		if err = webService(spec).Install(ctx, true); err != nil {
 			return err
 		}
+		fmt.Fprintf(out, "OS user service: %s\n", webService(spec).Label())
+	} else {
+		if webTmux(ctx, spec, "has-session", "-t", "=codexm").Run() != nil {
+			if err = webTmux(ctx, spec, "new-session", "-d", "-s", "codexm", "-n", "home").Run(); err != nil {
+				return err
+			}
+		}
+		windowArgs := []string{"new-window", "-d", "-t", "codexm:", "-n", spec.Session}
+		for _, key := range []string{"PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"} {
+			if value, ok := os.LookupEnv(key); ok {
+				windowArgs = append(windowArgs, "-e", key+"="+value)
+			}
+		}
+		windowArgs = append(windowArgs, self, "--config", c.Path, "__web", path)
+		if err = webTmux(ctx, spec, windowArgs...).Run(); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "tmux -L %s attach -t %s\n", webTmuxServer(spec), webTarget(spec))
 	}
-	if err = webTmux(ctx, spec, "new-window", "-d", "-t", "codexm:", "-n", spec.Session, command).Run(); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "tmux -L %s attach -t %s\n", webTmuxServer(spec), webTarget(spec))
 	for range 600 {
 		if ready(state, spec.Origin) {
 			return open(ctx, state, spec.Origin, *noOpen, out)

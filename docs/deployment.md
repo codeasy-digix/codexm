@@ -8,12 +8,12 @@
 |---|---|
 | TUI·채팅 목록·계정·공식 CLI 인계 | `crates/terminal/`, `internal/cli/compact.go`, `internal/nativecli/` |
 | macOS 메뉴 앱 | `apps/macos/`; 공통 stdio 계정 백엔드와 동일 버전 CLI/TUI |
-| 선택적 이전 웹 | `web/`; 기본 TUI 실행에는 포함하지 않음 |
+| 선택적 채팅 웹 | `web/`, `internal/nativecli/web_*.go`; 기본 TUI 실행에는 포함하지 않음 |
 | 빌드·설치·업데이트 | codexm 소스의 `build.sh`, `build-web.sh`, `install.sh` |
 | CLI 셸 함수 | 제품의 `internal/shellinit/`; `codexm shell-init zsh`로 출력 |
 | 이미 설치된 명령과 의존성 목록 | `.home/manifests/home.json`의 외부 도구 등록 |
 | 개인 zsh 로드 설정 | `.home/config/codexm/shell.zsh`; 제품 함수를 로드하는 짧은 설정 |
-| 실행 생명주기 | 공식 CLI 직접 실행; 웹과 별도 CLI는 default 서버의 `codexm` 세션 안에 이름 있는 창 |
+| 실행 생명주기 | CLI는 default/codexm의 작업 창; 웹 운영은 OS 사용자 서비스, 웹 개발만 이름 있는 tmux 창 |
 | 장비 간 history-sync | 제거. 코드·서비스·활성 환경 등록 없음 |
 
 `.home`에는 codexm source clone, revision pin, build/install/update 호출, 제품

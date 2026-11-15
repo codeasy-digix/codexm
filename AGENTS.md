@@ -104,9 +104,12 @@
   its own temporary grouped viewer, with an independent current window. Reap
   only that viewer when it disconnects; the workspace and jobs must survive.
   Never persist a viewer as a chat's durable location or retarget other clients.
-  The web reads the same terminals,
-  and forwards literal input. It does not interpret chat turns or run model logic.
-  Closing a web viewer must not stop the CLI. Never replay uncertain input.
+  Compatibility terminal endpoints still forward literal input. The optional
+  Meteor web frontend uses `bridge --stdio --web` for official app-server chat
+  pages, project metadata, queued input and expected-turn steer. It does not run
+  model logic or restore the old manager. Keep this bridge separate from the
+  normal TUI/menu bridge. Browsers do not own its process lifetime. Never replay
+  uncertain input or take over an unrelated GUI/CLI writer.
 - Before a fresh resume, find an existing interactive CLI by its writer file,
   process incarnation and pane ancestry, including ordinary codex launches.
   Connecting preserves the running authentication and submits no continuation.

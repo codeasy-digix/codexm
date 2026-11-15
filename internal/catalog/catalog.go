@@ -95,6 +95,26 @@ func database(home string) (string, error) {
 	return found[0].name, nil
 }
 
+// Archived reads one current row, including committed WAL changes. Web polling
+// must not scan and decorate the complete catalog for every selected chat.
+func Archived(ctx context.Context, home, id string) (bool, error) {
+	filename, err := database(home)
+	if err != nil {
+		return false, err
+	}
+	if filename == "" {
+		return false, sql.ErrNoRows
+	}
+	db, err := OpenReadOnly(filename)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	var archived bool
+	err = db.QueryRowContext(ctx, `SELECT COALESCE(archived,0) FROM threads WHERE id=?`, id).Scan(&archived)
+	return archived, err
+}
+
 func Read(ctx context.Context, home string) (List, error) {
 	list := List{Sessions: []Entry{}}
 	filename, err := database(home)

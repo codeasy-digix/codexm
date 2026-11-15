@@ -22,22 +22,28 @@ import (
 // Research only: an official app-server with GUI-like stdio ownership, isolated
 // stores and a local model fixture. This does not automate or restart a real GUI.
 type guiControlFixture struct {
-	t       *testing.T
-	ctx     context.Context
-	c       config.Config
-	binary  string
-	cmd     *exec.Cmd
-	client  *cr.Client
-	socket  string
-	active  chan struct{}
-	release chan struct{}
-	once    sync.Once
-	mu      sync.Mutex
-	bodies  []string
-	keys    []string // Synthetic local-provider credentials only.
+	t              *testing.T
+	ctx            context.Context
+	c              config.Config
+	binary         string
+	cmd            *exec.Cmd
+	client         *cr.Client
+	socket         string
+	active         chan struct{}
+	release        chan struct{}
+	once           sync.Once
+	mu             sync.Mutex
+	bodies         []string
+	keys           []string // Synthetic local-provider credentials only.
+	responseText   string
+	commandFixture bool
 }
 
 func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
+	return newGUIControlFixtureDuration(t, transport, 60*time.Second)
+}
+
+func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.Duration) *guiControlFixture {
 	t.Helper()
 	if os.Getenv("CODEXM_GUI_CONTROL_TEST") != "1" {
 		t.Skip("opt-in GUI ownership protocol experiment")
@@ -51,7 +57,7 @@ func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
 	f := &guiControlFixture{t: t, ctx: ctx, binary: binary, active: make(chan struct{}), release: make(chan struct{})}
 	var activeOnce sync.Once
@@ -64,10 +70,37 @@ func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
 		f.mu.Lock()
 		f.bodies = append(f.bodies, string(body))
 		f.keys = append(f.keys, r.Header.Get("Authorization"))
+		responseText := f.responseText
+		commandFixture := f.commandFixture
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"fixture-response\"}}\n\n")
 		w.(http.Flusher).Flush()
+		if commandFixture && strings.Contains(string(body), "WEB_COMMAND_FIXTURE") && !strings.Contains(string(body), "web-fixture-command") {
+			var request struct {
+				Tools []struct {
+					Name string `json:"name"`
+				} `json:"tools"`
+			}
+			_ = json.Unmarshal(body, &request)
+			name := "shell_command"
+			arguments := map[string]any{"command": "printf '%050000d' 1", "workdir": home, "timeout_ms": 5000}
+			for _, tool := range request.Tools {
+				if tool.Name == "exec_command" {
+					name = "exec_command"
+					arguments = map[string]any{"cmd": "printf '%050000d' 1", "workdir": home, "max_output_tokens": 20000}
+					break
+				}
+				if tool.Name == "shell" {
+					name = "shell"
+					arguments = map[string]any{"command": []string{"/bin/sh", "-c", "printf '%050000d' 1"}, "workdir": home, "timeout_ms": 5000}
+				}
+			}
+			args, _ := json.Marshal(arguments)
+			item, _ := json.Marshal(map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{"type": "function_call", "name": name, "call_id": "web-fixture-command", "arguments": string(args)}})
+			fmt.Fprintf(w, "data: %s\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n", item)
+			return
+		}
 		if strings.Contains(string(body), "GUI_FIXTURE_ACTIVE") {
 			activeOnce.Do(func() { close(f.active) })
 			select {
@@ -76,7 +109,11 @@ func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
 				return
 			}
 		}
-		fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fixture-message\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"fixture complete\"}]}}\n\n")
+		if responseText == "" {
+			responseText = "fixture complete"
+		}
+		response, _ := json.Marshal(map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{"id": "fixture-message", "type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": responseText}}}})
+		fmt.Fprintf(w, "data: %s\n\n", response)
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
 	}))
 	f.c = config.Defaults()

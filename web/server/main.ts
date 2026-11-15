@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { LocalAuth, LoginError } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
-import { bridgeContract } from "../imports/contracts/native";
+import { bridgeContract } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
 const state = process.env.CODEXM_WEB_STATE;
@@ -265,7 +265,7 @@ Meteor.publish("codexm.state", function () {
     void refresh();
   };
   bridge.on("notification", notify);
-  const timer = setInterval(notify, 1000);
+  const timer = setInterval(notify, 5000);
   void refresh();
   this.onStop(() => {
     stopped = true;

@@ -1,108 +1,145 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
-import { shouldSend, type SessionEntry } from "../contracts/types";
-import { preferredAccount, terminalFailure } from "../contracts/selection";
+import { chatTitle, type ChatThread } from "../contracts/web";
 import { Accounts } from "./Accounts";
+import { Approval, ChatMessages } from "./ChatMessages";
+import { Composer } from "./Composer";
+import { Modal } from "./Modal";
+import { useCatalog, useChatHistory } from "./chat-hooks";
 import "./styles/native.css";
 
+type Dialog = {kind:"new"|"project"|"accounts"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
+type Section = "recents"|"projects"|"pinned"|"archived";
+
 export function App() {
-  const access = useAccess(), data = useStateData(), snapshot = data.snapshot || {};
-  const [token, setToken] = useState(""), [view, setView] = useState("chats");
-  const [username, setUsername] = useState(""), [password, setPassword] = useState("");
-  const [query, setQuery] = useState(""), [archived, setArchived] = useState(false);
-  const [details, setDetails] = useState(false);
-  const [selected, setSelected] = useState<SessionEntry | null>(null);
-  const [account, setAccount] = useState(""), [session, setSession] = useState("");
-  const [terminal, setTerminal] = useState<any>(null), [message, setMessage] = useState("");
-  const [error, setError] = useState(""), [busy, setBusy] = useState(false);
-  const epoch = useRef(0), log = useRef<HTMLPreElement>(null), stick = useRef(true);
-  const list = useRef<HTMLDivElement>(null), listOffset = useRef(0);
-  const drafts = useRef<Record<string, string>>({});
-  const accounts: any[] = snapshot.accounts || [];
-  const failure = terminalFailure(terminal);
-  const chats: SessionEntry[] = (snapshot.sessions || []).filter((x: SessionEntry) =>
-    (archived || !x.archived) && `${x.title} ${x.id} ${x.cwd} ${x.account || ""}`.toLowerCase().includes(query.toLowerCase()));
-  function choose(chat: SessionEntry) {
-    if (selected) drafts.current[selected.id] = message;
-    listOffset.current = list.current?.scrollTop || 0;
-    epoch.current++; setSelected(chat); setAccount(preferredAccount(chat.account, accounts)); setSession(""); setTerminal(null);
-    setMessage(drafts.current[chat.id] || ""); setError(""); setDetails(true); stick.current = true;
+  const access=useAccess(),data=useStateData();
+  const [account,setAccount]=useState("default"),[section,setSection]=useState<Section>("recents"),[project,setProject]=useState("");
+  const [query,setQuery]=useState(""),[selected,setSelected]=useState<ChatThread|null>(null),[sidebar,setSidebar]=useState(false);
+  const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
+  const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
+  const catalogState=useCatalog(access.ready,account,query,project,section==="archived");
+  const {catalog}=catalogState;
+  const chatState=useChatHistory(access.ready,selected?.id||"",account);
+  const {history}=chatState;
+  const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null),olderBusy=useRef(false);
+  const first=new Date().getHours()<12?"무엇부터 시작할까요?":"어떤 작업을 이어갈까요?";
+  const accounts=catalog?.accounts||data.snapshot?.accounts||[];
+  const chat=history?.thread||selected;
+  const isArchived=history?.thread.archived??selected?.archived??false;
+  const displayChats=section==="pinned"?(catalog?.pinned||[]).filter(c=>`${chatTitle(c)} ${c.cwd}`.toLowerCase().includes(query.toLowerCase())):catalog?.threads||[];
+
+  useEffect(()=>{if(!access.ready){setSelected(null);setDialog(null);setQuery("");setSidebar(false);}},[access.ready]);
+  useEffect(()=>{stick.current=true;anchor.current=null;olderBusy.current=false;setMenu(false);},[selected?.id,account]);
+  useLayoutEffect(()=>{
+    const node=scroll.current;if(!node)return;
+    if(anchor.current&&anchor.current.thread===selected?.id&&anchor.current.revision===chatState.olderRevision){node.scrollTop=node.scrollHeight-anchor.current.height+anchor.current.top;anchor.current=null;}
+    else if(stick.current&&!anchor.current)node.scrollTop=node.scrollHeight;
+  },[history?.turns,selected?.id,chatState.olderRevision]);
+  useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==="Escape"){setSidebar(false);setMenu(false);}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[]);
+
+  function choose(next:ChatThread) {setSelected(next);setAccount(next.account&&accounts.some((a:any)=>a.name===next.account)?next.account:"default");setSidebar(false);setError("");setNotice("");}
+  function filter(next:Section,id="") {setSection(next);setProject(id);}
+  function openDialog(next:Dialog) {
+    setError("");setMenu(false);setFormName("");
+    const target=next.kind==="new"?catalog?.projects.find(p=>p.id===project):undefined;
+    setFormPath(target?.roots[0]?.path||catalog?.defaultCwd||"");
+    setFormProject("chat"in next?next.chat.projectId||"":target?.id||"");setDialog(next);
   }
-  useEffect(() => { if (!details && list.current) list.current.scrollTop = listOffset.current; }, [details]);
-  useEffect(() => {
-    if (snapshot.accounts && account && account !== "default" && !accounts.some(a => a.name === account)) {
-      epoch.current++; setAccount("default"); setSession(""); setTerminal(null);
-    }
-  }, [snapshot.accounts, account]);
-  useEffect(() => {
-    if (!session || !access.ready) return;
-    let stopped = false, timer: ReturnType<typeof setTimeout>;
-    const refresh = async () => {
-      try { const next = await call("terminal.read", { session }); if (!stopped) setTerminal(next); }
-      catch (e) { if (!stopped) setError((e as Error).message); }
-      finally { if (!stopped) timer = setTimeout(refresh, 600); }
-    };
-    void refresh(); return () => { stopped = true; clearTimeout(timer); };
-  }, [session, access.ready]);
-  useEffect(() => { if (stick.current && log.current) log.current.scrollTop = log.current.scrollHeight; }, [terminal?.text]);
-  async function open() {
-    if (!selected || !account || busy) return;
-    const generation = epoch.current; setBusy(true); setError("");
+  async function mutate(method:string,params:Record<string,unknown>) {
+    setError("");const result=await call(method,{account,...params},crypto.randomUUID());
+    void catalogState.refresh(undefined,true);return result;
+  }
+  async function submitDialog(e:React.FormEvent) {
+    e.preventDefault();if(!dialog||formBusy)return;setFormBusy(true);setError("");
     try {
-      const opened = await call("terminal.open", { thread_id: selected.id, account }, crypto.randomUUID());
-      if (generation === epoch.current) { setSession(opened.session); stick.current = true; }
-    } catch (e) { if (generation === epoch.current) setError((e as Error).message); }
-    finally { setBusy(false); }
+      if(dialog.kind==="new") {
+        const result=await mutate("web.create",{cwd:formPath,project_id:formProject});choose(result.thread);
+      } else if(dialog.kind==="project") {
+        const result=await mutate("web.projectCreate",{name:formName,cwd:formPath});filter("projects",result.project.id);setNotice("프로젝트를 추가했습니다.");
+      } else if(dialog.kind==="move") {
+        await mutate("web.move",{thread_id:dialog.chat.id,project_id:formProject});setNotice("프로젝트를 옮겼습니다.");void chatState.refresh();
+      } else if(dialog.kind==="archive") {
+        await mutate("web.archive",{thread_id:dialog.chat.id,archived:!dialog.chat.archived});setSelected(null);setNotice(dialog.chat.archived?"보관을 해제했습니다.":"채팅을 보관했습니다.");
+      } else if(dialog.kind==="delete") {
+        await mutate("web.delete",{thread_id:dialog.chat.id});setSelected(null);setNotice("채팅을 영구 삭제했습니다.");
+      }
+      setDialog(null);
+    }catch(e){setError((e as Error).message);}finally{setFormBusy(false);}
   }
-  async function input(key?: string) {
-    if (!session || busy || !terminal?.alive || !terminal?.launch?.ready || (!key && !message.trim())) return;
-    const generation = epoch.current, sent = message;
-    setBusy(true); setError("");
-    try {
-      await call("terminal.input", { session, ...(key ? { key } : { text: sent }) }, crypto.randomUUID());
-      if (!key && generation === epoch.current) { setMessage(""); if (selected) drafts.current[selected.id] = ""; }
-      stick.current = true;
-    } catch (e) { if (generation === epoch.current) setError(`${(e as Error).message} · 전송 결과는 터미널에서 확인하세요. 입력은 자동 재전송하지 않습니다.`); }
-    finally { setBusy(false); }
+  async function pin() {
+    if(!chat)return;setMenu(false);
+    try {await mutate("web.pin",{thread_id:chat.id,pinned:!catalog?.pinned.some(t=>t.id===chat.id)});setNotice("고정 상태를 변경했습니다.");}
+    catch(e){setError((e as Error).message);}
   }
-  async function close() {
-    if (!session || !confirm("이 터미널의 Codex CLI를 종료할까요? 진행 중인 작업은 중단됩니다. 대화 기록은 보존됩니다.")) return;
-    const generation = epoch.current;
-    setBusy(true);
-    try { await call("terminal.close", { session }, crypto.randomUUID()); if (generation === epoch.current) { setSession(""); setTerminal(null); } }
-    catch (e) { if (generation === epoch.current) setError((e as Error).message); } finally { setBusy(false); }
+  async function loadOlder() {
+    const node=scroll.current;if(!node||!selected||olderBusy.current||!history?.nextCursor)return;
+    olderBusy.current=true;anchor.current={height:node.scrollHeight,top:node.scrollTop,thread:selected.id,revision:chatState.olderRevision+1};
+    const loaded=await chatState.loadOlder();if(!loaded)anchor.current=null;olderBusy.current=false;
   }
-  if (!access.ready) return <main className="login"><h1>codexm</h1><p>로그인 후 채팅과 Codex CLI를 사용할 수 있습니다.</p>
-    <form onSubmit={e => { e.preventDefault(); if (busy || !access.modeReady) return; setBusy(true); setError("");
-      void (access.password ? login(username, password) : exchange(token)).then(() => { setToken(""); setPassword(""); }).catch(e => setError(e.message)).finally(() => setBusy(false)); }}>
-      {access.password ? <><label>아이디<input name="username" autoComplete="username" required maxLength={64} value={username} onChange={e => setUsername(e.target.value)} /></label>
-        <label>비밀번호<input name="password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} /></label></>
-        : <label>로컬 접속 코드<input type="password" value={token} onChange={e => setToken(e.target.value)} /></label>}
-      <button disabled={busy || !access.modeReady}>{busy ? "로그인 중…" : access.password ? "로그인" : "연결"}</button></form><p role="alert">{error || access.message}</p></main>;
-  return <div className="app"><header><strong>codexm</strong><nav>
-    <button aria-pressed={view === "chats"} onClick={() => { setView("chats"); setDetails(false); }}>채팅</button>
-    <button aria-pressed={view === "accounts"} onClick={() => setView("accounts")}>계정</button>
-  </nav><span>공식 Codex CLI</span><button onClick={() => { void logout().then(() => { epoch.current++; setSelected(null); setTerminal(null); setSession(""); setMessage(""); setDetails(false); drafts.current = {}; setError(""); }).catch(e => setError(e.message)); }}>로그아웃</button></header>
-  {(error || data.connectionError) && <p role="alert" className="error">{error || data.connectionError}</p>}
-  {view === "accounts" ? <Accounts accounts={accounts} /> : <main className={`workspace${details ? " show-details" : ""}`}>
-    <aside><label>채팅 검색<input value={query} onChange={e => setQuery(e.target.value)} placeholder="제목, 프로젝트, 계정, ID" /></label>
-      <label className="checkbox"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} />보관된 채팅 포함</label>
-      <p>{chats.length}개 · 모든 프로젝트</p><div className="chat-list" ref={list} aria-label="채팅 목록">{chats.map(chat => <button key={chat.id} className={selected?.id === chat.id ? "selected" : ""} onClick={() => choose(chat)}>
-        <strong title={chat.title}>{chat.title}</strong><small>{chat.account || "이전 계정 기록 없음"}{chat.archived && " · 보관됨"}</small><small>{chat.cwd}</small>
-      </button>)}</div></aside>
-    <section className="chat"><button className="mobile-back" onClick={() => setDetails(false)}>← 채팅 목록</button><h1>{selected?.title || "채팅을 선택하세요"}</h1>
-      {selected ? <><p className="metadata">{selected.id} · 이전 계정: {selected.account || "기록 없음"}<br />{selected.cwd}</p>
-        <div className="launch"><label>이번에 사용할 계정<select value={account} onChange={e => { epoch.current++; setAccount(e.target.value); setSession(""); setTerminal(null); }}>
-          <option value="default">기본 계정</option>{accounts.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
-        </select></label><button disabled={!account || busy} onClick={() => void open()}>Codex CLI로 이어가기</button></div>
-        {!session && <p>계정을 선택하면 보관·복원 후 같은 채팅 ID로 공식 CLI를 엽니다. 다른 GUI·CLI가 계속 소유 중이면 인계 오류를 표시합니다.</p>}
-      </> : <p>채팅을 고른 다음 사용할 계정을 선택하세요.</p>}
-      {session && <><div className="terminal-status"><code>{terminal?.attach || `tmux attach -t ${session}`}</code><span>{failure ? "CLI 인계 또는 실행 실패" : terminal?.alive ? terminal?.launch?.ready ? "CLI 실행 중" : "CLI 준비 중" : "CLI 종료됨"}</span><button disabled={busy} onClick={() => void close()}>터미널 종료</button></div>
-        {failure && <div role="alert" className="terminal-error"><strong>{failure.title}</strong><p>{failure.help}</p>{failure.detail && <details><summary>오류 상세</summary><pre>{failure.detail}</pre></details>}<button disabled={busy} onClick={() => void open()}>다시 시도</button></div>}
-        <pre role="log" aria-label="공식 Codex CLI 화면" ref={log} className="terminal" onScroll={() => { const el = log.current!; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>{terminal?.text || terminal?.launch?.error || "공식 CLI를 여는 중…"}</pre>
-        <div className="keys">{[["Up", "↑"], ["Down", "↓"], ["Enter", "Enter"], ["Escape", "Esc"], ["C-c", "Ctrl+C"], ["Tab", "Tab"]].map(([key, label]) => <button key={key} disabled={busy || !terminal?.alive || !terminal?.launch?.ready} onClick={() => void input(key)}>{label}</button>)}</div>
-        <label>CLI에 전달할 입력<textarea value={message} onChange={e => setMessage(e.target.value)} onKeyDown={e => { if (shouldSend({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode })) { e.preventDefault(); void input(); } }} placeholder="메시지 또는 /명령 · Shift+Enter 줄바꿈" /></label>
-        <button disabled={busy || !terminal?.alive || !terminal?.launch?.ready || !message.trim()} onClick={() => void input()}>CLI에 전달</button><small>웹을 닫아도 CLI는 위 tmux 세션에서 계속 실행됩니다.</small>
-      </>}
-    </section></main>}</div>;
+
+  if(!access.ready)return <Login ready={access.modeReady} passwordMode={access.password} message={access.message}/>;
+  return <div className="chat-app">
+    {sidebar&&<button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/>}
+    <aside className={`sidebar ${sidebar?"is-open":""}`} aria-label="탐색">
+      <div className="brand"><span className="brand-icon">C</span><strong>CodexM</strong><span>이 머신</span><button className="mobile-close" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}>×</button></div>
+      <button className="new-chat" aria-label="새 채팅" disabled={!catalog} onClick={()=>openDialog({kind:"new"})}><span aria-hidden="true">＋</span>새 채팅</button>
+      <label className="sidebar-search"><span className="sr-only">채팅 검색</span><input placeholder="채팅 검색" value={query} onChange={e=>setQuery(e.target.value)}/></label>
+      <nav className="sections" aria-label="채팅 분류">
+        <button aria-pressed={section==="recents"} onClick={()=>filter("recents")}><span aria-hidden="true">◷</span>Recents</button>
+        <button aria-label="Pinned" aria-pressed={section==="pinned"} onClick={()=>filter("pinned")}><span aria-hidden="true">◇</span>Pinned <small>{catalog?.pinned.length||0}</small></button>
+        <button aria-pressed={section==="projects"} onClick={()=>filter("projects")}><span aria-hidden="true">▱</span>Projects</button>
+        <button aria-pressed={section==="archived"} onClick={()=>filter("archived")}><span aria-hidden="true">▤</span>보관함</button>
+      </nav>
+      <div className={`project-group ${section==="projects"?"expanded":""}`}><div className="project-heading"><span>프로젝트</span><button aria-label="프로젝트 추가" onClick={()=>openDialog({kind:"project"})}>＋</button></div>
+      <div className="project-list">{catalog?.projects.map(p=><button className={project===p.id?"selected":""} key={p.id} onClick={()=>filter("projects",p.id)} title={p.roots.map(r=>r.path).join("\n")}><span>▱</span>{p.name}</button>)}{catalog&&!catalog.projects.length&&<p className="muted small">프로젝트를 추가해 작업을 모아보세요.</p>}</div>
+      </div>
+      <div className="list-heading"><span>{section==="pinned"?"고정한 채팅":section==="archived"?"보관된 채팅":project?catalog?.projects.find(p=>p.id===project)?.name||"프로젝트 채팅":"최근 채팅"}</span>{catalogState.loading&&<small>갱신 중</small>}</div>
+      <div className="chat-list" aria-label="채팅 목록">{displayChats.map(t=><button key={t.id} className={selected?.id===t.id?"selected":""} onClick={()=>choose(t)} title={chatTitle(t)}><strong>{chatTitle(t)}</strong><small>{t.cwd.split("/").filter(Boolean).pop()||t.cwd}</small></button>)}
+        {!displayChats.length&&catalog&&!catalogState.loading&&<p className="muted empty-list">표시할 채팅이 없습니다.</p>}
+        {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
+        {section!=="pinned"&&catalog?.nextCursor&&<button className="load-more" disabled={catalogState.loading} onClick={()=>void catalogState.refresh(catalog.nextCursor)}>채팅 더 보기</button>}
+      </div>
+      <div className="sidebar-footer"><button onClick={()=>openDialog({kind:"accounts"})}>계정 관리</button><button onClick={()=>void logout().catch(e=>setError(e.message))}>로그아웃</button></div>
+    </aside>
+    <main className="conversation" data-thread-id={selected?.id||""}>
+      <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
+        <select aria-label="이번에 사용할 계정" value={account} onChange={e=>setAccount(e.target.value)}><option value="default">기본 계정</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
+        {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>void pin()}>{catalog?.pinned.some(t=>t.id===chat.id)?"고정 해제":"고정하기"}</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" onClick={()=>openDialog({kind:"archive",chat:{...chat,archived:isArchived}})}>{isArchived?"보관 해제":"보관하기"}</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
+      </header>
+      {!dialog&&error&&<div role="alert" className="banner error-banner">{error}</div>}{notice&&<div role="status" className="banner notice-banner">{notice}<button aria-label="알림 닫기" onClick={()=>setNotice("")}>×</button></div>}
+      <div className="message-scroll" ref={scroll} aria-label="대화 내용" onScroll={e=>{const n=e.currentTarget;stick.current=n.scrollHeight-n.clientHeight-n.scrollTop<100;if(n.scrollTop<90&&!chatState.loading)void loadOlder();}}>
+        {selected?<div className="message-inner">
+          {history?.nextCursor&&<button className="older-button" disabled={chatState.loadingOlder} onClick={()=>void loadOlder()}>{chatState.loadingOlder?"이전 메시지를 불러오는 중…":"이전 메시지 불러오기"}</button>}
+          {chatState.loading&&<p className="loading-message" role="status">최근 대화를 불러오는 중…</p>}
+          {chatState.error&&<p role="alert" className="inline-error">{chatState.error}</p>}
+          {history&&<ChatMessages thread={selected.id} turns={history.turns} account={account} external={history.thread.externalOwner}/>}
+          {history&&!history.turns.length&&<div className="empty-conversation"><h2>새 채팅이 준비됐습니다</h2><p>아래에 요청을 입력하세요.</p></div>}
+          {history?.pending.map(p=><Approval key={p.request_id} request={p} thread={selected.id} account={account} onDone={()=>void chatState.refresh()}/>)}
+        </div>:<div className="welcome"><span className="welcome-mark">C</span><p className="eyebrow">CODEXM · LOCAL WORKSPACE</p><h2>{first}</h2><p>최근 채팅을 이어가거나,<br/>프로젝트에서 새 작업을 시작하세요.</p><button className="primary" disabled={!catalog} onClick={()=>openDialog({kind:"new"})}>＋ 새 채팅 시작</button></div>}
+      </div>
+      {selected&&!isArchived&&<Composer key={`${selected.id}:${account}`} thread={selected.id} account={account} history={history} onSent={()=>{stick.current=true;void chatState.refresh();void catalogState.refresh();}}/>}
+      {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
+    </main>
+    {dialog&&<Modal title={dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
+      {dialog.kind==="accounts"?<Accounts accounts={accounts}/>:<form className="dialog-form" onSubmit={e=>void submitDialog(e)}>
+        {"chat"in dialog&&<p className="dialog-chat-title">{chatTitle(dialog.chat)}</p>}
+        {(dialog.kind==="new"||dialog.kind==="move")&&<label>프로젝트<select aria-label="프로젝트" value={formProject} onChange={e=>{setFormProject(e.target.value);const chosen=catalog?.projects.find(p=>p.id===e.target.value);if(chosen?.roots[0])setFormPath(chosen.roots[0].path);}}><option value="">프로젝트 없음</option>{catalog?.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
+        {dialog.kind==="project"&&<label>프로젝트 이름<input value={formName} onChange={e=>setFormName(e.target.value)} placeholder="폴더 이름 사용" maxLength={200}/></label>}
+        {(dialog.kind==="new"||dialog.kind==="project")&&<label>이 머신의 작업 폴더<input value={formPath} onChange={e=>setFormPath(e.target.value)} placeholder="/absolute/project/path" required spellCheck={false}/></label>}
+        {dialog.kind==="move"&&<p className="muted">채팅의 프로젝트 소속을 변경합니다. 작업 폴더와 파일을 옮기지는 않습니다.</p>}
+        {dialog.kind==="archive"&&<p>{dialog.chat.archived?"채팅을 일반 목록으로 복원합니다.":"진행 중인 작업과 하위 채팅이 중단될 수 있습니다. 채팅을 보관할까요?"}</p>}
+        {dialog.kind==="delete"&&<p className="danger">이 채팅과 하위 대화를 영구 삭제합니다. 되돌릴 수 없습니다.</p>}
+        {error&&<p role="alert" className="inline-error">{error}</p>}
+        <div className="button-row"><button type="button" onClick={()=>setDialog(null)} disabled={formBusy}>취소</button><button className={dialog.kind==="delete"?"danger-button":"primary"} type="submit" disabled={formBusy}>{formBusy?"처리 중…":dialog.kind==="delete"?"영구 삭제":dialog.kind==="new"?"채팅 만들기":dialog.kind==="project"?"프로젝트 추가":"적용"}</button></div>
+      </form>}
+    </Modal>}
+  </div>;
+}
+
+function Login({ready,passwordMode,message}:{ready:boolean;passwordMode:boolean;message:string}) {
+  const [username,setUsername]=useState(""),[password,setPassword]=useState(""),[token,setToken]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  return <main className="login"><div className="brand-icon">C</div><p className="eyebrow">CODEXM</p><h1>내 작업에 연결하세요</h1><p>이 머신의 채팅과 프로젝트를<br/>브라우저에서 이어갑니다.</p><form onSubmit={e=>{e.preventDefault();if(busy||!ready)return;setBusy(true);setError("");void(passwordMode?login(username,password):exchange(token)).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>
+    {passwordMode?<><label>아이디<input autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} required/></label><label>비밀번호<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required/></label></>:<label>로컬 접속 코드<input type="password" value={token} onChange={e=>setToken(e.target.value)} required/></label>}
+    <button className="primary" disabled={busy||!ready}>{busy?"연결 중…":passwordMode?"로그인":"연결"}</button>
+  </form>{(error||message)&&<p role="alert">{error||message}</p>}</main>;
 }

@@ -28,7 +28,7 @@ export class BridgeClient extends EventEmitter {
     if (this.child || this.closing) return;
     const child = spawn(
       this.binary,
-      ["--config", this.config, "bridge", "--stdio"],
+      ["--config", this.config, "bridge", "--stdio", "--web"],
       { shell: false, stdio: "pipe" },
     );
     this.child = child;
