@@ -9,6 +9,15 @@
 
 ## 구성
 
+도메인을 사용할 때는 DNS A 레코드를 현재 공인 IPv4로 지정하고, 공유기 뒤 장비라면
+TCP 80/443만 해당 장비의 같은 포트로 전달한다. 내부 IP는 DHCP 예약으로 유지한다.
+유효한 IPv6 경로가 없으면 AAAA 레코드를 추가하지 않는다. Meteor의 4317 포트는
+외부에 전달하지 않는다. 기존 DMZ·SSH·다른 서비스의 포워딩은 보존한다.
+
+도메인에는 [도메인 Caddy 설정](../deploy/Caddyfile.domain.example)을 사용한다.
+기존 [IP 주소용 설정](../deploy/Caddyfile.example)은 shortlived ACME 프로필을 명시하는
+별도 예시다. DNS와 외부 80/443 경로가 확인된 뒤 인증서 발급을 시작한다.
+
 1. `codexm web user --username YOUR_USERNAME`으로 비밀번호를 입력한다. 자동화 시에는
    `--password-stdin`을 사용하며 비밀번호를 명령행 인수·스크립트·Git에 넣지 않는다.
 2. `codexm web --public-origin https://YOUR_HOST --no-open`으로 Meteor를 실행한다.
@@ -69,6 +78,26 @@ codexm web stop
 TLS 로그는 구성한 프록시 서비스에서 확인한다.
 `web status`는 Meteor 프로세스와 로컬 리스너를 확인한다. 외부 경로와 TLS까지 정상인지
 판단하려면 다른 네트워크에서 공개 URL에 접속해 로그인과 WebSocket 연결을 확인한다.
+
+macOS 프록시 등록은 [launchd 템플릿](../deploy/codexm-https.launchd.plist.example)을
+사용한다. `{{...}}`를 해당 장비의 절대 경로·호스트·인증서 연락 이메일로 치환하고 XML
+특수문자를 escape한다. 실제 파일은 `~/Library/LaunchAgents/org.codeasy.codexm.https.plist`,
+Caddy 설정은 `~/.config/codexm/Caddyfile`, TLS와 로그는 private state 경로에 둔다.
+플레이스홀더·비밀번호·다른 장비 경로를 그대로 등록하지 않는다.
+
+등록 전 `plutil -lint`와, 템플릿의 `CODEXM_*` 환경변수를 지정한 `caddy validate`를
+통과해야 한다. 웹의 HTTPS Origin 적용에는 웹 서비스 재시작이 필요하므로 먼저 웹
+소유 작업이 없는지 확인한다. GUI나 다른 CLI는 종료하지 않는다.
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.codeasy.codexm.https.plist
+launchctl print gui/$(id -u)/org.codeasy.codexm.https
+launchctl bootout gui/$(id -u)/org.codeasy.codexm.https
+```
+
+프록시만 중지해도 웹 app-server는 유지된다. 재개는 `bootstrap`, 실행 중 프록시의
+설정 재적용은 검증 후 `launchctl kickstart -k gui/$(id -u)/org.codeasy.codexm.https`를
+사용한다. 이때 브라우저 연결은 끊길 수 있지만 입력을 자동 재전송하지 않는다.
 
 ## 인증 데이터
 
