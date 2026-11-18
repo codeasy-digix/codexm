@@ -12,6 +12,7 @@ import (
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/config"
+	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
 // Opt-in browser fixture kept alive only while the external Playwright job
@@ -76,7 +77,13 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if err := f.client.Call(f.ctx, "thread/name/set", map[string]any{"threadId": catchup, "name": "오프라인 갱신 테스트"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{first.Thread.ID, second, archived, command, catchup} {
+	editableQueue := f.thread()
+	f.start(editableQueue, "대기열 테스트의 초기 메시지")
+	f.completed(editableQueue, 1)
+	if err := f.client.Call(f.ctx, "thread/name/set", map[string]any{"threadId": editableQueue, "name": "대기 메시지 관리 테스트"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{first.Thread.ID, second, archived, command, catchup, editableQueue} {
 		if err := f.client.Call(f.ctx, "thread/archive", map[string]any{"threadId": id}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -85,6 +92,14 @@ func TestWebChatBrowserFixture(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+	// Populate a real queue without loading this chat. The browser can edit
+	// and recall the pending item independently of the separate steer fixture.
+	if err := f.client.Call(f.ctx, "thread/queue/add", map[string]any{
+		"threadId": editableQueue, "clientUserMessageId": "00000000-0000-4000-8000-000000000072",
+		"input": cr.TextInput("큐에서 수정할 원래 요청"),
+	}, nil); err != nil {
+		t.Fatal(err)
 	}
 	if err := f.client.Call(f.ctx, "thread/resume", map[string]any{"threadId": second, "excludeTurns": true}, nil); err != nil {
 		t.Fatal(err)

@@ -367,6 +367,82 @@ test("project picker, idle send, Enter intervention and Command+Enter for a sepa
   await expect(originalTurn.locator(".commentary-message").getByText("작업 도중 새로 저장된 진행 안내", {exact: true})).toHaveCount(1);
 });
 
+test("a pending Codex message can be edited, recalled and requeued with its new text", async ({ page }) => {
+  await authenticate(page);
+  await page.getByRole("link", { name: /대기 메시지 관리 테스트/ }).click();
+  const original = "큐에서 수정할 원래 요청";
+  const edited = "대기 순서를 유지하며 수정한 요청";
+  const requeued = "대기 취소한 메시지를 편집해서 다시 등록합니다";
+  const input = page.getByLabel("메시지", { exact: true });
+  const queue = page.locator(".queue-preview");
+  await expect(queue.locator("summary")).toContainText("1개");
+  await queue.locator("summary").click();
+  await queue.locator(".queue-entry").filter({ hasText: original })
+    .getByRole("button", { name: "수정", exact: true }).click();
+  const edit = page.getByLabel("대기 메시지 수정", { exact: true });
+  await expect(edit).toHaveValue(original);
+  await edit.fill(edited);
+  await page.getByRole("button", { name: "수정 저장", exact: true }).click();
+  const editedMessage = queue.locator(".queue-entry").filter({ hasText: edited });
+  await expect(editedMessage).toBeVisible();
+  await input.fill("별도로 작성 중인 입력");
+  await editedMessage.getByRole("button", { name: "대기 취소", exact: true }).click();
+  const recalled = page.getByLabel("큐에서 뺀 메시지", { exact: true });
+  await expect(recalled).toHaveValue(edited);
+  await expect(input).toHaveValue("별도로 작성 중인 입력");
+  await expect(queue).toHaveCount(0);
+  await recalled.fill(requeued);
+  await page.reload();
+  await expect(recalled).toHaveValue(requeued);
+  await page.getByRole("button", { name: "다시 큐에 추가", exact: true }).click();
+  await expect(recalled).toHaveCount(0);
+  const started = page.locator(".turn .user-message").filter({ hasText: requeued });
+  const waiting = queue.locator(".queue-entry").filter({ hasText: requeued });
+  await expect(started.or(waiting).first()).toBeAttached();
+  await expect(page.locator(".turn .user-message").filter({ hasText: original })).toHaveCount(0);
+  await expect(page.locator(".turn .user-message").filter({ hasText: edited })).toHaveCount(0);
+});
+
+test("an unconfirmed requeue preserves the draft across reload without resending it", async ({ page }) => {
+  await authenticate(page);
+  const original = "재등록 응답을 기다리던 초안";
+  await page.evaluate(({ thread, original }) => {
+    const m = (window as any).Meteor;
+    const apply = m.apply;
+    let withdrawn = false;
+    m.apply = function (method: string, args: any[], options: any, callback: any) {
+      if (method !== "codexm.call" || args[1]?.thread_id !== thread) return apply.call(this, method, args, options, callback);
+      if (args[0] === "web.history") {
+        return apply.call(this, method, args, options, (error: any, result: any) => callback(error, error ? result : {
+          ...result, queue: withdrawn ? [] : [{ id: "fixture-queue-id", input: [{ type: "text", text: original }] }],
+        }));
+      }
+      if (args[0] === "web.queueCancel") {
+        withdrawn = true;
+        queueMicrotask(() => callback(null, { deleted: true }));
+        return;
+      }
+      if (args[0] === "web.send") {
+        queueMicrotask(() => callback(new Error("응답을 확인하지 못했습니다.")));
+        return;
+      }
+      return apply.call(this, method, args, options, callback);
+    };
+  }, { thread: fixture().thread, original });
+  await page.getByRole("link", { name: /긴 이력 페이지 테스트/ }).click();
+  await page.locator(".queue-preview summary").click();
+  await page.getByRole("button", { name: "대기 취소", exact: true }).click();
+  await expect(page.getByLabel("큐에서 뺀 메시지", { exact: true })).toHaveValue(original);
+  const requeue = page.getByRole("button", { name: "다시 큐에 추가", exact: true });
+  await requeue.click();
+  await expect(page.getByRole("alert").filter({ hasText: "응답을 확인하지 못했습니다." })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("보관된 입력 초안", { exact: true })).toHaveValue(original);
+  await expect(requeue).toBeDisabled();
+  await page.getByRole("button", { name: "초안 버리기", exact: true }).click();
+  await expect(requeue).toHaveCount(0);
+});
+
 test("chat URLs restore the same chat after session check and browser navigation", async ({ page }) => {
   await authenticate(page);
   const first = page.getByRole("link", { name: /긴 이력 페이지 테스트/ });

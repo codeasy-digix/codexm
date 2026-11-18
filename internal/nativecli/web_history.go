@@ -269,14 +269,11 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 			externalTurn = activity.TurnID
 		}
 	}
-	var queue struct {
-		Data       []json.RawMessage `json:"data"`
-		NextCursor *string           `json:"nextCursor"`
-	}
-	queue.Data = []json.RawMessage{}
+	queue := webQueuePage{Data: []json.RawMessage{}}
 	// Native history reads support archived chats, but queue/list rejects them.
 	if !read.Thread.Archived {
-		if err := c.client.Call(ctx, "thread/queue/list", map[string]any{"threadId": p.Thread, "limit": 50}, &queue); err != nil {
+		queue, err = readWebQueue(ctx, c.client, p.Thread)
+		if err != nil {
 			return nil, err
 		}
 	}

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { call } from "../../client/data";
+import { call, mutationUnconfirmed } from "../../client/data";
+import { ChatQueue, type SubmissionOutcome } from "./ChatQueue";
 import {
   composerAction, resolveTurnSelection,
   type ChatHistory, type ChatModel, type ChatThread, type LiveTurn, type TurnSelection,
@@ -74,10 +75,11 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
     return () => { closed = true; clearTimeout(timer); };
   }, [chat.id, relayID, relayKey]);
 
-  async function send(mode: "immediate" | "queue") {
-    if (!text.trim() || inFlight.current || uncertain) return;
-    if (relayingDraft || (mode === "immediate" && relayID)) return;
-    const parameters: Record<string, string> = { thread_id: chat.id, account, text, mode };
+  async function send(mode: "immediate" | "queue", recalled?: string): Promise<SubmissionOutcome> {
+    const sent = recalled ?? text;
+    if (!sent.trim() || inFlight.current || uncertain) return "rejected";
+    if (relayID && (mode === "immediate" || sent === relayText.current)) return "rejected";
+    const parameters: Record<string, string> = { thread_id: chat.id, account, text: sent, mode };
     if (mode === "immediate" && hasOverride) {
       const model = selection.model || selectedModel?.model;
       const effort = selection.effort || inheritedEffort;
@@ -88,16 +90,15 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
     setBusy(true);
     setError("");
     setNotice("");
-    const sent = text;
     try {
       const result = await call<{ mode: "start" | "steer" | "queue" | "relay"; relay_id?: string }>("web.send", parameters, crypto.randomUUID());
       if (result.mode === "relay" && result.relay_id) {
         relayText.current = sent;
         sessionStorage.setItem(relayKey, result.relay_id);
         setRelayID(result.relay_id);
-        return;
+        return "accepted";
       }
-      setText(current => current === sent ? "" : current);
+      if (recalled === undefined) setText(current => current === sent ? "" : current);
       if (mode === "queue") {
         setNotice(hasOverride ? "큐에 추가했습니다. 이 입력은 채팅의 실행 설정으로 처리됩니다." : "큐에 추가했습니다.");
       } else if (result.mode === "queue") {
@@ -106,10 +107,15 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
         setNotice(result.mode === "steer" ? "현재 작업에 전달했습니다." : "작업을 시작했습니다.");
       }
       onSent();
+      return "accepted";
     } catch (e) {
       const message = (e as Error).message;
       setError(message);
-      if (/outcome|확인하지 못|대기 시간|연결이 끊|unknown|timed out|deadline|EOF|disconnected/i.test(message)) setUncertain(true);
+      if (mutationUnconfirmed(message)) {
+        setUncertain(true);
+        return "unknown";
+      }
+      return "rejected";
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -133,10 +139,8 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   }
 
   return <div className="composer-wrap">
-    {queue.length > 0 && <details className="queue-preview">
-      <summary>대기 중인 입력 {queue.length}개</summary>
-      {queue.map(q => <p key={q.id}>{q.input.map(x => x.text || "").join("\n")}</p>)}
-    </details>}
+    <ChatQueue thread={chat.id} account={account} items={queue} busy={busy} sendDisabled={uncertain}
+      onChanged={onSent} onRequeue={input => send("queue", input)} />
     {external && delivery?.state !== "unavailable" && <p className="owner-note">{guiRelay ? "GUI 채팅에 해당 창의 계정으로 전달합니다." : "이 채팅을 열어 둔 창의 계정으로 전달합니다."}</p>}
     {draining && <p className="owner-note" role="status">기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.</p>}
     {error && <p role="alert" className="inline-error">{error}</p>}

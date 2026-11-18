@@ -15,6 +15,8 @@ export const bridgeContract = {
     { name: "web.create", mutation: true, model: false },
     { name: "web.send", mutation: true, model: true },
     { name: "web.interrupt", mutation: true, model: false },
+    { name: "web.queueUpdate", mutation: true, model: false },
+    { name: "web.queueCancel", mutation: true, model: false },
     { name: "web.pin", mutation: true, model: false },
     { name: "web.move", mutation: true, model: false },
     { name: "web.archive", mutation: true, model: false },
@@ -48,10 +50,14 @@ export type ChatHistoryPage = {
   turns: ChatTurn[];
   nextCursor?: string | null;
 };
+export type QueuedInput = {
+  id: string;
+  input: Array<{ type: string; text?: string; text_elements?: unknown[] }>;
+};
 export type RelayedInput = { id: string; text: string; observedTurnId?: string; sentAt: number; acceptedAt: number };
 export type ChatHistory = ChatHistoryPage & {
   thread: ChatThread;
-  queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>;
+  queue: QueuedInput[];
   pending: PendingRequest[];
   relayedInputs?: RelayedInput[] | null;
   delivery?: { state: "ready" | "waiting" | "idle" | "unavailable" | "relay"; turnId?: string } | null;

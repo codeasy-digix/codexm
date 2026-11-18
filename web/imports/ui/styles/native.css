@@ -150,3 +150,30 @@
 .approval .request-option small { display: block; color: var(--muted); margin-top: 3px; }
 .approval input:not([type="radio"]) { font-size: 16px; }
 .external-request-note { align-self: center; color: var(--muted); margin: 6px 16px; font-size: 13px; }
+
+.queue-entries {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  max-height: min(25dvh, 240px);
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 0 4px 0 0;
+}
+.queue-entry { padding: 8px; border-radius: 8px; background: var(--surface); }
+.queue-preview .queue-entry p { margin: 0 0 6px; padding: 0; overflow-wrap: anywhere; }
+.queue-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.queue-actions button { padding: 6px 10px; border-radius: 8px; font-size: 12px; }
+.queue-editor { margin-bottom: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.queue-editor label, .queue-editor p { font-size: 12px; }
+.queue-editor textarea {
+  display: block;
+  width: 100%;
+  max-height: 24dvh;
+  margin: 6px 0 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 16px;
+  resize: vertical;
+}

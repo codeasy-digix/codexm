@@ -3,6 +3,7 @@ import { Tracker } from "meteor/tracker";
 import { useSyncExternalStore } from "react";
 import type { Data } from "../imports/contracts/types";
 import { currentSubscription } from "./push";
+export const queueDraftKeyPrefix = "codexm.queueDraft.";
 type AccessStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
 let state: Data = {};
 let access: { status: AccessStatus; message: string; password: boolean } =
@@ -68,6 +69,9 @@ export async function call<T = any>(
   operation = "",
 ): Promise<T> {
   return method("codexm.call", [name, params, operation]);
+}
+export function mutationUnconfirmed(message: string) {
+  return /outcome|확인하지 못|대기 시간이 초과|연결이 끊|unknown|timed out|deadline|EOF|disconnected|invocation-failed/i.test(message);
 }
 let subscription: Meteor.SubscriptionHandle | undefined;
 let authEpoch = 0;
@@ -149,6 +153,12 @@ export async function logout() {
   const response = await authPost("logout", subscription ? { endpoint: subscription.endpoint } : {});
   if (!response.ok) throw new Error("로그아웃하지 못했습니다.");
   void subscription?.unsubscribe().catch(() => {});
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(queueDraftKeyPrefix)) sessionStorage.removeItem(key);
+    }
+  } catch { /* The server already ended this session. */ }
   resetConnection();
   documents.clear();
   state = {};

@@ -26,6 +26,7 @@ var WebMethods = []Method{
 	{"web.models", false, false}, {"web.activity", false, false},
 	{"web.thread", false, false}, {"web.usage", false, false},
 	{"web.create", true, false}, {"web.send", true, true}, {"web.interrupt", true, false},
+	{"web.queueUpdate", true, false}, {"web.queueCancel", true, false},
 	{"web.pin", true, false}, {"web.move", true, false}, {"web.archive", true, false},
 	{"web.delete", true, false}, {"web.projectCreate", true, false},
 	{"web.pending", false, false}, {"web.respond", true, false},
@@ -57,6 +58,8 @@ type webParams struct {
 	Cursor          string          `json:"cursor"`
 	Turn            string          `json:"turn_id"`
 	Item            string          `json:"item_id"`
+	Queued          string          `json:"queued_id"`
+	ExpectedText    *string         `json:"expected_text"`
 	Text            string          `json:"text"`
 	Mode            string          `json:"mode"`
 	Model           string          `json:"model"`
@@ -248,6 +251,9 @@ func (w *WebChat) Dispatch(ctx context.Context, r Request) (any, error) {
 	}
 	if len(p.Confirmation) > 128 {
 		return nil, errors.New("invalid confirmation")
+	}
+	if len(p.Queued) > 256 || (p.ExpectedText != nil && len(*p.ExpectedText) > 128*1024) {
+		return nil, errors.New("web queue input is too large")
 	}
 	if len(p.Cursor) > 4096 || len(p.Text) > 128*1024 || len(p.Name) > 200 || len(p.Search) > 500 || len(p.Turn) > 256 || len(p.Item) > 256 || len(p.Project) > 256 || len(p.Cwd) > 4096 || len(p.Request) > 256 || len(p.Response) > 128*1024 || len(p.Model) > 200 || len(p.Effort) > 64 || len(p.HistoryRevision) > 64 {
 		return nil, errors.New("web chat input is too large")
