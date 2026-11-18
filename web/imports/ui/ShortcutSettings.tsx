@@ -1,24 +1,11 @@
-import React, { useState } from "react";
-import { defaultChatShortcuts, effortLabel, shortcutDigits, type ChatModel, type ChatShortcuts, type ShortcutAction } from "../contracts/web";
+import React, { useRef, useState } from "react";
+import { effortLabel, type ChatModel } from "../contracts/web";
+import { chatShortcutStorageKey, defaultChatShortcuts, shortcutFromEvent, shortcutLabel, type ChatShortcuts, type ShortcutAction } from "./chat-shortcuts";
 
-const storageKey = "codexm.chat-shortcuts.v1";
+type DraftBinding = { id: number; shortcut: string; action?: ShortcutAction };
 
-export function readChatShortcuts(): ChatShortcuts {
-  try {
-    const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
-    if (!saved || typeof saved !== "object" || Array.isArray(saved)) return defaultChatShortcuts;
-    const bindings: ChatShortcuts = {};
-    for (const digit of shortcutDigits) {
-      const action = saved[digit];
-      if ((action?.kind === "model" || action?.kind === "effort") &&
-          typeof action.value === "string" && action.value.length > 0 && action.value.length <= 200) {
-        bindings[digit] = { kind: action.kind, value: action.value };
-      }
-    }
-    return bindings;
-  } catch {
-    return defaultChatShortcuts;
-  }
+function makeDraft(bindings: ChatShortcuts): DraftBinding[] {
+  return Object.entries(bindings).map(([shortcut, action], id) => ({ id, shortcut, action }));
 }
 
 function optionValue(action?: ShortcutAction) {
@@ -34,39 +21,68 @@ export function ShortcutSettings({ bindings, models, modelsLoading, modelError, 
   onSave: (bindings: ChatShortcuts) => void;
   onClose: () => void;
 }) {
-  const [draft, setDraft] = useState(bindings);
+  const [draft, setDraft] = useState(() => makeDraft(bindings));
+  const nextId = useRef(draft.length);
   const [error, setError] = useState("");
   const efforts = [...new Set(["max", "xhigh", "high", ...models.flatMap(model => model.efforts)])];
 
+  function update(id: number, change: Partial<DraftBinding>) {
+    setDraft(previous => previous.map(binding => binding.id === id ? { ...binding, ...change } : binding));
+    setError("");
+  }
+
+  function record(event: React.KeyboardEvent<HTMLInputElement>, id: number) {
+    const key = event.nativeEvent;
+    if (key.isComposing || key.keyCode === 229 || key.repeat || key.getModifierState("AltGraph") ||
+        ["Tab", "Escape", "Meta", "Control", "Alt", "Shift"].includes(key.key)) return;
+    event.preventDefault();
+    const shortcut = shortcutFromEvent(key);
+    if (!shortcut) {
+      setError("⌘, Ctrl, Alt 중 하나와 다른 키를 함께 누르세요. Enter, Tab, Esc는 기본 동작에 사용됩니다.");
+      return;
+    }
+    if (draft.some(binding => binding.id !== id && binding.shortcut === shortcut)) {
+      setError(`${shortcutLabel(shortcut)} 조합은 이미 할당되어 있습니다.`);
+      return;
+    }
+    update(id, { shortcut });
+  }
+
   function save(event: React.FormEvent) {
     event.preventDefault();
+    const next: ChatShortcuts = {};
+    for (const { shortcut, action } of draft) {
+      if (!shortcut || !action) {
+        setError("각 단축키의 키 조합과 모델 또는 effort를 선택해 주세요.");
+        return;
+      }
+      next[shortcut] = action;
+    }
     try {
-      localStorage.setItem(storageKey, JSON.stringify(draft));
-      onSave(draft);
+      localStorage.setItem(chatShortcutStorageKey, JSON.stringify(next));
+      onSave(next);
     } catch {
       setError("이 브라우저에 단축키 설정을 저장할 수 없습니다.");
     }
   }
 
   return <form className="shortcut-settings" onSubmit={save}>
-    <p className="muted">채팅에서 사용할 단축키를 설정합니다. 브라우저가 ⌘ 숫자를 탭 전환에 쓰면 Ctrl+Shift+숫자를 사용하세요.</p>
+    <p className="muted">키 조합 칸에서 원하는 키를 누르고 모델이나 effort를 선택하세요. 브라우저나 운영체제가 먼저 처리하는 키는 다른 조합을 사용하세요.</p>
     {modelsLoading && <p className="muted" role="status">모델 목록을 불러오는 중입니다.</p>}
     {modelError && <p className="muted" role="status">모델 목록을 불러오지 못했습니다. <button type="button" className="text-button" onClick={retryModels}>다시 시도</button></p>}
     <div className="shortcut-grid">
-      {shortcutDigits.map(digit => {
-        const current = draft[digit];
+      {draft.map(({ id, shortcut, action: current }, index) => {
         const unavailable = current?.kind === "model" && !models.some(model => model.model === current.value);
-        return <label key={digit}>
-          <kbd>⌘{digit}</kbd>
-          <select aria-label={`⌘${digit} 할당`} value={optionValue(current)} onChange={event => {
+        return <div className="shortcut-row" key={id}>
+          <input aria-label={`단축키 ${index + 1} 키 조합`} readOnly placeholder="키 조합 입력"
+            value={shortcut && shortcutLabel(shortcut)} onKeyDown={event => record(event, id)} />
+          <select aria-label={`단축키 ${index + 1} 할당`} value={optionValue(current)} onChange={event => {
             const value = event.target.value;
             const separator = value.indexOf(":");
-            setDraft(previous => ({
-              ...previous,
-              [digit]: separator < 0 ? undefined : { kind: value.startsWith("model:") ? "model" : "effort", value: value.slice(separator + 1) },
-            }));
+            const action = separator < 0 ? undefined : { kind: value.startsWith("model:") ? "model" as const : "effort" as const, value: value.slice(separator + 1) };
+            update(id, { action });
           }}>
-            <option value="">미할당</option>
+            <option value="">대상 선택</option>
             {unavailable && <option value={optionValue(current)}>{current.value} (현재 목록에 없음)</option>}
             <optgroup label="모델">
               {models.map(model => <option key={model.model} value={`model:${model.model}`}>{model.displayName || model.model}</option>)}
@@ -77,12 +93,26 @@ export function ShortcutSettings({ bindings, models, modelsLoading, modelError, 
                 <option value={optionValue(current)}>{effortLabel(current.value)}</option>}
             </optgroup>
           </select>
-        </label>;
+          <button type="button" aria-label={`단축키 ${index + 1} 삭제`} onClick={() => {
+            setDraft(previous => previous.filter(binding => binding.id !== id));
+            setError("");
+          }}>×</button>
+        </div>;
       })}
     </div>
+    <button className="text-button shortcut-add" type="button" onClick={() => {
+      const binding = { id: nextId.current++, shortcut: "" };
+      setDraft(previous => [...previous, binding]);
+      setError("");
+    }}>＋ 단축키 추가</button>
     {error && <p role="alert" className="inline-error">{error}</p>}
     <div className="button-row">
-      <button className="text-button" type="button" onClick={() => setDraft(defaultChatShortcuts)}>기본값 복원</button>
+      <button className="text-button" type="button" onClick={() => {
+        const defaults = makeDraft(defaultChatShortcuts);
+        setDraft(defaults);
+        nextId.current = defaults.length;
+        setError("");
+      }}>기본값 복원</button>
       <button type="button" onClick={onClose}>취소</button>
       <button className="primary" type="submit">저장</button>
     </div>

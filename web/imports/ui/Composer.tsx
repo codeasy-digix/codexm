@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { call } from "../../client/data";
 import {
-  chatSettingsShortcut, composerAction, effortLabel, shortcutDigits,
-  type ChatHistory, type ChatModel, type ChatShortcuts, type ChatThread, type ShortcutAction, type TurnSelection,
+  composerAction, resolveTurnSelection,
+  type ChatHistory, type ChatModel, type ChatThread, type TurnSelection,
 } from "../contracts/web";
 
 type Props = {
@@ -10,20 +10,11 @@ type Props = {
   account: string;
   history?: ChatHistory;
   models: ChatModel[];
-  modelsLoading: boolean;
-  modelError?: string;
-  retryModels: () => void;
   selection: TurnSelection;
-  onSelectionChange: (selection: TurnSelection) => void;
-  shortcuts: ChatShortcuts;
-  shortcutsEnabled: boolean;
   onSent: () => void;
 };
 
-export function Composer({
-  chat, account, history, models, modelsLoading, modelError, retryModels,
-  selection, onSelectionChange, shortcuts, shortcutsEnabled, onSent,
-}: Props) {
+export function Composer({ chat, account, history, models, selection, onSent }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -34,56 +25,8 @@ export function Composer({
   const external = history?.thread.externalOwner;
   const turn = active ? history.turns.slice().reverse().find(t => t.status === "inProgress")?.id : undefined;
   const queue = history?.queue || [];
-  const chatModel = chat.model
-    ? models.find(model => model.model === chat.model)
-    : models.find(model => model.isDefault);
-  const selectedModel = selection.model ? models.find(model => model.model === selection.model) : chatModel;
-  const efforts = selectedModel?.efforts ?? [];
-  const changedModel = !!selection.model && selection.model !== chat.model;
-  const inheritedEffort = !changedModel && efforts.includes(chat.reasoningEffort || "")
-    ? chat.reasoningEffort
-    : selectedModel?.defaultEffort;
+  const { selectedModel, efforts, inheritedEffort } = resolveTurnSelection(chat, models, selection);
   const hasOverride = !!(selection.model || selection.effort);
-
-  function pickModel(model: string) {
-    const option = model ? models.find(entry => entry.model === model) : chatModel;
-    if (model && !option) {
-      setError(modelsLoading ? "모델 목록을 불러오는 중입니다." : "이 계정에서 선택할 수 없는 모델입니다.");
-      return;
-    }
-    onSelectionChange({ model, effort: option?.efforts.includes(selection.effort) ? selection.effort : "" });
-    setError("");
-  }
-
-  function pickEffort(effort: string) {
-    if (effort && !efforts.includes(effort)) {
-      setError(modelsLoading ? "모델 목록을 불러오는 중입니다." : "선택한 모델에서 사용할 수 없는 effort입니다.");
-      return;
-    }
-    onSelectionChange({ ...selection, effort });
-    setError("");
-  }
-
-  // Listen while an editable chat is open. Dialogs and IME composition keep
-  // their own keyboard input. The browser may reserve Command+digit globally.
-  useEffect(() => {
-    if (!shortcutsEnabled) return;
-    const keydown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const action = chatSettingsShortcut(event, shortcuts);
-      if (!action) return;
-      event.preventDefault();
-      if (action.kind === "model") pickModel(action.value);
-      else pickEffort(action.value);
-    };
-    window.addEventListener("keydown", keydown, true);
-    return () => window.removeEventListener("keydown", keydown, true);
-  });
-
-  function shortcutLabel(kind: ShortcutAction["kind"], value: string) {
-    const keys = shortcutDigits.filter(digit => shortcuts[digit]?.kind === kind && shortcuts[digit]?.value === value);
-    return keys.length ? ` · ${keys.map(key => `⌘${key}`).join(", ")}` : "";
-  }
 
   async function send(mode: "immediate" | "queue") {
     if (!text.trim() || inFlight.current || uncertain) return;
@@ -143,7 +86,6 @@ export function Composer({
     }
   }
 
-  const inheritedModel = chatModel?.displayName || chatModel?.model || chat.model;
   return <div className="composer-wrap">
     {queue.length > 0 && <details className="queue-preview">
       <summary>대기 중인 입력 {queue.length}개</summary>
@@ -162,26 +104,6 @@ export function Composer({
             if (!event.repeat) void send(mode);
           }
         }} />
-      <div className="turn-settings" aria-label="다음 새 턴 설정">
-        <label>모델
-          <select value={selection.model} disabled={!models.length || busy} onChange={e => pickModel(e.target.value)}>
-            <option value="">{modelsLoading ? "불러오는 중…" : inheritedModel ? `채팅 설정 · ${inheritedModel}` : "채팅 설정"}</option>
-            {selection.model && !selectedModel && <option value={selection.model}>{selection.model} (선택 불가)</option>}
-            {models.map(model => <option key={model.model} value={model.model}>
-              {model.displayName || model.model}{shortcutLabel("model", model.model)}
-            </option>)}
-          </select>
-        </label>
-        <label>Reasoning effort
-          <select value={selection.effort} disabled={!efforts.length || busy} onChange={e => pickEffort(e.target.value)}>
-            <option value="">{changedModel ? "모델 기본값" : "채팅 설정"}{inheritedEffort ? ` · ${effortLabel(inheritedEffort)}` : ""}</option>
-            {selection.effort && !efforts.includes(selection.effort) && <option value={selection.effort}>{effortLabel(selection.effort)} (선택 불가)</option>}
-            {efforts.map(effort => <option key={effort} value={effort}>{effortLabel(effort)}{shortcutLabel("effort", effort)}</option>)}
-          </select>
-        </label>
-      </div>
-      {modelError && <p className="model-load-error" role="status">모델 목록을 불러오지 못했습니다. <button type="button" className="text-button" onClick={retryModels}>다시 시도</button></p>}
-      {(active || external) && hasOverride && <p className="model-load-error">선택한 모델과 effort는 다음 새 턴에 적용됩니다.</p>}
       <div className="composer-bottom">
         <small>Enter 전송·개입 · ⌘Enter 큐 · Shift+Enter 줄바꿈</small>
         <div className="composer-actions">

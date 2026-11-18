@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chatSettingsShortcut, defaultChatShortcuts, composerAction,mergeTurns,chatTitle,type ChatTurn } from "../imports/contracts/web.ts";
+import { composerAction,mergeTurns,chatTitle,type ChatTurn } from "../imports/contracts/web.ts";
+import { chatShortcutStorageKey, defaultChatShortcuts, readChatShortcuts, shortcutFromEvent, shortcutLabel } from "../imports/ui/chat-shortcuts.ts";
 
 test("composer distinguishes intervention, queue, IME and explicit newlines",()=>{
   assert.equal(composerAction({key:"Enter",shiftKey:false}),"immediate");
@@ -12,19 +13,35 @@ test("composer distinguishes intervention, queue, IME and explicit newlines",()=
   assert.equal(composerAction({key:"a",shiftKey:false}),null);
 });
 
-test("model and effort shortcuts use configured bindings and leave unassigned keys alone", () => {
-  const command = (key: string) => ({ key, code: `Digit${key}`, metaKey: true, shiftKey: false, ctrlKey: false, altKey: false, isComposing: false, keyCode: 0, repeat: false });
-  assert.deepEqual(chatSettingsShortcut(command("1"), defaultChatShortcuts), { kind: "model", value: "gpt-6.2-sol" });
-  assert.deepEqual(chatSettingsShortcut(command("2"), defaultChatShortcuts), { kind: "model", value: "gpt-6.2-astra" });
-  assert.equal(chatSettingsShortcut(command("3"), defaultChatShortcuts), undefined);
+test("model and effort shortcut defaults use Command+Shift and reserve the composer keys", () => {
+  const command = (code: string) => ({ code, metaKey: true, shiftKey: true, ctrlKey: false, altKey: false });
+  const lookup = (key: string) => defaultChatShortcuts[shortcutFromEvent(command(`Digit${key}`))!];
+  assert.deepEqual(lookup("1"), { kind: "model", value: "gpt-6.2-sol" });
+  assert.deepEqual(lookup("2"), { kind: "model", value: "gpt-6.2-astra" });
+  assert.equal(lookup("3"), undefined);
   for (const [digit, value] of [["4", "max"], ["5", "xhigh"], ["6", "high"]]) {
-    assert.deepEqual(chatSettingsShortcut(command(digit), defaultChatShortcuts), { kind: "effort", value });
+    assert.deepEqual(lookup(digit), { kind: "effort", value });
   }
-  const binding = { kind: "effort", value: "ultra" } as const;
-  const fallback = { ...command("7"), key: "&", metaKey: false, ctrlKey: true, shiftKey: true };
-  assert.deepEqual(chatSettingsShortcut(fallback, { "7": binding }), binding);
-  assert.equal(chatSettingsShortcut({ ...command("1"), isComposing: true }, defaultChatShortcuts), undefined);
-  assert.equal(chatSettingsShortcut({ ...command("1"), metaKey: false }, defaultChatShortcuts), undefined);
+  assert.equal(defaultChatShortcuts[shortcutFromEvent({ ...command("Digit1"), shiftKey: false })!], undefined);
+  const custom = shortcutFromEvent({ ...command("KeyK"), metaKey: false, shiftKey: false, ctrlKey: true, altKey: true });
+  assert.equal(custom, "Control+Alt+KeyK");
+  assert.equal(shortcutLabel(custom!), "Ctrl+Alt+K");
+  for (const key of ["Enter", "NumpadEnter", "Tab", "Escape"]) assert.equal(shortcutFromEvent(command(key)), undefined);
+  assert.equal(shortcutFromEvent({ ...command("KeyK"), isComposing: true }), undefined);
+  assert.equal(shortcutFromEvent({ ...command("KeyK"), repeat: true }), undefined);
+  assert.equal(shortcutFromEvent({ ...command("KeyK"), metaKey: false }), undefined);
+  assert.equal(shortcutFromEvent({ ...command("KeyK"), getModifierState: name => name === "AltGraph" }), undefined);
+});
+
+test("legacy shortcuts keep their actions on Command+Shift and new preferences take precedence", () => {
+  const action = { kind: "effort", value: "ultra" };
+  const entries: Record<string, string> = { "codexm.chat-shortcuts.v1": JSON.stringify({ 7: action }) };
+  const storage = { getItem: (key: string) => entries[key] ?? null };
+  assert.deepEqual(readChatShortcuts(storage), { "Meta+Shift+Digit7": action });
+  entries[chatShortcutStorageKey] = JSON.stringify({ "Alt+Shift+KeyK": action, "Meta+Enter": action, "Shift+KeyK": action });
+  assert.deepEqual(readChatShortcuts(storage), { "Alt+Shift+KeyK": action });
+  entries[chatShortcutStorageKey] = "{}";
+  assert.deepEqual(readChatShortcuts(storage), {});
 });
 
 test("older pages preserve current turns while live refresh replaces their content",()=>{

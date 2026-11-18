@@ -40,29 +40,16 @@ export type ChatModel = {
 
 export type TurnSelection = { model: string; effort: string };
 export const inheritTurnSelection: TurnSelection = { model: "", effort: "" };
-export const shortcutDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
-type ShortcutDigit = typeof shortcutDigits[number];
-export type ShortcutAction = { kind: "model" | "effort"; value: string };
-export type ChatShortcuts = Partial<Record<ShortcutDigit, ShortcutAction>>;
-export const defaultChatShortcuts: ChatShortcuts = {
-  "1": { kind: "model", value: "gpt-6.2-sol" },
-  "2": { kind: "model", value: "gpt-6.2-astra" },
-  "4": { kind: "effort", value: "max" },
-  "5": { kind: "effort", value: "xhigh" },
-  "6": { kind: "effort", value: "high" },
-};
 
-export function chatSettingsShortcut(event: Pick<KeyboardEvent,
-  "key" | "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey" | "repeat" | "isComposing" | "keyCode"
->, shortcuts: ChatShortcuts): ShortcutAction | undefined {
-  if (event.isComposing || event.keyCode === 229 || event.altKey || event.repeat) return;
-  const command = event.metaKey && !event.ctrlKey && !event.shiftKey;
-  // Some browsers consume Command+number for tab navigation before dispatch.
-  const fallback = event.ctrlKey && event.shiftKey && !event.metaKey;
-  if (!command && !fallback) return;
-  const key = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1] ?? event.key;
-  if (!/^[1-9]$/.test(key)) return;
-  return shortcuts[key as ShortcutDigit];
+export function resolveTurnSelection(chat: ChatThread, models: ChatModel[], selection: TurnSelection) {
+  const chatModel = chat.model ? models.find(model => model.model === chat.model) : models.find(model => model.isDefault);
+  const selectedModel = selection.model ? models.find(model => model.model === selection.model) : chatModel;
+  const efforts = selectedModel?.efforts ?? [];
+  const changedModel = !!selection.model && selection.model !== chat.model;
+  const inheritedEffort = !changedModel && efforts.includes(chat.reasoningEffort || "")
+    ? chat.reasoningEffort
+    : selectedModel?.defaultEffort;
+  return { chatModel, selectedModel, efforts, changedModel, inheritedEffort };
 }
 
 export function effortLabel(effort: string): string {

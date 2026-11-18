@@ -5,7 +5,9 @@ import { Accounts } from "./Accounts";
 import { Approval, ChatMessages } from "./ChatMessages";
 import { Composer } from "./Composer";
 import { Modal } from "./Modal";
-import { readChatShortcuts, ShortcutSettings } from "./ShortcutSettings";
+import { ShortcutSettings } from "./ShortcutSettings";
+import { TurnSettings } from "./TurnSettings";
+import { readChatShortcuts } from "./chat-shortcuts";
 import { useCatalog, useChatHistory, useChatModels } from "./chat-hooks";
 import "./styles/native.css";
 
@@ -34,6 +36,7 @@ export function App() {
     reasoningEffort: history.thread.reasoningEffort || selected.reasoningEffort,
   }:selected;
   const composerKey = `${selected?.id}:${account}`;
+  const selection = turnSelections[composerKey] ?? inheritTurnSelection;
   const isArchived=history?.thread.archived??selected?.archived??false;
   const modelState = useChatModels(access.ready && ((!!selected && !isArchived) || dialog?.kind === "settings"), account);
   const displayChats=section==="pinned"?(catalog?.pinned||[]).filter(c=>`${chatTitle(c)} ${c.cwd}`.toLowerCase().includes(query.toLowerCase())):catalog?.threads||[];
@@ -114,7 +117,24 @@ export function App() {
     </aside>
     <main className="conversation" data-thread-id={selected?.id||""}>
       <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
-        <select aria-label="이번에 사용할 계정" value={account} onChange={e=>setAccount(e.target.value)}><option value="default">기본 계정</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
+        <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}`}>
+          <label className="account-select">계정
+            <select aria-label="이번에 사용할 계정" value={account} onChange={e=>setAccount(e.target.value)}><option value="default">기본 계정</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
+          </label>
+          {chat && !isArchived && <TurnSettings
+            key={composerKey}
+            chat={chat}
+            models={modelState.models}
+            loading={modelState.loading}
+            modelError={modelState.error}
+            retryModels={modelState.retry}
+            selection={selection}
+            onSelectionChange={value => setTurnSelections(current => ({ ...current, [composerKey]: value }))}
+            shortcuts={shortcuts}
+            shortcutsEnabled={!dialog && !sidebar && !menu}
+            deferred={!!(history?.thread.status.type === "active" || history?.thread.externalOwner)}
+          />}
+        </div>
         {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>void pin()}>{catalog?.pinned.some(t=>t.id===chat.id)?"고정 해제":"고정하기"}</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" onClick={()=>openDialog({kind:"archive",chat:{...chat,archived:isArchived}})}>{isArchived?"보관 해제":"보관하기"}</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
       </header>
       {!dialog&&error&&<div role="alert" className="banner error-banner">{error}</div>}{notice&&<div role="status" className="banner notice-banner">{notice}<button aria-label="알림 닫기" onClick={()=>setNotice("")}>×</button></div>}
@@ -134,13 +154,7 @@ export function App() {
         account={account}
         history={history}
         models={modelState.models}
-        modelsLoading={modelState.loading}
-        modelError={modelState.error}
-        retryModels={modelState.retry}
-        selection={turnSelections[composerKey] ?? inheritTurnSelection}
-        onSelectionChange={selection=>setTurnSelections(current=>({...current,[composerKey]:selection}))}
-        shortcuts={shortcuts}
-        shortcutsEnabled={!dialog&&!sidebar}
+        selection={selection}
         onSent={()=>{stick.current=true;void chatState.refresh();void catalogState.refresh();}}
       />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
