@@ -16,6 +16,7 @@ test("composer distinguishes intervention, queue, IME and explicit newlines",()=
 test("model and effort shortcut defaults use Command+Shift and reserve the composer keys", () => {
   const command = (code: string) => ({ code, metaKey: true, shiftKey: true, ctrlKey: false, altKey: false });
   const lookup = (key: string) => defaultChatShortcuts[shortcutFromEvent(command(`Digit${key}`))!];
+  assert.deepEqual(lookup("0"), { kind: "reset" });
   assert.deepEqual(lookup("1"), { kind: "model", value: "gpt-6.2-sol" });
   assert.deepEqual(lookup("2"), { kind: "model", value: "gpt-6.2-astra" });
   assert.equal(lookup("3"), undefined);
@@ -35,11 +36,16 @@ test("model and effort shortcut defaults use Command+Shift and reserve the compo
 
 test("legacy shortcuts keep their actions on Command+Shift and new preferences take precedence", () => {
   const action = { kind: "effort", value: "ultra" };
+  const reset = { kind: "reset" };
   const entries: Record<string, string> = { "codexm.chat-shortcuts.v1": JSON.stringify({ 7: action }) };
   const storage = { getItem: (key: string) => entries[key] ?? null };
-  assert.deepEqual(readChatShortcuts(storage), { "Meta+Shift+Digit7": action });
-  entries[chatShortcutStorageKey] = JSON.stringify({ "Alt+Shift+KeyK": action, "Meta+Enter": action, "Shift+KeyK": action });
-  assert.deepEqual(readChatShortcuts(storage), { "Alt+Shift+KeyK": action });
+  assert.deepEqual(readChatShortcuts(storage), { "Meta+Shift+Digit7": action, "Meta+Shift+Digit0": reset });
+  entries["codexm.chat-shortcuts.v2"] = JSON.stringify({ "Control+Shift+KeyJ": action });
+  assert.deepEqual(readChatShortcuts(storage), { "Control+Shift+KeyJ": action, "Meta+Shift+Digit0": reset });
+  entries["codexm.chat-shortcuts.v2"] = JSON.stringify({ "Meta+Shift+Digit0": action });
+  assert.deepEqual(readChatShortcuts(storage), { "Meta+Shift+Digit0": action });
+  entries[chatShortcutStorageKey] = JSON.stringify({ "Alt+Shift+KeyK": reset, "Meta+Enter": action, "Shift+KeyK": action });
+  assert.deepEqual(readChatShortcuts(storage), { "Alt+Shift+KeyK": reset });
   entries[chatShortcutStorageKey] = "{}";
   assert.deepEqual(readChatShortcuts(storage), {});
 });

@@ -9,7 +9,8 @@ function makeDraft(bindings: ChatShortcuts): DraftBinding[] {
 }
 
 function optionValue(action?: ShortcutAction) {
-  return action ? `${action.kind}:${action.value}` : "";
+  if (!action) return "";
+  return action.kind === "reset" ? "reset" : `${action.kind}:${action.value}`;
 }
 
 export function ShortcutSettings({ bindings, models, modelsLoading, modelError, retryModels, onSave, onClose }: {
@@ -53,7 +54,7 @@ export function ShortcutSettings({ bindings, models, modelsLoading, modelError, 
     const next: ChatShortcuts = {};
     for (const { shortcut, action } of draft) {
       if (!shortcut || !action) {
-        setError("각 단축키의 키 조합과 모델 또는 effort를 선택해 주세요.");
+        setError("각 단축키의 키 조합과 동작을 선택해 주세요.");
         return;
       }
       next[shortcut] = action;
@@ -67,7 +68,7 @@ export function ShortcutSettings({ bindings, models, modelsLoading, modelError, 
   }
 
   return <form className="shortcut-settings" onSubmit={save}>
-    <p className="muted">키 조합 칸에서 원하는 키를 누르고 모델이나 effort를 선택하세요. 브라우저나 운영체제가 먼저 처리하는 키는 다른 조합을 사용하세요.</p>
+    <p className="muted">키 조합 칸에서 원하는 키를 누르고 동작을 선택하세요. 브라우저나 운영체제가 먼저 처리하는 키는 다른 조합을 사용하세요.</p>
     {modelsLoading && <p className="muted" role="status">모델 목록을 불러오는 중입니다.</p>}
     {modelError && <p className="muted" role="status">모델 목록을 불러오지 못했습니다. <button type="button" className="text-button" onClick={retryModels}>다시 시도</button></p>}
     <div className="shortcut-grid">
@@ -79,10 +80,12 @@ export function ShortcutSettings({ bindings, models, modelsLoading, modelError, 
           <select aria-label={`단축키 ${index + 1} 할당`} value={optionValue(current)} onChange={event => {
             const value = event.target.value;
             const separator = value.indexOf(":");
-            const action = separator < 0 ? undefined : { kind: value.startsWith("model:") ? "model" as const : "effort" as const, value: value.slice(separator + 1) };
+            const action: ShortcutAction | undefined = value === "reset" ? { kind: "reset" } :
+              separator < 0 ? undefined : { kind: value.startsWith("model:") ? "model" : "effort", value: value.slice(separator + 1) };
             update(id, { action });
           }}>
             <option value="">대상 선택</option>
+            <option value="reset">채팅 기본 모델·effort로 복원</option>
             {unavailable && <option value={optionValue(current)}>{current.value} (현재 목록에 없음)</option>}
             <optgroup label="모델">
               {models.map(model => <option key={model.model} value={`model:${model.model}`}>{model.displayName || model.model}</option>)}

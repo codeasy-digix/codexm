@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { effortLabel, resolveTurnSelection, type ChatModel, type ChatThread, type TurnSelection } from "../contracts/web";
-import { shortcutFromEvent, shortcutLabel, type ChatShortcuts, type ShortcutAction } from "./chat-shortcuts";
+import { effortLabel, inheritTurnSelection, resolveTurnSelection, type ChatModel, type ChatThread, type TurnSelection } from "../contracts/web";
+import { shortcutFromEvent, shortcutLabel, type ChatShortcuts } from "./chat-shortcuts";
 
 export function TurnSettings({ chat, models, loading, modelError, retryModels, selection, onSelectionChange, shortcuts, shortcutsEnabled, deferred }: {
   chat: ChatThread;
@@ -46,13 +46,17 @@ export function TurnSettings({ chat, models, loading, modelError, retryModels, s
       if (!action) return;
       event.preventDefault();
       if (action.kind === "model") pickModel(action.value);
-      else pickEffort(action.value);
+      else if (action.kind === "effort") pickEffort(action.value);
+      else {
+        onSelectionChange(inheritTurnSelection);
+        setError("");
+      }
     };
     window.addEventListener("keydown", keydown, true);
     return () => window.removeEventListener("keydown", keydown, true);
   });
 
-  function bindingHint(kind: ShortcutAction["kind"], value: string) {
+  function bindingHint(kind: "model" | "effort", value: string) {
     const keys = Object.entries(shortcuts).filter(([, action]) => action.kind === kind && action.value === value);
     return keys.length ? ` · ${keys.map(([shortcut]) => shortcutLabel(shortcut)).join(", ")}` : "";
   }

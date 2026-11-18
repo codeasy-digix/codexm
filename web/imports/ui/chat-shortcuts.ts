@@ -1,9 +1,11 @@
-export type ShortcutAction = { kind: "model" | "effort"; value: string };
+export type ShortcutAction = { kind: "model" | "effort"; value: string } | { kind: "reset" };
 export type ChatShortcuts = Record<string, ShortcutAction>;
 
-export const chatShortcutStorageKey = "codexm.chat-shortcuts.v2";
-const legacyStorageKey = "codexm.chat-shortcuts.v1";
+export const chatShortcutStorageKey = "codexm.chat-shortcuts.v3";
+const legacyChordStorageKey = "codexm.chat-shortcuts.v2";
+const legacyDigitStorageKey = "codexm.chat-shortcuts.v1";
 const commandDigit = (digit: string) => `Meta+Shift+Digit${digit}`;
+const resetShortcut = commandDigit("0");
 
 export const defaultChatShortcuts: ChatShortcuts = {
   [commandDigit("1")]: { kind: "model", value: "gpt-6.2-sol" },
@@ -11,6 +13,7 @@ export const defaultChatShortcuts: ChatShortcuts = {
   [commandDigit("4")]: { kind: "effort", value: "max" },
   [commandDigit("5")]: { kind: "effort", value: "xhigh" },
   [commandDigit("6")]: { kind: "effort", value: "high" },
+  [resetShortcut]: { kind: "reset" },
 };
 
 const modifiers = [
@@ -62,17 +65,22 @@ export function readChatShortcuts(storage?: Pick<Storage, "getItem">): ChatShort
   try {
     const source = storage ?? localStorage;
     const current = source.getItem(chatShortcutStorageKey);
-    const saved = JSON.parse(current ?? source.getItem(legacyStorageKey) ?? "null");
+    const chords = current ?? source.getItem(legacyChordStorageKey);
+    const saved = JSON.parse(chords ?? source.getItem(legacyDigitStorageKey) ?? "null");
     if (!saved || typeof saved !== "object" || Array.isArray(saved)) return defaultChatShortcuts;
     const bindings: ChatShortcuts = {};
     for (const [key, action] of Object.entries(saved)) {
-      const shortcut = current === null && /^[1-9]$/.test(key) ? commandDigit(key) : key;
-      const entry = action as Partial<ShortcutAction> | null;
-      if (validShortcut(shortcut) && (entry?.kind === "model" || entry?.kind === "effort") &&
+      const shortcut = chords === null && /^[1-9]$/.test(key) ? commandDigit(key) : key;
+      if (!validShortcut(shortcut)) continue;
+      const entry = action as { kind?: unknown; value?: unknown } | null;
+      if (entry?.kind === "reset") {
+        bindings[shortcut] = { kind: "reset" };
+      } else if ((entry?.kind === "model" || entry?.kind === "effort") &&
           typeof entry.value === "string" && entry.value.length > 0 && entry.value.length <= 200) {
         bindings[shortcut] = { kind: entry.kind, value: entry.value };
       }
     }
+    if (current === null) bindings[resetShortcut] ??= defaultChatShortcuts[resetShortcut];
     return bindings;
   } catch {
     return defaultChatShortcuts;
