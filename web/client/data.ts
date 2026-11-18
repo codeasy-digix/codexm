@@ -2,8 +2,10 @@ import { Meteor } from "meteor/meteor";
 import { Tracker } from "meteor/tracker";
 import { useSyncExternalStore } from "react";
 import type { Data } from "../imports/contracts/types";
-let state: Data = {},
-  access = { ready: false, message: "", password: true, modeReady: false };
+type AccessStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
+let state: Data = {};
+let access: { status: AccessStatus; message: string; password: boolean } =
+  { status: "checking", message: "", password: true };
 const listeners = new Set<() => void>(),
   authListeners = new Set<() => void>();
 const documents = new Map<string, Data>();
@@ -48,8 +50,8 @@ export const useAccess = () =>
     },
     () => access,
   );
-function setAccess(ready: boolean, message = "") {
-  access = { ...access, ready, message };
+function setAccess(status: AccessStatus, message = "", password = access.password) {
+  access = { status, message, password };
   for (const listener of authListeners) listener();
 }
 export function method<T = any>(name: string, args: any[]): Promise<T> {
@@ -66,77 +68,115 @@ export async function call<T = any>(
 ): Promise<T> {
   return method("codexm.call", [name, params, operation]);
 }
-let subscription: Meteor.SubscriptionHandle | undefined,
-  connecting = false;
-export async function authenticate() {
-  if (connecting || !Meteor.status().connected) return;
-  connecting = true;
-  try {
-    const response = await fetch("/auth/ticket", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    await method("codexm.authenticate", [data.ticket]);
-    subscription?.stop();
-    subscription = Meteor.subscribe("codexm.state", {
-      onStop(error: any) {
-        if (error) setAccess(false, error.reason || error.message);
-      },
-    });
-    setAccess(true);
-  } catch (error) {
-    setAccess(false, (error as Error).message);
-  } finally {
-    connecting = false;
-  }
+let subscription: Meteor.SubscriptionHandle | undefined;
+let authEpoch = 0;
+let checking: Promise<void> | undefined;
+
+function resetConnection() {
+  authEpoch++;
+  checking = undefined;
+  subscription?.stop();
+  subscription = undefined;
 }
-export async function exchange(token: string) {
-  const response = await fetch("/auth/exchange", {
+
+function authPost(endpoint: string, data: Record<string, string> = {}) {
+  return fetch(`/auth/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
+    body: JSON.stringify(data),
+    signal: AbortSignal.timeout(12_000),
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error);
+}
+
+// LocalAuth uses the existing HttpOnly cookie and a one-time DDP ticket.
+export function authenticate(message?: string): Promise<void> {
+  if (!Meteor.status().connected) return Promise.resolve();
+  if (checking) return checking;
+  const epoch = authEpoch;
+  setAccess("checking");
+  checking = (async () => {
+    try {
+      const response = await authPost("ticket");
+      if (epoch !== authEpoch) return;
+      if (response.status === 401) {
+        const mode = await fetch("/auth/mode", { signal: AbortSignal.timeout(12_000) });
+        if (!mode.ok) throw new Error("로그인 설정을 읽을 수 없습니다.");
+        const { password } = await mode.json();
+        if (epoch === authEpoch) setAccess("anonymous", message || "로그인이 필요합니다.", password !== false);
+        return;
+      }
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      if (epoch !== authEpoch) return;
+      await method("codexm.authenticate", [data.ticket]);
+      if (epoch !== authEpoch || !Meteor.status().connected) return;
+      subscription?.stop();
+      subscription = Meteor.subscribe("codexm.state", {
+        onStop(error: any) {
+          if (error && epoch === authEpoch && Meteor.status().connected) {
+            setAccess("unavailable", error.reason || error.message);
+          }
+        },
+      });
+      setAccess("authenticated");
+    } catch (error) {
+      if (epoch === authEpoch) setAccess("unavailable", (error as Error).message);
+    } finally {
+      if (epoch === authEpoch) checking = undefined;
+    }
+  })();
+  return checking;
+}
+
+async function openSession(endpoint: "exchange" | "login", input: Record<string, string>) {
+  const response = await authPost(endpoint, input);
+  if (!response.ok) throw new Error((await response.json()).error);
+}
+
+export async function exchange(token: string) {
+  await openSession("exchange", { token });
   await authenticate();
 }
+
 export async function login(username: string, password: string) {
-  const response = await fetch("/auth/login", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error);
+  await openSession("login", { username, password });
   await authenticate();
 }
+
 export async function logout() {
-  const response = await fetch("/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-  if (!response.ok) throw new Error("로그아웃하지 못했습니다. 다시 시도하세요.");
-  subscription?.stop(); subscription = undefined;
-  documents.clear(); state = {};
+  const response = await authPost("logout");
+  if (!response.ok) throw new Error("로그아웃하지 못했습니다.");
+  resetConnection();
+  documents.clear();
+  state = {};
   for (const listener of listeners) listener();
-  setAccess(false, "로그아웃했습니다.");
+  setAccess("checking");
+  await authenticate("로그아웃했습니다.");
 }
-Meteor.startup(() => {
-  void fetch("/auth/mode").then(async response => {
-    if (!response.ok) throw new Error("로그인 설정을 읽을 수 없습니다.");
-    const mode = await response.json();
-    access = { ...access, password: mode.password !== false, modeReady: true };
-    for (const listener of authListeners) listener();
-  }).catch(e => setAccess(false, e.message));
-  let token = location.hash.slice(1);
-  history.replaceState(null, "", location.pathname);
-  Tracker.autorun(() => {
-    if (Meteor.status().connected) {
-      if (!token) void authenticate();
-    } else setAccess(false, "서버 연결 중…");
-  });
+
+async function startAccess() {
+  const token = location.hash.slice(1);
+  let message: string | undefined;
   if (token) {
-    const initial = decodeURIComponent(token);
-    token = "";
-    void exchange(initial).catch((e) => setAccess(false, e.message));
+    history.replaceState(history.state, "", location.pathname + location.search);
+    try {
+      await openSession("exchange", { token: decodeURIComponent(token) });
+    } catch (error) {
+      message = (error as Error).message;
+    }
   }
-});
+  let wasConnected = false;
+  Tracker.autorun(() => {
+    const connected = Meteor.status().connected;
+    if (connected === wasConnected) return;
+    wasConnected = connected;
+    if (connected) {
+      void authenticate(message);
+      message = undefined;
+    } else {
+      resetConnection();
+      setAccess("checking", "서버 연결 중…");
+    }
+  });
+}
+Meteor.startup(() => { void startAccess(); });

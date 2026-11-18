@@ -150,6 +150,11 @@ func List(ctx context.Context, c config.Config) (catalog.List, error) {
 	if err != nil {
 		return list, err
 	}
+	fillCatalogAccounts(c, list.Sessions)
+	return list, nil
+}
+
+func fillCatalogAccounts(c config.Config, entries []catalog.Entry) {
 	prior := map[string]string{}
 	if db, e := store.ReadOnly(c.StateDir()); e == nil {
 		defer db.DB.Close()
@@ -159,8 +164,8 @@ func List(ctx context.Context, c config.Config) (catalog.List, error) {
 			}
 		}
 	}
-	for i := range list.Sessions {
-		e := &list.Sessions[i]
+	for i := range entries {
+		e := &entries[i]
 		e.Account = prior[e.ID]
 		if !threadID.MatchString(e.ID) {
 			continue
@@ -170,7 +175,6 @@ func List(ctx context.Context, c config.Config) (catalog.List, error) {
 			e.Account = l.Account
 		}
 	}
-	return list, nil
 }
 
 func Plan(ctx context.Context, c config.Config, id, account string) (Launch, error) {

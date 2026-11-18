@@ -3,6 +3,7 @@ package nativecli
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
+	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
 type WebThread struct {
@@ -105,6 +107,72 @@ type webCatalogCursor struct {
 	ID      string `json:"id"`
 }
 
+func catalogWebThread(e catalog.Entry, desktop catalog.Desktop, prefs webPreferences) WebThread {
+	t := WebThread{ID: e.ID, Name: desktop.Title(e), Preview: e.Preview, Cwd: e.Cwd, Project: desktop.ProjectFor(e), Model: e.Model, Effort: e.Effort, Updated: e.ModifiedAt / 1000, Recency: e.UpdatedAt / 1000, Pinned: desktop.IsPinned(e), Archived: e.Archived, Account: e.Account}
+	t.Status.Type = "notLoaded"
+	if account := prefs.Accounts[e.ID]; account != "" {
+		t.Account = account
+	}
+	return t
+}
+
+// Look up one address without depending on the current sidebar page. An unsent
+// draft can only be present in the web server that originally created it.
+func (w *WebChat) thread(ctx context.Context, id string) (*WebThread, error) {
+	if id == "" {
+		return nil, errors.New("thread UUID required")
+	}
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	entry, err := catalog.Lookup(ctx, home, id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	prefs, preferencesErr := w.preferences()
+	if preferencesErr != nil {
+		return nil, preferencesErr
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		account := prefs.Accounts[id]
+		if account == "" {
+			return nil, nil
+		}
+		w.mu.Lock()
+		existing := w.connections[account] != nil
+		w.mu.Unlock()
+		if !existing {
+			return nil, nil
+		}
+		connection, err := w.connection(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		var draft struct{ Thread WebThread }
+		if err := connection.client.Call(ctx, "thread/read", map[string]any{"threadId": id, "includeTurns": false}, &draft); err != nil {
+			var rpc *cr.RPCError
+			if errors.As(err, &rpc) && rpc.Code == -32600 {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if draft.Thread.ID != id {
+			return nil, errors.New("Codex returned a different chat")
+		}
+		draft.Thread.Account = account
+		return &draft.Thread, nil
+	}
+	desktop, err := catalog.ReadDesktop(ctx, home)
+	if err != nil {
+		return nil, err
+	}
+	entries := []catalog.Entry{entry}
+	fillCatalogAccounts(w.c, entries)
+	t := catalogWebThread(entries[0], desktop, prefs)
+	if t.Account != "" && t.Account != "default" && requireRegisteredAccount(w.c, t.Account) != nil {
+		t.Account = ""
+	}
+	return &t, nil
+}
+
 func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (any, error) {
 	limit, err := webPageLimit(p.Limit, 100, 50)
 	if err != nil {
@@ -142,11 +210,7 @@ func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (a
 		if !pinned && ((e.EmptyDraft() && desktop.Titles[e.ID] == "") || (e.Source != "cli" && e.Source != "vscode")) {
 			continue
 		}
-		t := WebThread{ID: e.ID, Name: desktop.Title(e), Preview: e.Preview, Cwd: e.Cwd, Project: desktop.ProjectFor(e), Model: e.Model, Effort: e.Effort, Updated: e.ModifiedAt / 1000, Recency: e.UpdatedAt / 1000, Pinned: desktop.IsPinned(e), Archived: e.Archived, Account: e.Account}
-		t.Status.Type = "notLoaded"
-		if account := prefs.Accounts[e.ID]; account != "" {
-			t.Account = account
-		}
+		t := catalogWebThread(e, desktop, prefs)
 		at := e.ModifiedAt
 		if desktop.ChatSort == "created_at" {
 			at = e.CreatedAt

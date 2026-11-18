@@ -32,6 +32,9 @@ func TestWebChatOfficialCore(t *testing.T) {
 	}
 	project := call("web.projectCreate", map[string]any{"name": "Web fixture", "cwd": f.cmd.Dir})["project"].(map[string]any)["id"].(string)
 	id := call("web.create", map[string]any{"project_id": project, "cwd": f.cmd.Dir})["thread"].(map[string]any)["id"].(string)
+	if draft := call("web.thread", map[string]any{"thread_id": id}); draft["id"] != id || draft["account"] != "default" {
+		t.Fatal("an open unsent draft cannot be restored by its address", draft)
+	}
 	blank := call("web.history", map[string]any{"thread_id": id})
 	if turns, ok := blank["turns"].([]any); !ok || len(turns) != 0 {
 		t.Fatal("new draft history is not empty")

@@ -18,7 +18,13 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	}
 	f := newGUIControlFixtureDuration(t, "stdio", 45*time.Minute)
 	f.mu.Lock()
-	f.responseText = "## 작업을 확인했습니다\n\n브라우저에서 표시하는 **구조화된 응답**입니다.\n\n- 최근 대화부터 불러옵니다.\n- 명령 실행 과정은 접어서 표시합니다.\n\n```rust\nfn main() { println!(\"CodexM\"); }\n```\n\n<script>window.__unsafe = true</script>"
+	f.responseText = "## 작업을 확인했습니다\n\n브라우저에서 표시하는 **구조화된 응답**입니다.\n\n" +
+		"- 최근 대화부터 불러옵니다.\n- 명령 실행 과정은 접어서 표시합니다.\n\n" +
+		"| 항목 | 표시 위치 | 처리 방식 | 개수 | 확인 사항 |\n" +
+		"| --- | --- | --- | ---: | --- |\n" +
+		"| 대화 이력 | 본문 | 최근 기록 우선 | 8 | 좁은 화면에서는 표 안에서 가로로 이동할 수 있습니다. |\n" +
+		"| 작업 과정 | 세부 항목 | 필요할 때 읽기 | 12 | 코드와 **마크다운**을 표시합니다. |\n\n" +
+		"```rust\nfn main() { println!(\"CodexM\"); }\n```\n\n<script>window.__unsafe = true</script>"
 	f.commandFixture = true
 	f.mu.Unlock()
 	var project struct{ Project struct{ ID string } }

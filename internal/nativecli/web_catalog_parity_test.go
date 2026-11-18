@@ -137,6 +137,15 @@ func TestWebDesktopCatalogParityAndCompletePagination(t *testing.T) {
 	if len(archived["threads"].([]WebThread)) != 8 {
 		t.Fatal("archived chats omitted")
 	}
+	const archivedID = "10000000-0000-4000-8000-000000000135"
+	opened, err := w.thread(context.Background(), archivedID)
+	if err != nil || opened == nil || opened.ID != archivedID || !opened.Archived {
+		t.Fatal("direct lookup must find archived chats outside the first page", opened, err)
+	}
+	missing, err := w.thread(context.Background(), "10000000-0000-4000-8000-000000000999")
+	if err != nil || missing != nil {
+		t.Fatal("unknown chat must not create or load a conversation", missing, err)
+	}
 	if len(w.connections) != 0 {
 		t.Fatal("passive catalog started an official server")
 	}

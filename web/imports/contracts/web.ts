@@ -10,6 +10,8 @@ export const bridgeContract = {
     { name: "web.item", mutation: false, model: false },
     { name: "web.models", mutation: false, model: false },
     { name: "web.activity", mutation: false, model: false },
+    { name: "web.thread", mutation: false, model: false },
+    { name: "web.usage", mutation: false, model: false },
     { name: "web.create", mutation: true, model: false },
     { name: "web.send", mutation: true, model: true },
     { name: "web.interrupt", mutation: true, model: false },
@@ -30,6 +32,16 @@ export type Project = { id: string; name: string; roots: Array<{ path: string }>
 export type Catalog = { threads: ChatThread[]; projects: Project[]; otherProjects?:Project[]; pinned: ChatThread[]; nextCursor?: string | null; accounts: Array<{ name: string; default?: boolean }>; defaultCwd: string; total?:number };
 export type PendingRequest = { request_id: string; method: string; params: Record<string, any> };
 export type ChatHistory = { thread: ChatThread; turns: ChatTurn[]; nextCursor?: string | null; queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>; pending: PendingRequest[] };
+export type AccountLimits = { fiveHour: number | null; week: number | null; loading: boolean };
+
+export function chatIdFromPath(path: string): string {
+  const match = /^\/chat\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.exec(path);
+  return match?.[1].toLowerCase() ?? "";
+}
+
+export function chatPath(id: string) {
+  return id ? `/chat/${encodeURIComponent(id)}` : "/";
+}
 
 export type ChatActivity = {
   state: "running" | "responding" | "waiting" | "idle" | "unknown";

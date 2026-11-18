@@ -49,3 +49,66 @@
 .activity-footer+.composer-wrap{padding-top:4px}
 .live-message{white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:16px}
 .commentary-message{color:var(--muted);font-size:13px}
+
+.markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.markdown-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.markdown-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.markdown-table-scroll :is(th, td) {
+  min-width: 6rem;
+  padding: 8px 12px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
+}
+.markdown-table-scroll th {
+  background: var(--surface);
+  text-align: start;
+}
+.markdown-table-scroll :is(th, td):last-child { border-inline-end: 0; }
+.markdown-table-scroll tbody tr:last-child td { border-bottom: 0; }
+
+.chat-list > a {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+.chat-list > a:hover, .chat-list > a[aria-current=page] { background: #e6ebe4; color: #1c503c; }
+.account-header { min-width: 0; }
+.account-limits { display: grid; gap: 3px; margin-top: 5px; }
+.account-limit {
+  display: grid;
+  grid-template-columns: 2.1em minmax(10px, 1fr) 3.4em;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.account-limit > span:last-child { text-align: end; }
+.account-limit :is(meter, .limit-track) { display: block; width: 100%; height: 4px; border-radius: 4px; background: var(--line); }
+.account-limit meter { appearance: none; }
+.account-limit meter::-webkit-meter-bar { border: 0; border-radius: 4px; background: var(--line); }
+.account-limit meter::-webkit-meter-optimum-value { border-radius: 4px; background: var(--accent); }
+.account-limit meter::-moz-meter-bar { border-radius: 4px; background: var(--accent); }
+.chat-header-controls:not(.has-turn-settings) .account-header { min-width: 110px; }

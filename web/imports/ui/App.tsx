@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
-import { chatTitle, inheritTurnSelection, mergeLiveTurn, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
+import { authenticate, call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
+import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
+import { AccountLimits } from "./AccountLimits";
 import { Accounts } from "./Accounts";
 import { ChatActivityLabel } from "./ChatActivity";
 import { Approval, ChatMessages } from "./ChatMessages";
@@ -17,20 +18,27 @@ type Section = "chats"|"pinned"|"archived";
 
 export function App() {
   const access=useAccess(),data=useStateData();
+  const ready = access.status === "authenticated";
   const [account,setAccount]=useState("default"),[section,setSection]=useState<Section>("chats"),[project,setProject]=useState("");
-  const [query,setQuery]=useState(""),[selected,setSelected]=useState<ChatThread|null>(null),[sidebar,setSidebar]=useState(false);
+  const [path, setPath] = useState(() => location.pathname);
+  const [opened,setOpened]=useState<ChatThread|null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [openAttempt, setOpenAttempt] = useState(0);
+  const threadId = chatIdFromPath(path);
+  const selected = ready && opened?.id === threadId ? opened : null;
+  const [query,setQuery]=useState(""),[sidebar,setSidebar]=useState(false);
   const [turnSelections, setTurnSelections] = useState<Record<string, TurnSelection>>({});
   const [shortcuts, setShortcuts] = useState(readChatShortcuts);
   const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
-  const catalogState=useCatalog(access.ready,account,query,project,section==="archived");
+  const catalogState=useCatalog(ready,account,query,project,section==="archived");
   const {catalog}=catalogState;
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
   const selectedProject = projects.find(p => p.id === project);
   const newChatReady = !!catalog && (!project || !!selectedProject);
-  const chatState=useChatHistory(access.ready,selected?.id||"",account);
+  const chatState=useChatHistory(ready,selected?.id||"",account);
   const history=chatState.history?.thread.id===selected?.id?chatState.history:undefined;
-  const activity = useChatActivity(access.ready, selected?.id || "", account);
+  const activity = useChatActivity(ready, selected?.id || "", account);
   const openActivity: ChatActivity | undefined = (selected && activity.threads?.[selected.id]) ||
     (history?.thread.externalOwner ? { source: "external", state: "unknown" } :
       history?.thread.status.type === "active" ? {
@@ -46,16 +54,52 @@ export function App() {
   const accounts=catalog?.accounts||data.snapshot?.accounts||[];
   const chat=selected&&history?{
     ...history.thread,
+    name: history.thread.name || selected.name,
+    preview: history.thread.preview || selected.preview,
     model: history.thread.model || selected.model,
     reasoningEffort: history.thread.reasoningEffort || selected.reasoningEffort,
   }:selected;
   const composerKey = `${selected?.id}:${account}`;
   const selection = turnSelections[composerKey] ?? inheritTurnSelection;
   const isArchived=history?.thread.archived??selected?.archived??false;
-  const modelState = useChatModels(access.ready && ((!!selected && !isArchived) || dialog?.kind === "settings"), account);
+  const modelState = useChatModels(ready && ((!!selected && !isArchived) || dialog?.kind === "settings"), account);
   const displayChats=section==="pinned"?(catalog?.pinned||[]).filter(c=>`${chatTitle(c)} ${c.cwd}`.toLowerCase().includes(query.toLowerCase())):catalog?.threads||[];
 
-  useEffect(()=>{if(!access.ready){setSelected(null);setDialog(null);setQuery("");setSidebar(false);setTurnSelections({});}},[access.ready]);
+  useEffect(()=>{
+    if (access.status === "anonymous") {
+      setOpened(null);setOpenError(null);setDialog(null);setQuery("");setSidebar(false);setTurnSelections({});setAccount("default");
+    }
+  },[access.status]);
+  useEffect(() => {
+    const onPopState = () => {
+      setPath(location.pathname);
+      setOpened(null);
+      setOpenError(null);
+      setSidebar(false);
+      setError("");
+      setNotice("");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+  useEffect(() => {
+    if (!ready || !threadId || selected) return;
+    let current = true;
+    setOpenError(null);
+    void call<ChatThread | null>("web.thread", { thread_id: threadId }).then(chat => {
+      if (!current) return;
+      if (!chat) {
+        setOpenError("이 주소의 채팅을 찾을 수 없습니다.");
+        return;
+      }
+      setOpened(chat);
+      setAccount(chat.account || "default");
+      if (chat.archived) { setSection("archived"); setProject(""); }
+    }).catch(() => {
+      if (current) setOpenError("채팅을 불러오지 못했습니다.");
+    });
+    return () => { current = false; };
+  }, [ready, threadId, selected, openAttempt]);
   useEffect(()=>{stick.current=true;anchor.current=null;olderBusy.current=false;setMenu(false);},[selected?.id,account]);
   useLayoutEffect(()=>{
     const node=scroll.current;if(!node)return;
@@ -64,7 +108,17 @@ export function App() {
   },[turns,selected?.id,chatState.olderRevision]);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==="Escape"){setSidebar(false);setMenu(false);}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[]);
 
-  function choose(next:ChatThread) {setSelected(next);setAccount(next.account&&accounts.some((a:any)=>a.name===next.account)?next.account:"default");setSidebar(false);setError("");setNotice("");}
+  function navigate(id: string, replace = false) {
+    const next = chatPath(id);
+    if (location.pathname !== next) window.history[replace ? "replaceState" : "pushState"](null, "", next);
+    setPath(next);
+    setOpenError(null);
+  }
+  function choose(next:ChatThread) {
+    navigate(next.id);
+    setOpened(next);setAccount(next.account&&accounts.some((a:any)=>a.name===next.account)?next.account:"default");
+    setSidebar(false);setError("");setNotice("");
+  }
   function filter(next:Section,id="") {setSection(next);setProject(id);}
   function openDialog(next:Dialog) {
     setError("");setMenu(false);setFormName("");
@@ -86,9 +140,9 @@ export function App() {
       } else if(dialog.kind==="move") {
         await mutate("web.move",{thread_id:dialog.chat.id,project_id:formProject});setNotice("프로젝트를 옮겼습니다.");void chatState.refresh();
       } else if(dialog.kind==="archive") {
-        await mutate("web.archive",{thread_id:dialog.chat.id,archived:!dialog.chat.archived});setSelected(null);setNotice(dialog.chat.archived?"보관을 해제했습니다.":"채팅을 보관했습니다.");
+        await mutate("web.archive",{thread_id:dialog.chat.id,archived:!dialog.chat.archived});navigate("",true);setOpened(null);setNotice(dialog.chat.archived?"보관을 해제했습니다.":"채팅을 보관했습니다.");
       } else if(dialog.kind==="delete") {
-        await mutate("web.delete",{thread_id:dialog.chat.id});setSelected(null);setNotice("채팅을 영구 삭제했습니다.");
+        await mutate("web.delete",{thread_id:dialog.chat.id});navigate("",true);setOpened(null);setNotice("채팅을 영구 삭제했습니다.");
       }
       setDialog(null);
     }catch(e){setError((e as Error).message);}finally{setFormBusy(false);}
@@ -104,7 +158,11 @@ export function App() {
     const loaded=await chatState.loadOlder();if(!loaded)anchor.current=null;olderBusy.current=false;
   }
 
-  if(!access.ready)return <Login ready={access.modeReady} passwordMode={access.password} message={access.message}/>;
+  if (access.status === "anonymous") return <Login passwordMode={access.password} message={access.message} />;
+  if (!ready) return <main className="login">
+    <p role={access.status === "unavailable" ? "alert" : "status"}>{access.message || "로그인 상태를 확인하고 있습니다…"}</p>
+    {access.status === "unavailable" && <button type="button" onClick={() => void authenticate()}>다시 확인</button>}
+  </main>;
   return <div className="chat-app">
     {sidebar&&<button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/>}
     <aside className={`sidebar ${sidebar?"is-open":""}`} aria-label="탐색">
@@ -127,12 +185,17 @@ export function App() {
         <button aria-label="프로젝트 추가" onClick={() => openDialog({kind:"project"})}>＋</button>
       </div>}
       <div className="list-heading"><span>{section==="pinned"?"고정한 채팅":section==="archived"?"보관된 채팅":project?`${selectedProject?.name || "프로젝트"} 채팅`:"전체 채팅"}</span>{catalogState.loading&&<small>갱신 중</small>}</div>
-      <div className="chat-list" aria-label="채팅 목록">{displayChats.map(t=><button key={t.id} className={selected?.id===t.id?"selected":""} onClick={()=>choose(t)} title={chatTitle(t)}>
+      <div className="chat-list" aria-label="채팅 목록">{displayChats.map(t=><a key={t.id} href={chatPath(t.id)} aria-current={selected?.id===t.id ? "page" : undefined} title={chatTitle(t)} onClick={event => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        if (selected?.id !== t.id) choose(t);
+        else setSidebar(false);
+      }}>
         <strong>{chatTitle(t)}</strong>
         <span className="chat-row-meta"><small>{t.cwd.split("/").filter(Boolean).pop()||t.cwd}</small>
           {!t.archived && <ChatActivityLabel activity={activity.threads?.[t.id]} known={activity.writersKnown}/>}
         </span>
-      </button>)}
+      </a>)}
         {!displayChats.length&&catalog&&!catalogState.loading&&<p className="muted empty-list">표시할 채팅이 없습니다.</p>}
         {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
         {section!=="pinned"&&catalog?.nextCursor&&<button className="load-more" disabled={catalogState.loading} onClick={()=>void catalogState.refresh(catalog.nextCursor)}>채팅 더 보기</button>}
@@ -142,9 +205,12 @@ export function App() {
     <main className="conversation" data-thread-id={selected?.id||""}>
       <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
         <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}`}>
-          <label className="account-select">계정
-            <select aria-label="이번에 사용할 계정" value={account} onChange={e=>setAccount(e.target.value)}><option value="default">기본 계정</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
-          </label>
+          <div className="account-header">
+            <label className="account-select">계정
+              <select aria-label="이번에 사용할 계정" value={account} disabled={!!threadId && !selected} onChange={e=>setAccount(e.target.value)}><option value="default">기본 계정</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
+            </label>
+            {(!threadId || selected) && <AccountLimits key={account} account={account} />}
+          </div>
           {chat && !isArchived && <TurnSettings
             key={composerKey}
             chat={chat}
@@ -170,6 +236,14 @@ export function App() {
           {!!turns.length&&<ChatMessages thread={selected.id} turns={turns} account={account} external={history?.thread.externalOwner} liveTurnId={liveTurnId}/>}
           {history&&!turns.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
           {history?.pending.map(p=><Approval key={p.request_id} request={p} thread={selected.id} account={account} onDone={()=>void chatState.refresh()}/>)}
+        </div>:path !== "/" ? <div className="message-inner">
+          {(openError || !threadId)
+            ? <div className="empty-conversation" role="alert">
+              <p>{openError || "채팅 주소가 올바르지 않습니다."}</p>
+              {!!threadId && <button className="text-button" type="button" onClick={() => setOpenAttempt(attempt => attempt + 1)}>다시 불러오기</button>}
+              <a href="/" onClick={event => {event.preventDefault();navigate("",true);}}>전체 채팅</a>
+            </div>
+            : <p className="loading-message" role="status">채팅을 불러오는 중…</p>}
         </div>:<div className="welcome"><span className="welcome-mark">C</span><p className="eyebrow">CODEXM · LOCAL WORKSPACE</p><h2>{first}</h2><p>최근 채팅을 이어가거나,<br/>프로젝트에서 새 작업을 시작하세요.</p><button className="primary" disabled={!newChatReady} onClick={()=>openDialog({kind:"new"})}>＋ 새 채팅 시작</button></div>}
       </div>
       {chat && !isArchived && <ChatActivityLabel activity={openActivity} known={activity.writersKnown} lastTurn={turns.at(-1)} footer />}
@@ -209,10 +283,10 @@ export function App() {
   </div>;
 }
 
-function Login({ready,passwordMode,message}:{ready:boolean;passwordMode:boolean;message:string}) {
+function Login({passwordMode,message}:{passwordMode:boolean;message:string}) {
   const [username,setUsername]=useState(""),[password,setPassword]=useState(""),[token,setToken]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  return <main className="login"><div className="brand-icon">C</div><p className="eyebrow">CODEXM</p><h1>내 작업에 연결하세요</h1><p>이 머신의 채팅과 프로젝트를<br/>브라우저에서 이어갑니다.</p><form onSubmit={e=>{e.preventDefault();if(busy||!ready)return;setBusy(true);setError("");void(passwordMode?login(username,password):exchange(token)).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>
+  return <main className="login"><div className="brand-icon">C</div><p className="eyebrow">CODEXM</p><h1>내 작업에 연결하세요</h1><p>이 머신의 채팅과 프로젝트를<br/>브라우저에서 이어갑니다.</p><form onSubmit={e=>{e.preventDefault();if(busy)return;setBusy(true);setError("");void(passwordMode?login(username,password):exchange(token)).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>
     {passwordMode?<><label>아이디<input autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} required/></label><label>비밀번호<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required/></label></>:<label>로컬 접속 코드<input type="password" value={token} onChange={e=>setToken(e.target.value)} required/></label>}
-    <button className="primary" disabled={busy||!ready}>{busy?"연결 중…":passwordMode?"로그인":"연결"}</button>
+    <button className="primary" disabled={busy}>{busy?"연결 중…":passwordMode?"로그인":"연결"}</button>
   </form>{(error||message)&&<p role="alert">{error||message}</p>}</main>;
 }

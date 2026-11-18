@@ -28,10 +28,15 @@ test("recent-only history, anchored upward pagination, safe Markdown and lazy de
     (window as any).__calls=[];
     m.apply=function(...args:any[]){if(args[0]==="codexm.call")(window as any).__calls.push(args[1][0]);return apply.apply(this,args);};
   });
-  await page.getByRole("button",{name:/긴 이력 페이지 테스트/}).click();
+  await page.getByRole("link",{name:/긴 이력 페이지 테스트/}).click();
   await expect(page.locator(".turn")).toHaveCount(8);
   await expect(page.getByText("페이지 이력 26",{exact:true})).toBeVisible();
   await expect(page.getByText("페이지 이력 01",{exact:true})).toHaveCount(0);
+  const table = page.locator(".turn").last().getByRole("table");
+  await expect(table.getByRole("row")).toHaveCount(3);
+  await expect(table.getByRole("columnheader", { name: "항목", exact: true })).toBeVisible();
+  await expect(table.getByRole("cell", { name: "12", exact: true })).toHaveCSS("text-align", "right");
+  await table.screenshot({ path: join(fixtureRoot!, "markdown-table.png") });
   expect(await page.evaluate(()=>(window as any).__unsafe)).toBeUndefined();
   expect(await page.evaluate(()=>(window as any).__calls.filter((m:string)=>m==="web.items").length)).toBe(0);
   await page.locator(".turn-details").last().locator("summary").click();
@@ -52,14 +57,14 @@ test("recent-only history, anchored upward pagination, safe Markdown and lazy de
 });
 
 test("project picker and live status from a separate native writer", async ({page}) => {
-  const row = page.getByRole("button",{name:/진행 중 개입 테스트/});
+  const row = page.getByRole("link",{name:/진행 중 개입 테스트/});
   try {
     await authenticate(page);
     const picker = page.getByRole("combobox", {name:"프로젝트 필터",exact:true});
     await expect(picker).toHaveValue("");
     await picker.selectOption(fixture().project);
     await expect(page.locator(".list-heading")).toContainText("브라우저 테스트 프로젝트 채팅");
-    await expect(page.getByRole("button",{name:/긴 이력 페이지 테스트/})).toBeVisible();
+    await expect(page.getByRole("link",{name:/긴 이력 페이지 테스트/})).toBeVisible();
     await expect(row).toHaveCount(0);
     await picker.selectOption("");
     await expect(row).toContainText("다른 창 · 작업 중",{timeout:12000});
@@ -71,6 +76,46 @@ test("project picker and live status from a separate native writer", async ({pag
     writeFileSync(join(fixtureRoot!,"release-foreign"),"release isolated external writer");
   }
   await expect(row).toContainText("다른 창에서 열림",{timeout:12000});
+});
+
+test("chat URLs restore the same chat after session check and browser navigation", async ({ page }) => {
+  await authenticate(page);
+  const first = page.getByRole("link", { name: /긴 이력 페이지 테스트/ });
+  const firstPath = `/chat/${fixture().thread}`;
+  await expect(first).toHaveAttribute("href", firstPath);
+  await first.click();
+  await expect(page).toHaveURL(url + firstPath);
+  await expect(first).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("group", { name: "선택 계정의 남은 한도" })).toBeVisible();
+
+  let releaseTicket = () => {};
+  const gate = new Promise<void>(resolve => { releaseTicket = resolve; });
+  await page.route("**/auth/ticket", async route => {
+    await gate;
+    await route.continue();
+  }, { times: 1 });
+  try {
+    await page.reload();
+    await expect(page.getByText("로그인 상태를 확인하고 있습니다…", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("로컬 접속 코드", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("비밀번호", { exact: true })).toHaveCount(0);
+  } finally {
+    releaseTicket();
+  }
+  await expect(page.locator("main.conversation")).toHaveAttribute("data-thread-id", fixture().thread);
+  await expect(page.getByRole("heading", { name: "긴 이력 페이지 테스트", exact: true })).toBeVisible();
+  const second = page.getByRole("link", { name: /진행 중 개입 테스트/ });
+  await second.click();
+  await expect(page).toHaveURL(`${url}/chat/${fixture().second}`);
+  await page.goBack();
+  await expect(page.locator("main.conversation")).toHaveAttribute("data-thread-id", fixture().thread);
+  await page.goForward();
+  await expect(page.locator("main.conversation")).toHaveAttribute("data-thread-id", fixture().second);
+
+  await page.goto(`${url}/chat/${fixture().archived}`);
+  await expect(page.getByRole("heading", { name: "보관된 fixture 채팅", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "보관함", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("메시지", { exact: true })).toHaveCount(0);
 });
 
 test("streamed answer, Enter intervention, Command+Enter queue and browser reconnect",async({page,context})=>{
@@ -102,7 +147,7 @@ test("streamed answer, Enter intervention, Command+Enter queue and browser recon
   await expect(page.locator(".queue-preview summary")).toContainText("1개");
   await page.close();
   const next=await context.newPage();await next.goto(url);
-  await next.getByRole("button",{name:/GUI_FIXTURE_ACTIVE_BROWSER/}).click();
+  await next.getByRole("link",{name:/GUI_FIXTURE_ACTIVE_BROWSER/}).click();
   await expect(next.locator("main.conversation")).toHaveAttribute("data-thread-id",id!);
   const nextStatus=next.getByRole("status",{name:"현재 작업 상태",exact:true});
   await expect(nextStatus).toHaveText(/작업 중|응답 생성 중/);
@@ -114,7 +159,7 @@ test("streamed answer, Enter intervention, Command+Enter queue and browser recon
 
 test("header model controls and editable keyboard combinations", async ({ page }) => {
   await authenticate(page);
-  await page.getByRole("button", { name: /긴 이력 페이지 테스트/ }).click();
+  await page.getByRole("link", { name: /긴 이력 페이지 테스트/ }).click();
   const header = page.locator(".chat-header");
   const model = header.getByRole("combobox", { name: "모델", exact: true });
   const effort = header.getByRole("combobox", { name: "Reasoning effort", exact: true });
@@ -185,7 +230,7 @@ test("header model controls and editable keyboard combinations", async ({ page }
 test("long command output is fetched only when its nested accordion opens",async({page})=>{
   await authenticate(page);
   await page.evaluate(()=>{const m=(window as any).Meteor,apply=m.apply;(window as any).__calls=[];m.apply=function(...args:any[]){if(args[0]==="codexm.call")(window as any).__calls.push(args[1][0]);return apply.apply(this,args);};});
-  await page.getByRole("button",{name:/긴 명령 출력 검증/}).click();
+  await page.getByRole("link",{name:/긴 명령 출력 검증/}).click();
   await expect(page.locator(".turn")).toHaveCount(1);
   expect(await page.evaluate(()=>(window as any).__calls.filter((m:string)=>m==="web.items"||m==="web.item").length)).toBe(0);
   await page.locator(".turn-details summary").click();
@@ -208,7 +253,7 @@ test("pin, project move, archive, restore and confirmed permanent delete",async(
   const id=await page.locator("main.conversation").getAttribute("data-thread-id");
   await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();await page.getByRole("menuitem",{name:"고정하기",exact:true}).click();
   await expect(page.getByText("고정 상태를 변경했습니다.")).toBeVisible();
-  await page.getByRole("button",{name:"고정",exact:true}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
+  await page.getByRole("button",{name:"고정",exact:true}).click();await page.getByRole("link",{name:/관리 기능 검증용 채팅/}).click();
   await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();await page.getByRole("menuitem",{name:"프로젝트로 이동",exact:true}).click();
   dialog=page.getByRole("dialog",{name:"프로젝트로 이동",exact:true});await dialog.getByLabel("프로젝트",{exact:true}).selectOption("");await dialog.getByRole("button",{name:"적용",exact:true}).click();
   await expect(page.getByText("프로젝트를 옮겼습니다.")).toBeVisible();
@@ -216,13 +261,13 @@ test("pin, project move, archive, restore and confirmed permanent delete",async(
   dialog=page.getByRole("dialog",{name:"채팅 보관",exact:true});await dialog.getByRole("button",{name:"취소",exact:true}).click();
   await expect(page.locator("main.conversation")).toHaveAttribute("data-thread-id",id!);
   await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();await page.getByRole("menuitem",{name:"보관하기",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"적용",exact:true}).click();
-  await page.getByRole("button",{name:"보관함",exact:true}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
+  await page.getByRole("button",{name:"보관함",exact:true}).click();await page.getByRole("link",{name:/관리 기능 검증용 채팅/}).click();
   await expect(page.getByRole("heading",{name:"작업을 확인했습니다",exact:true})).toBeVisible({timeout:20000});
   await expect(input).toHaveCount(0);await page.getByRole("button",{name:"보관 해제",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"적용",exact:true}).click();
-  await page.getByRole("button",{name:"전체 채팅",exact:true}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
+  await page.getByRole("button",{name:"전체 채팅",exact:true}).click();await page.getByRole("link",{name:/관리 기능 검증용 채팅/}).click();
   await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();await page.getByRole("menuitem",{name:"영구 삭제",exact:true}).click();
   dialog=page.getByRole("dialog",{name:"채팅 영구 삭제",exact:true});await expect(dialog.getByText(/되돌릴 수 없습니다/)).toBeVisible();await dialog.getByRole("button",{name:"영구 삭제",exact:true}).click();
-  await expect(page.getByRole("button",{name:/관리 기능 검증용 채팅/})).toHaveCount(0);
+  await expect(page.getByRole("link",{name:/관리 기능 검증용 채팅/})).toHaveCount(0);
 });
 
 test("project creation, filtered new chat, search and logout gate",async({page})=>{
@@ -240,7 +285,7 @@ test("project creation, filtered new chat, search and logout gate",async({page})
   const input=page.getByLabel("메시지",{exact:true});await input.fill("프로젝트 검색 검증 메시지");await input.press("Enter");
   await expect(page.getByRole("heading",{name:"작업을 확인했습니다",exact:true})).toBeVisible({timeout:20000});
   const search=page.getByLabel("채팅 검색",{exact:true});await search.fill("프로젝트 검색 검증");
-  await expect(page.getByRole("button",{name:/프로젝트 검색 검증 메시지/})).toBeVisible();
+  await expect(page.getByRole("link",{name:/프로젝트 검색 검증 메시지/})).toBeVisible();
   await search.fill("a-nonexistent-fixture-only-title");await expect(page.getByText("표시할 채팅이 없습니다.",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:"로그아웃",exact:true}).click();
   await expect(page.getByRole("button",{name:"연결",exact:true})).toBeVisible();
@@ -252,12 +297,22 @@ test("project creation, filtered new chat, search and logout gate",async({page})
 for(const viewport of [{width:375,height:667},{width:390,height:844}])test(`mobile navigation, readable transcript and composer at ${viewport.width}`,async({page})=>{
   await page.setViewportSize(viewport);await page.emulateMedia({reducedMotion:"reduce"});await authenticate(page);await menu(page);
   await expect(page.getByLabel("채팅 목록",{exact:true})).toBeVisible();
-  await page.getByRole("button",{name:/긴 이력 페이지 테스트/}).click();
+  await page.getByRole("link",{name:/긴 이력 페이지 테스트/}).click();
   await expect(page.getByLabel("메시지",{exact:true})).toBeVisible();
   await expect(page.locator(".chat-header").getByRole("combobox",{name:"모델",exact:true})).toBeVisible();
   await expect(page.locator(".chat-header").getByRole("combobox",{name:"Reasoning effort",exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"큐에 추가",exact:true})).toBeVisible();
   await expect(page.locator(".turn")).toHaveCount(8);
+  const tableScroller = page.locator(".turn").last().getByRole("region", { name: "채팅 표" });
+  await expect(tableScroller.getByRole("table")).toBeVisible();
+  const tableOverflow = await tableScroller.evaluate(el => {
+    el.scrollLeft = el.scrollWidth;
+    const overflow = { width: el.clientWidth, content: el.scrollWidth, offset: el.scrollLeft };
+    el.scrollLeft = 0;
+    return overflow;
+  });
+  expect(tableOverflow.content).toBeGreaterThan(tableOverflow.width);
+  expect(tableOverflow.offset).toBeGreaterThan(0);
   const sizes=await page.evaluate(()=>({page:document.documentElement.scrollWidth,width:innerWidth,height:document.documentElement.scrollHeight,viewport:innerHeight}));expect(sizes.page).toBeLessThanOrEqual(sizes.width);expect(sizes.height).toBeLessThanOrEqual(sizes.viewport);
   await page.screenshot({path:join(fixtureRoot!,`mobile-${viewport.width}.png`)});
 });

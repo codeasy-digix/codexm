@@ -1,7 +1,19 @@
 import React, { useState } from "react";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { call } from "../../client/data";
 import type { ChatItem, ChatTurn, PendingRequest } from "../contracts/web";
+
+const markdownComponents: Components = {
+  table({ node: _node, ...props }) {
+    return <div className="markdown-table-scroll" role="region" aria-label="채팅 표" tabIndex={0}>
+      <table {...props} />
+    </div>;
+  },
+  th({ node: _node, ...props }) {
+    return <th scope="col" {...props} />;
+  },
+};
 
 export function inputText(content?: Array<{type: string; text?: string}>) {
   return (content || []).map(part => part.text || (part.type === "image" || part.type === "localImage" ? "[이미지 첨부]" : "")).filter(Boolean).join("\n");
@@ -58,7 +70,9 @@ export function ChatMessages({thread,turns,account,external,liveTurnId}:{thread:
       {turn.items.filter(item => item.type === "agentMessage" && (item.phase !== "commentary" || turn.id === liveTurnId) && item.text).map(item =>
         item.streaming || item.phase === "commentary"
           ? <div className={`live-message${item.phase === "commentary" ? " commentary-message" : ""}`} key={item.id}>{item.text}</div>
-          : <div className="markdown" key={item.id}><Markdown>{item.text || ""}</Markdown></div>)}
+          : <div className="markdown" key={item.id}>
+            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{item.text || ""}</Markdown>
+          </div>)}
       {turn.error&&<p role="alert" className="inline-error">{turn.error.message}</p>}
       <TurnDetails thread={thread} turn={turn} account={account} external={external} current={turn.id === liveTurnId}/>
     </div>
