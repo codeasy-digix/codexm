@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -180,7 +181,10 @@ func TestWebChatOfficialForeignOwner(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	for _, method := range []string{"web.send", "web.archive", "web.delete", "web.interrupt"} {
+	if _, err = call("web.send", map[string]any{"thread_id": id, "mode": "immediate", "text": "MUST_NOT_EXECUTE", "turn_id": turn}); !errors.Is(err, errWebForeignInput) {
+		t.Fatal("unreachable foreign writer accepted direct input", err)
+	}
+	for _, method := range []string{"web.archive", "web.delete", "web.interrupt"} {
 		_, err = call(method, map[string]any{"thread_id": id, "mode": "immediate", "text": "MUST_NOT_EXECUTE", "turn_id": turn, "archived": true})
 		if err == nil || !strings.Contains(err.Error(), "another GUI/CLI") {
 			t.Fatal("foreign mutation accepted", method, err)

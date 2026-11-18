@@ -68,14 +68,6 @@ func (w *WebChat) guiRelayDelivery(ctx context.Context, id string, pid int, fall
 	return fallback
 }
 
-func webRelayWriters(ctx context.Context, home, id string) ([]int, error) {
-	pids, err := writerProcesses(ctx, home, id)
-	if os.IsNotExist(err) {
-		err = nil
-	}
-	return pids, err
-}
-
 func openGUIRelay(ctx context.Context, home, relay string, owner guiOwner) error {
 	archived, err := catalog.Archived(ctx, home, relay)
 	if err != nil || archived {
@@ -83,7 +75,7 @@ func openGUIRelay(ctx context.Context, home, relay string, owner guiOwner) error
 	}
 	opened := false
 	for {
-		pids, err := webRelayWriters(ctx, home, relay)
+		pids, err := webWriterPIDs(ctx, home, relay)
 		if err != nil || (len(pids) > 0 && (len(pids) != 1 || pids[0] != owner.Writer.PID)) {
 			return errors.New("중계 채팅이 대상과 같은 GUI에서 열려 있는지 확인할 수 없습니다.")
 		}
@@ -298,11 +290,11 @@ func verifyGUIRelayClaim(ctx context.Context, c config.Config, saved webGUIRelay
 		return errors.New("GUI 실행 상태가 바뀌었습니다.")
 	}
 	home := config.Expand(c.Runtime.SharedCodexHome)
-	owners, err := webRelayWriters(ctx, home, saved.Relay)
+	owners, err := webWriterPIDs(ctx, home, saved.Relay)
 	if err != nil || len(owners) != 1 || owners[0] != saved.PID {
 		return errors.New("공식 GUI 중계 채팅 소유자를 확인할 수 없습니다.")
 	}
-	owners, err = webRelayWriters(ctx, home, saved.Thread)
+	owners, err = webWriterPIDs(ctx, home, saved.Thread)
 	if err != nil || (len(owners) > 0 && (len(owners) != 1 || owners[0] != saved.PID)) {
 		return errors.New("대상 채팅을 실행하는 앱이 바뀌었습니다.")
 	}

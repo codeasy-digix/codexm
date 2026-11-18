@@ -25,7 +25,18 @@ type webInputOwner struct {
 	release     func()
 }
 
-var errWebForeignInput = errors.New("this chat is owned by another GUI/CLI; 현재 턴의 공식 연결을 확인할 수 없습니다. 큐에 추가할 수 있습니다.")
+var errWebForeignInput = errors.New("이 채팅을 실행하는 창에 연결할 수 없습니다. 입력은 전송되지 않았습니다.")
+
+func webWriterPIDs(ctx context.Context, home, id string) ([]int, error) {
+	pids, err := writerProcesses(ctx, home, id)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		pids, err = writerProcesses(ctx, home, id)
+	}
+	if os.IsNotExist(err) {
+		err = nil
+	}
+	return pids, err
+}
 
 // Take a short-lived client lease, not the chat's writer lock. Only the native
 // server already holding that lock can authorize direct input.
@@ -174,9 +185,12 @@ func (o *webInputOwner) delivery(ctx context.Context, id string) (webDelivery, e
 	return webDelivery{State: "ready", TurnID: page.Data[0].ID}, nil
 }
 
-func (w *WebChat) verifyInputOwner(ctx context.Context, owner *webInputOwner, id string) error {
-	pids, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
-	if err != nil || len(pids) != 1 || pids[0] != owner.pid {
+func (w *WebChat) verifyInputOwner(ctx context.Context, owner *webInputOwner, id string, allowFree bool) error {
+	pids, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
+	if err != nil {
+		return err
+	}
+	if !(len(pids) == 1 && pids[0] == owner.pid || allowFree && len(pids) == 0) {
 		return errors.New("채팅의 실행 연결이 바뀌었습니다. 상태를 다시 확인해 주세요.")
 	}
 	incarnation, err := cr.NativeProcessIdentity(owner.pid)
@@ -201,9 +215,6 @@ func (w *WebChat) externalDelivery(ctx context.Context, id string, pids []int) w
 	result, err := o.delivery(ctx, id)
 	if err != nil {
 		return unavailable
-	}
-	if result.State == "idle" {
-		return w.guiRelayDelivery(ctx, id, pids[0], result)
 	}
 	return result
 }

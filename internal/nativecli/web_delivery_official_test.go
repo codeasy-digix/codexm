@@ -50,7 +50,7 @@ func TestWebChatOfficialUnixWriterDelivery(t *testing.T) {
 	if _, err := send("STALE_MUST_NOT_EXECUTE", "stale-fixture-turn", "immediate"); err == nil {
 		t.Fatal("stale direct input was accepted")
 	}
-	steer, err := send("WEB_SAME_ACTIVE_TURN", "", "steer")
+	steer, err := send("WEB_SAME_ACTIVE_TURN", "", "immediate")
 	if err != nil || steer["mode"] != "steer" || steer["turn_id"] != turn {
 		t.Fatal("same-turn intervention not acknowledged", steer, err)
 	}
@@ -78,6 +78,24 @@ func TestWebChatOfficialUnixWriterDelivery(t *testing.T) {
 	if _, err := send("FINISHED_MUST_NOT_EXECUTE", "", "steer"); err == nil {
 		t.Fatal("intervention after completion was accepted")
 	}
+	started, err := send("WEB_IDLE_STARTS_NOW", "", "immediate")
+	if err != nil || started["mode"] != "start" || started["turn_id"] == "" || started["turn_id"] == turn {
+		t.Fatal("new turn on the same idle writer not acknowledged", started, err)
+	}
+	newTurn := f.completed(id, 3).Turns[2]
+	b, _ := json.Marshal(newTurn)
+	if newTurn.ID != started["turn_id"] || !strings.Contains(string(b), "WEB_IDLE_STARTS_NOW") || strings.Contains(string(b), "FINISHED_MUST_NOT_EXECUTE") {
+		t.Fatal("immediate input did not start the requested turn in the same chat")
+	}
+	queued, err = send("WEB_IDLE_QUEUE", "", "queue")
+	if err != nil || queued["mode"] != "queue" || queued["queued_id"] == "" {
+		t.Fatal("queue submission not acknowledged while idle", queued, err)
+	}
+	b, _ = json.Marshal(f.completed(id, 4).Turns[3])
+	if !strings.Contains(string(b), "WEB_IDLE_QUEUE") {
+		t.Fatal("native queue input was not executed")
+	}
+	f.assertOwner(key, id, unrelated)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, key := range f.keys {

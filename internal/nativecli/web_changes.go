@@ -205,84 +205,84 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 		if p.Mode != "immediate" || p.Turn != "" {
 			return nil, errors.New("모델과 effort는 새 턴을 시작할 때 선택할 수 있습니다.")
 		}
-		if p.Model == "" {
-			return nil, errors.New("effort를 적용할 모델을 선택해 주세요.")
-		}
 	}
-	owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
-	if err != nil && !os.IsNotExist(err) {
+	owners, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
+	if p.Mode == "queue" {
+		// The official queue accepts input independently of the owner's turn or
+		// availability. Keep opening an unlocked chat when its web login is ready.
+		if err == nil && len(owners) == 0 && w.verifyLogin(ctx, c) == nil {
+			_ = w.prepare(ctx, c, p.Thread)
+		}
+		return queueWebInput(ctx, c.client, r, p)
+	}
+	if err != nil {
 		return nil, err
 	}
 	if len(owners) > 1 {
 		return nil, errors.New("채팅을 실행하는 프로세스를 하나로 확인할 수 없습니다.")
 	}
-	steering := p.Mode == "steer" || p.Turn != ""
-	if len(owners) == 1 && (owners[0] != c.process.PID || steering || p.Mode == "queue") {
+	if len(owners) == 1 {
 		return w.sendToWriter(ctx, c, r, p, owners[0])
 	}
-	if steering {
-		return nil, errors.New("현재 실행 중인 작업이 없습니다. 입력을 확인한 뒤 다시 보내 주세요.")
+	if p.Mode == "steer" || p.Turn != "" {
+		return nil, errWebNoActiveTurn
 	}
 	if err := w.verifyLogin(ctx, c); err != nil {
 		return nil, err
 	}
-	if p.Model != "" {
-		if err := c.validateTurnModel(ctx, p.Model, p.Effort); err != nil {
-			return nil, err
-		}
-	}
 	if err := w.prepare(ctx, c, p.Thread); err != nil {
 		return nil, err
 	}
-	if w.loginChanged(c) {
-		return nil, errWebLoginDraining
-	}
-	if p.Mode == "queue" {
-		return queueWebInput(ctx, c.client, r, p)
-	}
-	current, err := c.client.Read(ctx, p.Thread, false)
-	if err != nil {
-		return nil, err
-	}
-	if current.Status.Type == "active" {
-		return nil, errors.New("채팅이 이미 실행 중입니다. 현재 턴을 확인한 뒤 다시 보내 주세요.")
-	}
+	return w.sendToWriter(ctx, c, r, p, c.process.PID)
+}
+
+func (w *WebChat) startWebTurn(ctx context.Context, owner *webInputOwner, selected *webConnection, r Request, p webParams) (any, error) {
 	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
-	if p.Model != "" {
+	if owner.web == selected && (p.Model != "" || p.Effort != "") {
+		if p.Model == "" {
+			return nil, errors.New("effort를 적용할 모델을 선택해 주세요.")
+		}
+		if err := selected.validateTurnModel(ctx, p.Model, p.Effort); err != nil {
+			return nil, err
+		}
 		args["model"] = p.Model
 		if p.Effort != "" {
 			args["effort"] = p.Effort
 		}
+	}
+	// A draft loaded on the selected connection may not have a writer file yet.
+	if err := w.verifyInputOwner(ctx, owner, p.Thread, owner.web == selected); err != nil {
+		return nil, err
+	}
+	if owner.web != nil && w.loginChanged(owner.web) {
+		return nil, errWebLoginDraining
 	}
 	var reply struct {
 		Turn struct {
 			ID string `json:"id"`
 		} `json:"turn"`
 	}
-	if err := callWebInput(ctx, c.client, "turn/start", args, &reply); err != nil {
+	if err := callWebInput(ctx, owner.client, "turn/start", args, &reply); err != nil {
 		return nil, err
 	}
 	if reply.Turn.ID == "" {
 		return nil, errWebInputUnconfirmed
 	}
-	w.rememberAccount(p.Thread, c.account)
+	if owner.web != nil {
+		w.rememberAccount(p.Thread, owner.web.account)
+	}
 	return map[string]any{"thread_id": p.Thread, "turn_id": reply.Turn.ID, "mode": "start", "status": "accepted", "accepted_at": time.Now().Unix()}, nil
 }
+
+var errWebNoActiveTurn = errors.New("현재 개입할 수 있는 작업이 없습니다. 채팅 상태를 확인해 주세요.")
 
 func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request, p webParams, pid int) (any, error) {
 	probe, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	if p.Mode == "immediate" && p.Turn == "" && p.Model != "" {
-		return nil, errors.New("다른 창에서 열어 둔 채팅은 그 창의 모델과 계정을 사용합니다. 상태를 다시 확인해 주세요.")
-	}
+	automatic := p.Mode == "immediate" && p.Turn == ""
 	owner, err := w.openInputOwner(probe, p.Thread, pid)
 	if err != nil {
-		if p.Mode == "queue" && pid != c.process.PID {
-			// The durable native queue can accept input from a different
-			// connection. It does not load or take over the original chat.
-			return queueWebInput(ctx, c.client, r, p)
-		}
-		if p.Mode == "immediate" && p.Turn == "" {
+		if automatic && pid != c.process.PID {
 			return w.submitGUIRelay(ctx, c, r, p, pid)
 		}
 		return nil, errWebForeignInput
@@ -293,44 +293,61 @@ func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request,
 			return nil, err
 		}
 	}
-	var activeTurn string
-	if p.Mode != "queue" || (owner.web != nil && w.loginChanged(owner.web)) {
+	for attempt := 0; attempt < 2; attempt++ {
 		delivery, err := owner.delivery(probe, p.Thread)
 		if err != nil {
 			return nil, errors.New("현재 턴의 상태를 읽을 수 없습니다. 입력은 전송되지 않았습니다.")
 		}
-		if p.Mode != "queue" {
-			if delivery.State == "waiting" {
-				return nil, errors.New("현재 턴이 승인 또는 사용자 입력을 기다립니다. 원래 창에서 응답해 주세요.")
+		switch delivery.State {
+		case "waiting":
+			return nil, errors.New("현재 턴이 승인 또는 사용자 입력을 기다립니다. 원래 창에서 응답해 주세요.")
+		case "idle":
+			if !automatic {
+				return nil, errWebNoActiveTurn
 			}
-			if delivery.State == "idle" && p.Mode == "immediate" && p.Turn == "" && owner.web == nil && w.guiRelayThread(p.Thread) != "" {
-				return w.submitGUIRelay(ctx, c, r, p, pid)
+			return w.startWebTurn(ctx, owner, c, r, p)
+		case "ready":
+			if p.Turn != "" && delivery.TurnID != p.Turn {
+				return nil, errWebNoActiveTurn
 			}
-			if delivery.State != "ready" || (p.Turn != "" && delivery.TurnID != p.Turn) {
-				return nil, errors.New("현재 개입할 수 있는 작업이 없습니다. 채팅 상태를 확인해 주세요.")
+			if err := w.verifyInputOwner(probe, owner, p.Thread, false); err != nil {
+				return nil, err
 			}
-			activeTurn = delivery.TurnID
-		} else if delivery.State == "idle" {
-			return nil, errWebLoginDraining
+			result, err := steerWebTurn(ctx, owner.client, r, p, delivery.TurnID)
+			if attempt == 0 && automatic && rejectedWebSteer(err, delivery.TurnID) {
+				continue // The native server explicitly rejected this input before sending it.
+			}
+			return result, err
+		default:
+			if attempt == 0 && automatic {
+				continue // Re-read if the status and the latest turn did not agree yet.
+			}
+			return nil, errors.New("채팅의 실행 상태를 확인할 수 없습니다. 입력은 전송되지 않았습니다.")
 		}
 	}
-	if err := w.verifyInputOwner(probe, owner, p.Thread); err != nil {
-		return nil, err
-	}
-	if p.Mode == "queue" {
-		return queueWebInput(ctx, owner.client, r, p)
-	}
+	return nil, errWebNoActiveTurn
+}
+
+func steerWebTurn(ctx context.Context, client *cr.Client, r Request, p webParams, activeTurn string) (any, error) {
 	var reply struct{ TurnID string }
 	// Bind the official RPC to the running turn observed now, independently of
 	// the turn that was visible in the browser when the user began typing.
 	args := map[string]any{"threadId": p.Thread, "expectedTurnId": activeTurn, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
-	if err := callWebInput(ctx, owner.client, "turn/steer", args, &reply); err != nil {
+	if err := callWebInput(ctx, client, "turn/steer", args, &reply); err != nil {
 		return nil, err
 	}
 	if reply.TurnID != activeTurn {
 		return nil, errWebInputUnconfirmed
 	}
 	return map[string]any{"thread_id": p.Thread, "turn_id": activeTurn, "mode": "steer", "status": "accepted", "accepted_at": time.Now().Unix()}, nil
+}
+
+func rejectedWebSteer(err error, turn string) bool {
+	var rpc *cr.RPCError
+	if !errors.As(err, &rpc) || rpc.Code != -32600 {
+		return false
+	}
+	return rpc.Message == "no active turn to steer" || strings.HasPrefix(rpc.Message, "expected active turn id `"+turn+"` but found `")
 }
 
 var errWebInputUnconfirmed = errors.New("전송 결과를 확인하지 못했습니다. 대화와 큐에서 원래 입력을 확인해 주세요.")

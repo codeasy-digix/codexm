@@ -209,8 +209,10 @@ test("recent-only history, anchored upward pagination, safe Markdown and lazy de
   await page.screenshot({path:join(fixtureRoot!,"desktop-history.png")});
 });
 
-test("project picker, Enter intervention and Command+Enter for a separate native writer", async ({page}) => {
+test("project picker, idle send, Enter intervention and Command+Enter for a separate native writer", async ({page}) => {
   const row = page.getByRole("link",{name:/진행 중 개입 테스트/});
+  const input = page.getByLabel("메시지", {exact: true});
+  const send = page.getByRole("button", {name: "보내기", exact: true});
   const originalTurn = page.locator("article.turn").filter({
     has: page.getByText("GUI_FIXTURE_ACTIVE_FOREIGN_BROWSER", {exact: true}),
   });
@@ -234,9 +236,8 @@ test("project picker, Enter intervention and Command+Enter for a separate native
     await expect(page.getByRole("status",{name:"현재 작업 상태",exact:true})).toHaveText("다른 창 · 작업 중");
     await expect(page.locator(".turn-details[open]")).toHaveCount(0);
     await progress.screenshot({path: join(fixtureRoot!, "live-commentary.png")});
-    const input = page.getByLabel("메시지", {exact: true});
     await input.fill("외부에서 진행 중인 턴을 수정합니다");
-    await expect(page.getByRole("button", {name: "즉시 개입", exact: true})).toBeEnabled();
+    await expect(send).toBeEnabled();
     await input.press("Enter");
     await expect(page.getByText("현재 작업에 전달했습니다.", {exact: true})).toBeVisible();
     await expect(page.locator(".queue-preview")).toHaveCount(0);
@@ -251,6 +252,14 @@ test("project picker, Enter intervention and Command+Enter for a separate native
   await expect(row).toContainText("다른 창에서 열림",{timeout:12000});
   await expect(page.getByText("외부에서 진행 중인 턴을 수정합니다", {exact: true})).toBeVisible();
   await expect(page.getByText("외부 작업이 끝난 뒤 실행합니다", {exact: true})).toBeVisible();
+  const chatURL = page.url();
+  const idleMessage = "대기 중인 채팅에서 새 작업을 시작합니다";
+  await input.fill(idleMessage);
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(page.getByText("작업을 시작했습니다.", {exact: true})).toBeVisible();
+  await expect(page.getByText(idleMessage, {exact: true})).toBeVisible();
+  await expect(page).toHaveURL(chatURL);
   await page.reload();
   await expect(originalTurn.locator(".commentary-message").getByText("외부 작업이 기록한 진행 안내", {exact: true})).toHaveCount(1);
   await expect(originalTurn.locator(".commentary-message").getByText("작업 도중 새로 저장된 진행 안내", {exact: true})).toHaveCount(1);

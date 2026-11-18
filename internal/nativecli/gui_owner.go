@@ -65,6 +65,9 @@ func writerProcesses(ctx context.Context, shared, id string) ([]int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	b, err := exec.CommandContext(ctx, "lsof", "-nP", "-t", "--", file).Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("cannot verify writer: %w", ctx.Err())
+	}
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
