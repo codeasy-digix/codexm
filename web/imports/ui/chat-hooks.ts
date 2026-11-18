@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { call } from "../../client/data";
-import { mergeTurns, workingActivity, type ChatActivitySnapshot, type ChatHistory, type Catalog, type ChatModel } from "../contracts/web";
+import { call, method } from "../../client/data";
+import { mergeTurns, workingActivity, type ChatActivitySnapshot, type ChatHistory, type ChatHistoryPage, type Catalog, type ChatModel, type ChatThread } from "../contracts/web";
 
 export function useChatActivity(enabled: boolean, thread: string, account: string) {
   const [observation, setObservation] = useState<{ thread: string; account: string; snapshot: ChatActivitySnapshot }>();
@@ -115,7 +115,12 @@ export function useCatalog(ready:boolean,account:string,search:string,project:st
   return {catalog,error,loading,refresh};
 }
 
-export function useChatHistory(ready:boolean,thread:string,account:string) {
+function cachedPage(thread: string, cursor?: string) {
+  return method<ChatHistoryPage | null>("codexm.cachedHistory", [{ thread_id: thread, cursor }]).catch(() => null);
+}
+
+export function useChatHistory(ready:boolean,chat:ChatThread|null,account:string) {
+  const thread = chat?.id || "";
   const [history,setHistory]=useState<ChatHistory>(),[error,setError]=useState(""),[loading,setLoading]=useState(false),[loadingOlder,setLoadingOlder]=useState(false),[olderRevision,setOlderRevision]=useState(0);
   const generation=useRef(0),polling=useRef(false),older=useRef(false);
   const refresh=useCallback(async()=>{
@@ -124,27 +129,36 @@ export function useChatHistory(ready:boolean,thread:string,account:string) {
     try {const page=await call<ChatHistory>("web.history",{thread_id:thread,account});if(epoch!==generation.current)return;
       page.turns=page.turns||[];page.queue=page.queue||[];page.pending=page.pending||[];
       setHistory(old=>{
-        if(!old||!old.turns.length)return page;
+        if(!old||!page.turns.length)return page;
         // A hidden tab may miss many turns. Reset to a correctly paginated
         // latest window rather than silently leaving a hole in the transcript.
-        if(page.turns.length&&!page.turns.some(t=>old.turns.some(x=>x.id===t.id)))return page;
-        return {...page,turns:mergeTurns(old.turns,page.turns),nextCursor:old.nextCursor};
+        const prefix = old.turns.findIndex(turn => turn.id === page.turns[0].id);
+        if (prefix <= 0) return page;
+        return {...page,turns:[...old.turns.slice(0, prefix), ...page.turns],nextCursor:old.nextCursor};
       });setError("");
     }catch(e){if(epoch===generation.current)setError((e as Error).message);}finally{if(epoch===generation.current){polling.current=false;setLoading(false);}}
   },[ready,thread,account]);
   useEffect(()=>{
     generation.current++;polling.current=false;older.current=false;setHistory(undefined);setError("");setLoading(!!thread);setLoadingOlder(false);setOlderRevision(0);
-    if(!ready||!thread)return;
-    void refresh();
+    if(!ready||!chat)return;
+    const epoch = generation.current;
+    void cachedPage(thread).then(page => {
+      if (epoch !== generation.current) return;
+      if (page) {
+        setHistory(current => current ?? {...page,thread:chat,queue:[],pending:[]});
+        setLoading(false);
+      }
+      void refresh();
+    });
     const timer=setInterval(()=>{if(document.visibilityState!=="hidden")void refresh();},2500);
     const visible=()=>{if(document.visibilityState==="visible")void refresh();};document.addEventListener("visibilitychange",visible);
     return()=>{generation.current++;polling.current=false;clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
-  },[ready,thread,refresh]);
+  },[ready,chat,thread,refresh]);
   const loadOlder=useCallback(async()=>{
     if(!history?.nextCursor||older.current)return false;
     const epoch=generation.current;older.current=true;setLoadingOlder(true);
-    try {const page=await call<ChatHistory>("web.history",{thread_id:thread,account,cursor:history.nextCursor});if(epoch!==generation.current)return false;
-      setHistory(current=>current?{...current,turns:mergeTurns(current.turns,page.turns||[],true),nextCursor:page.nextCursor}:page);setOlderRevision(v=>v+1);return true;
+    try {const page=await cachedPage(thread,history.nextCursor) ?? await call<ChatHistory>("web.history",{thread_id:thread,account,cursor:history.nextCursor});if(epoch!==generation.current)return false;
+      setHistory(current=>current?{...current,turns:mergeTurns(current.turns,page.turns||[],true),nextCursor:page.nextCursor}:current);setOlderRevision(v=>v+1);return true;
     }catch(e){if(epoch===generation.current)setError((e as Error).message);return false;}finally{if(epoch===generation.current){older.current=false;setLoadingOlder(false);}}
   },[history?.nextCursor,thread,account]);
   return {history,error,loading,loadingOlder,olderRevision,refresh,loadOlder};

@@ -209,6 +209,44 @@ test("recent-only history, anchored upward pagination, safe Markdown and lazy de
   await page.screenshot({path:join(fixtureRoot!,"desktop-history.png")});
 });
 
+test("MongoDB history renders while the native refresh is pending", async ({ page }) => {
+  test.skip(process.env.CODEXM_WEB_TEST_MONGO !== "1", "requires the isolated MongoDB fixture");
+  await page.goto(url);
+  await expect(page.getByRole("alert")).toHaveText("로그인이 필요합니다.");
+  const thread = fixture().thread;
+  const denied = await page.evaluate(id => new Promise(resolve => {
+    (window as any).Meteor.apply("codexm.cachedHistory", [{ thread_id: id }], { noRetry: true },
+      (error: any) => resolve(error?.error));
+  }), thread);
+  expect(denied).toBe("authentication_required");
+  await authenticate(page);
+  await page.evaluate(id => new Promise((resolve, reject) => {
+    (window as any).Meteor.apply("codexm.call", ["web.history", { thread_id: id }, ""], { noRetry: true },
+      (error: unknown, value: unknown) => error ? reject(error) : resolve(value));
+  }), thread);
+  await page.evaluate(() => {
+    const m = (window as any).Meteor, original = m.apply;
+    m.apply = function (name: string, args: unknown[], options: unknown, callback: unknown) {
+      if (name === "codexm.call" && args[0] === "web.history") {
+        (window as any).__releaseHistory = () => {
+          m.apply = original;
+          return original.call(this, name, args, options, callback);
+        };
+        return;
+      }
+      return original.call(this, name, args, options, callback);
+    };
+  });
+  try {
+    await page.getByRole("link", { name: /긴 이력 페이지 테스트/ }).click();
+    await expect(page.getByText("페이지 이력 26", { exact: true })).toBeVisible();
+    await expect(page.locator(".turn")).toHaveCount(8);
+    await expect.poll(() => page.evaluate(() => typeof (window as any).__releaseHistory)).toBe("function");
+  } finally {
+    await page.evaluate(() => { (window as any).__releaseHistory?.(); });
+  }
+});
+
 test("project picker, idle send, Enter intervention and Command+Enter for a separate native writer", async ({page}) => {
   const row = page.getByRole("link",{name:/진행 중 개입 테스트/});
   const input = page.getByLabel("메시지", {exact: true});

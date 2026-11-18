@@ -38,7 +38,7 @@ export function App() {
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
   const selectedProject = projects.find(p => p.id === project);
   const newChatReady = !!catalog && (!project || !!selectedProject);
-  const chatState=useChatHistory(ready,selected?.id||"",account);
+  const chatState=useChatHistory(ready,selected,account);
   const history=chatState.history?.thread.id===selected?.id?chatState.history:undefined;
   const activity = useChatActivity(ready, selected?.id || "", account);
   const externalDelivery = history?.thread.externalOwner ? history.delivery : undefined;

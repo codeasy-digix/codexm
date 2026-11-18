@@ -40,18 +40,25 @@ func TestWebChatOfficialCore(t *testing.T) {
 		t.Fatal("new draft history is not empty")
 	}
 	call("web.send", map[string]any{"thread_id": id, "text": "WEB_READABLE_RESPONSE", "mode": "immediate"})
+	var revision string
 	for until := time.Now().Add(5 * time.Second); ; {
 		r := call("web.history", map[string]any{"thread_id": id})
 		turns := r["turns"].([]any)
 		if len(turns) > 0 && turns[len(turns)-1].(map[string]any)["status"] == "completed" {
 			b, _ := json.Marshal(turns)
 			t.Log("summary turn payload", string(b))
-			break
+			if revision, _ = r["historyRevision"].(string); revision != "" {
+				break
+			}
 		}
 		if time.Now().After(until) {
 			t.Fatal("web turn did not complete")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	cached := call("web.history", map[string]any{"thread_id": id, "history_revision": revision})
+	if cached["historyUnchanged"] != true || cached["turns"] != nil || cached["queue"] == nil {
+		t.Fatal("unchanged history was read again or live queue state was omitted")
 	}
 	call("web.pin", map[string]any{"thread_id": id, "pinned": true})
 	catalog := call("web.catalog", map[string]any{})
@@ -60,12 +67,15 @@ func TestWebChatOfficialCore(t *testing.T) {
 	}
 	call("web.move", map[string]any{"thread_id": id, "project_id": ""})
 	call("web.archive", map[string]any{"thread_id": id, "archived": true})
-	archived := call("web.history", map[string]any{"thread_id": id})
-	if archived["thread"].(map[string]any)["archived"] != true || len(archived["turns"].([]any)) != 1 || len(archived["queue"].([]any)) != 0 {
+	archived := call("web.history", map[string]any{"thread_id": id, "history_revision": revision})
+	if archived["historyUnchanged"] == true || archived["thread"].(map[string]any)["archived"] != true || len(archived["turns"].([]any)) != 1 || len(archived["queue"].([]any)) != 0 {
 		t.Fatal("archived history was not readable without changing its state")
 	}
 	call("web.archive", map[string]any{"thread_id": id, "archived": false})
 	call("web.delete", map[string]any{"thread_id": id})
+	if gone, err := w.historyVersion(f.ctx, id); err != nil || gone != "" {
+		t.Fatal("a deleted chat could still validate its cache", err)
+	}
 	t.Log("official web create/send/read/pin/project-move/archive/restore/delete completed")
 	if c := w.connections["default"]; c != nil {
 		c.client.Close()

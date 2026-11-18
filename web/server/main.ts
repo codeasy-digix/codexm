@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { LocalAuth, LoginError } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
 import { ChatPush } from "./push";
+import { ChatHistoryCache } from "./history-cache";
 import { bridgeContract } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
@@ -21,6 +22,7 @@ const bridge = new BridgeClient(
   process.env.CODEXM_BINARY || "",
   process.env.CODEXM_CONFIG || "",
 );
+const historyCache = new ChatHistoryCache(state);
 const pushes = (() => {
   try {
     return new ChatPush(state, auth.secure ? origin : "mailto:support@digix.kr", () => auth.notificationScope(),
@@ -201,6 +203,14 @@ Meteor.methods({
       throw new Meteor.Error("authentication_required");
     }
   },
+  async "codexm.cachedHistory"(params: Record<string, unknown>) {
+    const browser = owner(this.connection?.id);
+    if (!params || typeof params !== "object" || Array.isArray(params))
+      throw new Meteor.Error("invalid_input");
+    const page = await historyCache.peek(params, thread => bridge.call("web.historyVersion", { thread_id: thread }, browser));
+    owner(this.connection?.id);
+    return page;
+  },
   async "codexm.call"(
     method: string,
     params: Record<string, unknown>,
@@ -218,17 +228,24 @@ Meteor.methods({
       throw new Meteor.Error("invalid_input");
     if (!capabilities) await bootstrap();
     const spec = methods.get(method);
-    if (!spec || method === "web.completions") throw new Meteor.Error("unsupported");
+    if (!spec || method === "web.completions" || method === "web.historyVersion") throw new Meteor.Error("unsupported");
     if (spec.mutation && !/^[A-Za-z0-9_-]{16,128}$/.test(operation))
       throw new Meteor.Error("invalid_input", "요청 ID가 필요합니다.");
     try {
-      return await bridge.call(
+      if (method === "web.history") {
+        return await historyCache.read(params, revision => bridge.call(method, { ...params, history_revision: revision }, browser));
+      }
+      const result = await bridge.call(
         method,
         params,
         browser,
         operation,
         spec.mutation,
       );
+      if (method === "web.delete" && result?.deleted === true && typeof result.thread_id === "string") {
+        await historyCache.deleted(result.thread_id);
+      }
+      return result;
     } catch (error) {
       throw bridgeError(error);
     }
@@ -314,7 +331,7 @@ Meteor.startup(async () => {
 });
 process.on("exit", () => bridge.close());
 for (const signal of ["SIGTERM", "SIGINT"] as const)
-  process.once(signal, () => {
+  process.once(signal, async () => {
     bridge.close();
-    process.exit(0);
+    await historyCache.close().finally(() => process.exit(0));
   });

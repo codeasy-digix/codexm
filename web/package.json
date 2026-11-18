@@ -22,6 +22,7 @@
   "dependencies": {
     "@babel/runtime": "7.28.4",
     "@swc/helpers": "0.5.17",
+    "mongodb": "7.9.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-markdown": "10.1.0",

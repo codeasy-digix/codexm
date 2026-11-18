@@ -26,6 +26,7 @@ export const bridgeContract = {
     { name: "web.guiQuit", mutation: true, model: false },
     { name: "web.guiRelayStatus", mutation: false, model: false },
     { name: "web.completions", mutation: false, model: false },
+    { name: "web.historyVersion", mutation: false, model: false },
   ],
 };
 
@@ -35,10 +36,12 @@ export type ChatThread = { id: string; name?: string; preview?: string; cwd: str
 export type Project = { id: string; name: string; roots: Array<{ path: string }>; nativeId?:string };
 export type Catalog = { threads: ChatThread[]; projects: Project[]; otherProjects?:Project[]; pinned: ChatThread[]; nextCursor?: string | null; accounts: Array<{ name: string; default?: boolean }>; defaultAccount?: string; guiQuitAvailable?: boolean; defaultCwd: string; total?:number };
 export type PendingRequest = { request_id: string; method: string; params: Record<string, any> };
-export type ChatHistory = {
-  thread: ChatThread;
+export type ChatHistoryPage = {
   turns: ChatTurn[];
   nextCursor?: string | null;
+};
+export type ChatHistory = ChatHistoryPage & {
+  thread: ChatThread;
   queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>;
   pending: PendingRequest[];
   delivery?: { state: "ready" | "waiting" | "idle" | "unavailable" | "relay"; turnId?: string } | null;

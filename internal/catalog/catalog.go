@@ -48,6 +48,7 @@ type Entry struct {
 	SectionPosition int64  `json:"section_position,omitempty"`
 	AttachedParent  string `json:"attached_parent,omitempty"`
 	Preview         string `json:"preview,omitempty"`
+	RolloutPath     string `json:"-"`
 	// Preserve whether the native row had a title when decorating cached entries.
 	nativeUntitled bool
 }
@@ -205,7 +206,7 @@ func read(ctx context.Context, home, id string) (List, error) {
 	if columns["recency_at_ms"] {
 		updated = `COALESCE(NULLIF("recency_at_ms", 0), ` + updated + `)`
 	}
-	query := `SELECT "id", ` + text("name") + `, ` + text("title") + `, ` + text("cwd") + `, ` + text("source") + `, ` + text("model") + `, ` + text("reasoning_effort") + `, ` + number("tokens_used") + `, ` + number("archived") + `, ` + updated + `, ` + text("agent_nickname") + `, ` + text("agent_role") + `, ` + text("agent_path") + `, ` + modified + `, ` + created + `, ` + text("project_id") + `, ` + text("thread_section_id") + `, ` + number("section_position") + `, ` + text("attached_thread_parent_id") + `, ` + text("preview") + ` FROM threads`
+	query := `SELECT "id", ` + text("name") + `, ` + text("title") + `, ` + text("cwd") + `, ` + text("source") + `, ` + text("model") + `, ` + text("reasoning_effort") + `, ` + number("tokens_used") + `, ` + number("archived") + `, ` + updated + `, ` + text("agent_nickname") + `, ` + text("agent_role") + `, ` + text("agent_path") + `, ` + modified + `, ` + created + `, ` + text("project_id") + `, ` + text("thread_section_id") + `, ` + number("section_position") + `, ` + text("attached_thread_parent_id") + `, ` + text("preview") + `, ` + text("rollout_path") + ` FROM threads`
 	args := []any{}
 	if id != "" {
 		query += ` WHERE id=?`
@@ -220,7 +221,7 @@ func read(ctx context.Context, home, id string) (List, error) {
 	for rows.Next() {
 		var e Entry
 		var name string
-		if err = rows.Scan(&e.ID, &name, &e.Title, &e.Cwd, &e.Source, &e.Model, &e.Effort, &e.Tokens, &e.Archived, &e.UpdatedAt, &e.AgentNickname, &e.AgentRole, &e.AgentPath, &e.ModifiedAt, &e.CreatedAt, &e.ProjectID, &e.SectionID, &e.SectionPosition, &e.AttachedParent, &e.Preview); err != nil {
+		if err = rows.Scan(&e.ID, &name, &e.Title, &e.Cwd, &e.Source, &e.Model, &e.Effort, &e.Tokens, &e.Archived, &e.UpdatedAt, &e.AgentNickname, &e.AgentRole, &e.AgentPath, &e.ModifiedAt, &e.CreatedAt, &e.ProjectID, &e.SectionID, &e.SectionPosition, &e.AttachedParent, &e.Preview, &e.RolloutPath); err != nil {
 			return list, err
 		}
 		if strings.TrimSpace(name) != "" {
