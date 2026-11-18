@@ -8,13 +8,14 @@ import { Approval, ChatMessages } from "./ChatMessages";
 import { Composer } from "./Composer";
 import { GUIQuitDialog } from "./GUIQuitDialog";
 import { Modal } from "./Modal";
+import { NotificationSettings } from "./NotificationSettings";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { TurnSettings } from "./TurnSettings";
 import { readChatShortcuts } from "./chat-shortcuts";
 import { useCatalog, useChatActivity, useChatHistory, useChatModels } from "./chat-hooks";
 import "./styles/native.css";
 
-type Dialog = {kind:"new"|"project"|"accounts"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
+type Dialog = {kind:"new"|"project"|"accounts"|"settings"|"notifications"|"gui-quit"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
 type Section = "chats"|"pinned"|"archived";
 
 export function App() {
@@ -207,7 +208,7 @@ export function App() {
         {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
         {section!=="pinned"&&catalog?.nextCursor&&<button className="load-more" disabled={catalogState.loading} onClick={()=>void catalogState.refresh(catalog.nextCursor)}>채팅 더 보기</button>}
       </div>
-      <div className="sidebar-footer"><button onClick={()=>openDialog({kind:"accounts"})}>계정 관리</button><button onClick={()=>{setSidebar(false);openDialog({kind:"settings"});}}>설정</button><button onClick={()=>void logout().catch(e=>setError(e.message))}>로그아웃</button></div>
+      <div className="sidebar-footer"><button onClick={()=>openDialog({kind:"accounts"})}>계정 관리</button><button onClick={()=>{setSidebar(false);openDialog({kind:"notifications"});}}>알림</button><button onClick={()=>{setSidebar(false);openDialog({kind:"settings"});}}>설정</button><button onClick={()=>void logout().catch(e=>setError(e.message))}>로그아웃</button></div>
     </aside>
     <main className="conversation" data-thread-id={selected?.id||""}>
       <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
@@ -275,8 +276,8 @@ export function App() {
       setNotice("Codex GUI를 종료했습니다. 채팅과 계정을 선택해 작업을 이어갈 수 있습니다.");
       void chatState.refresh();
       void catalogState.refresh();
-    }} /> : dialog&&<Modal title={dialog.kind==="settings"?"단축키 설정":dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
-      {dialog.kind==="accounts"?<Accounts accounts={accounts}/>:dialog.kind==="settings"?<ShortcutSettings
+    }} /> : dialog&&<Modal title={dialog.kind==="notifications"?"완료 알림":dialog.kind==="settings"?"단축키 설정":dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
+      {dialog.kind==="notifications"?<NotificationSettings thread={selected?.id}/>:dialog.kind==="accounts"?<Accounts accounts={accounts}/>:dialog.kind==="settings"?<ShortcutSettings
         bindings={shortcuts}
         models={modelState.models}
         modelsLoading={modelState.loading}

@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { LocalAuth, LoginError } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
+import { ChatPush } from "./push";
 import { bridgeContract } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
@@ -20,6 +21,15 @@ const bridge = new BridgeClient(
   process.env.CODEXM_BINARY || "",
   process.env.CODEXM_CONFIG || "",
 );
+const pushes = (() => {
+  try {
+    return new ChatPush(state, auth.secure ? origin : "mailto:support@digix.kr", () => auth.notificationScope(),
+      after => bridge.call("web.completions", { after_ms: after }));
+  } catch {
+    console.error("CodexM push storage or keys could not be loaded");
+    return undefined;
+  }
+})();
 const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
 let capabilities: any;
@@ -80,6 +90,7 @@ async function body(req: import("node:http").IncomingMessage) {
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("X-Frame-Options", "DENY");
     if (auth.secure) res.setHeader("Strict-Transport-Security", "max-age=86400");
+    if (req.url === "/sw.js") res.setHeader("Cache-Control", "no-cache");
     if (!isAuth) {
       next();
       return;
@@ -117,8 +128,20 @@ async function body(req: import("node:http").IncomingMessage) {
         if (!session) throw new Error("로그인이 필요합니다.");
         if (req.url === "/auth/ticket")
           res.end(JSON.stringify({ ticket: auth.ticket(session) }));
+        else if (req.url === "/auth/push") {
+          if (!pushes) throw new LoginError("서버 알림 설정을 읽을 수 없습니다.", 503);
+          const data = await body(req);
+          try { res.end(JSON.stringify(await pushes.action(auth.notificationOwner(session), data))); }
+          catch (error) {
+            if (error instanceof LoginError) throw error;
+            throw new LoginError("서버에서 알림 요청을 처리하지 못했습니다.", 503);
+          }
+        }
         else if (req.url === "/auth/logout") {
+          const data = await body(req);
           const browser = auth.logout(session);
+          try { pushes?.logout(browser, data?.endpoint); }
+          catch { console.error("CodexM push subscription could not be removed"); }
           // Revoke web access immediately; cancel only this browser's owned
           // pending auth helper, never a conversation or another browser's login.
           if (browser) void bridge.call("login.status", {}, browser).then(result => {
@@ -195,7 +218,7 @@ Meteor.methods({
       throw new Meteor.Error("invalid_input");
     if (!capabilities) await bootstrap();
     const spec = methods.get(method);
-    if (!spec) throw new Meteor.Error("unsupported");
+    if (!spec || method === "web.completions") throw new Meteor.Error("unsupported");
     if (spec.mutation && !/^[A-Za-z0-9_-]{16,128}$/.test(operation))
       throw new Meteor.Error("invalid_input", "요청 ID가 필요합니다.");
     try {
@@ -285,6 +308,9 @@ Meteor.startup(async () => {
   } catch {
     /* State publication reports reconnects. */
   }
+  if (pushes) setInterval(() => {
+    void pushes.poll().catch(() => { /* Poll again after a temporary read failure. */ });
+  }, 5000).unref();
 });
 process.on("exit", () => bridge.close());
 for (const signal of ["SIGTERM", "SIGINT"] as const)

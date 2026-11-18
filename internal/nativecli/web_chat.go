@@ -31,6 +31,7 @@ var WebMethods = []Method{
 	{"web.pending", false, false}, {"web.respond", true, false},
 	{"web.guiQuitPreview", false, false}, {"web.guiQuit", true, false},
 	{"web.guiRelayStatus", false, false},
+	{"web.completions", false, false},
 }
 
 func webSharedMethod(name string) bool {
@@ -67,6 +68,7 @@ type webParams struct {
 	Request      string          `json:"request_id"`
 	Response     json.RawMessage `json:"response"`
 	Confirmation string          `json:"confirmation"`
+	After        int64           `json:"after_ms"`
 }
 
 type webConnection struct {
@@ -270,6 +272,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return err == nil, err
 	case "web.guiRelayStatus":
 		return webGUIRelayStatus(w.c, r.Owner, p.Thread, p.Request)
+	case "web.completions":
+		return w.readCompletions(ctx, p.After)
 	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {

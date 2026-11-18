@@ -1,6 +1,7 @@
 import { test,expect,type BrowserContext,type Page } from "@playwright/test";
 import { readFileSync,writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createECDH, randomBytes } from "node:crypto";
 import { join } from "node:path";
 
 const fixtureRoot=process.env.CODEXM_CHAT_GUI_FIXTURE;
@@ -122,6 +123,55 @@ test("Enter waits for a GUI relay receipt while Command+Enter still uses the nat
   await input.press("Meta+Enter");
   await expect(page.getByText("큐에 추가했습니다.", {exact:true})).toBeVisible();
   expect(await page.evaluate(() => (window as any).__relayFixture.sent)).toEqual(["immediate", "queue"]);
+});
+
+test("mobile PWA loads icons and registers completion alerts for this browser", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const request = await page.request.post(`${url}/auth/push`, {
+    headers: { Origin: url, "Content-Type": "application/json" }, data: { action: "status" },
+  });
+  expect(request.status()).toBe(401);
+  const manifest = await (await page.request.get(`${url}/manifest.webmanifest`)).json();
+  expect(manifest.display).toBe("standalone");
+  for (const icon of manifest.icons) {
+    const response = await page.request.get(`${url}${icon.src}`);
+    expect(response.ok()).toBe(true);
+    expect(response.headers()["content-type"]).toContain("image/png");
+  }
+  const keys = createECDH("prime256v1");
+  keys.generateKeys();
+  const device = { endpoint: "https://fcm.googleapis.com/fcm/send/synthetic-browser-endpoint",
+    keys: { p256dh: keys.getPublicKey().toString("base64url"), auth: randomBytes(16).toString("base64url") } };
+  await page.addInitScript(device => {
+    let subscription: { endpoint: string; toJSON: () => object; unsubscribe: () => Promise<boolean> } | null = null;
+    PushManager.prototype.getSubscription = async () => subscription as PushSubscription | null;
+    PushManager.prototype.subscribe = async options => {
+      if (!(options?.applicationServerKey instanceof Uint8Array) || options.applicationServerKey.length !== 65) throw new Error("VAPID key missing");
+      subscription = { endpoint: device.endpoint, toJSON: () => device, unsubscribe: async () => { subscription = null; return true; } };
+      return subscription as PushSubscription;
+    };
+  }, device);
+  let requestedTest = false;
+  await page.route("**/auth/push", async route => {
+    const body = route.request().postDataJSON();
+    if (body?.action !== "test") return route.continue();
+    requestedTest = body.endpoint === device.endpoint;
+    // No network delivery is made to the synthetic browser endpoint.
+    return route.fulfill({ json: { accepted: true } });
+  });
+  await authenticate(page);
+  await menu(page);
+  await page.getByRole("button", { name: "알림", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "완료 알림" });
+  await dialog.getByRole("button", { name: "이 기기에서 알림 켜기" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("이 기기에서 완료 알림을 받습니다.");
+  const worker = await page.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL);
+  expect(worker).toBe(`${url}/sw.js`);
+  await dialog.getByRole("button", { name: "테스트 알림" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("테스트 알림을 보냈습니다.");
+  expect(requestedTest).toBe(true);
+  await dialog.getByRole("button", { name: "알림 끄기" }).click();
+  await expect(dialog.getByRole("status")).toHaveText("이 기기의 완료 알림을 껐습니다.");
 });
 
 test("recent-only history, anchored upward pagination, safe Markdown and lazy details",async({page})=>{

@@ -173,23 +173,7 @@ func read(ctx context.Context, home, id string) (List, error) {
 		return list, err
 	}
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, "PRAGMA table_info(threads)")
-	if err != nil {
-		return list, err
-	}
-	columns := map[string]bool{}
-	for rows.Next() {
-		var cid, notNull, primary int
-		var name, kind string
-		var fallback any
-		if err = rows.Scan(&cid, &name, &kind, &notNull, &fallback, &primary); err != nil {
-			rows.Close()
-			return list, err
-		}
-		columns[name] = true
-	}
-	err = rows.Err()
-	rows.Close()
+	columns, err := tableColumns(ctx, db, "threads")
 	if err != nil {
 		return list, err
 	}
@@ -228,7 +212,7 @@ func read(ctx context.Context, home, id string) (List, error) {
 		args = append(args, id)
 	}
 	query += ` ORDER BY 10 DESC, id`
-	rows, err = db.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return list, err
 	}

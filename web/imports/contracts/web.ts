@@ -25,6 +25,7 @@ export const bridgeContract = {
     { name: "web.guiQuitPreview", mutation: false, model: false },
     { name: "web.guiQuit", mutation: true, model: false },
     { name: "web.guiRelayStatus", mutation: false, model: false },
+    { name: "web.completions", mutation: false, model: false },
   ],
 };
 

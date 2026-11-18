@@ -25,7 +25,8 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-markdown": "10.1.0",
-    "remark-gfm": "4.0.1"
+    "remark-gfm": "4.0.1",
+    "web-push": "4.0.0"
   },
   "devDependencies": {
     "@meteorjs/rspack": "2.2.0",
@@ -37,6 +38,7 @@
     "@types/node": "24.6.0",
     "@types/react": "19.2.0",
     "@types/react-dom": "19.2.0",
+    "@types/web-push": "3.6.4",
     "react-refresh": "0.17.0",
     "tsx": "4.20.6",
     "typescript": "5.9.3"

@@ -78,6 +78,12 @@ export class LocalAuth {
     if (this.secure && !row) throw new Error("web login is unavailable");
     return row ? digest(JSON.stringify(row)) : "";
   }
+  notificationScope() { return digest(this.origin + "\0" + this.credential()); }
+  notificationOwner(session: string) {
+    const row = this.sessions.get(session);
+    if (!this.validSession(row)) throw new LoginError("로그인이 필요합니다.");
+    return row!.owner;
+  }
   private validSession(session: Session | undefined) {
     return !!session && session.expires > this.now() && (session.credential || "") === this.credential();
   }

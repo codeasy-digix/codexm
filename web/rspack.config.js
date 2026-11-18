@@ -2,7 +2,11 @@ const { defineConfig } = require('@meteorjs/rspack');
 
 // Keep the development asset server local too. Meteor's host:port CLI form
 // must not be coerced to a number by the upstream default port calculation.
-module.exports = defineConfig(Meteor => Meteor.isClient && Meteor.isDevelopment ? {
+module.exports = defineConfig(Meteor => Meteor.isServer ? {
+  // Web Push uses direct HTTPS. Its optional Negotiate proxy does not ship a
+  // Kerberos client, so leave that optional entry out of the server bundle.
+  resolve: { alias: { kerberos: false } },
+} : Meteor.isClient && Meteor.isDevelopment ? {
   devServer: {
     host: '127.0.0.1',
     port: Number(new URL(process.env.ROOT_URL || 'http://127.0.0.1:4317').port) + 3,

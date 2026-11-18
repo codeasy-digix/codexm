@@ -2,6 +2,7 @@ import { Meteor } from "meteor/meteor";
 import { Tracker } from "meteor/tracker";
 import { useSyncExternalStore } from "react";
 import type { Data } from "../imports/contracts/types";
+import { currentSubscription } from "./push";
 type AccessStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
 let state: Data = {};
 let access: { status: AccessStatus; message: string; password: boolean } =
@@ -144,8 +145,10 @@ export async function login(username: string, password: string) {
 }
 
 export async function logout() {
-  const response = await authPost("logout");
+  const subscription = await currentSubscription().catch(() => null);
+  const response = await authPost("logout", subscription ? { endpoint: subscription.endpoint } : {});
   if (!response.ok) throw new Error("로그아웃하지 못했습니다.");
+  void subscription?.unsubscribe().catch(() => {});
   resetConnection();
   documents.clear();
   state = {};
