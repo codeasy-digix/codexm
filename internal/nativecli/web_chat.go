@@ -29,6 +29,7 @@ var WebMethods = []Method{
 	{"web.pin", true, false}, {"web.move", true, false}, {"web.archive", true, false},
 	{"web.delete", true, false}, {"web.projectCreate", true, false},
 	{"web.pending", false, false}, {"web.respond", true, false},
+	{"web.guiQuitPreview", false, false}, {"web.guiQuit", true, false},
 }
 
 func webSharedMethod(name string) bool {
@@ -46,24 +47,25 @@ func webBridgeMethods() []Method {
 }
 
 type webParams struct {
-	Thread   string          `json:"thread_id"`
-	Account  string          `json:"account"`
-	Cursor   string          `json:"cursor"`
-	Turn     string          `json:"turn_id"`
-	Item     string          `json:"item_id"`
-	Text     string          `json:"text"`
-	Mode     string          `json:"mode"`
-	Model    string          `json:"model"`
-	Effort   string          `json:"effort"`
-	Cwd      string          `json:"cwd"`
-	Project  string          `json:"project_id"`
-	Name     string          `json:"name"`
-	Search   string          `json:"search"`
-	Archived bool            `json:"archived"`
-	Pinned   bool            `json:"pinned"`
-	Limit    int             `json:"limit"`
-	Request  string          `json:"request_id"`
-	Response json.RawMessage `json:"response"`
+	Thread       string          `json:"thread_id"`
+	Account      string          `json:"account"`
+	Cursor       string          `json:"cursor"`
+	Turn         string          `json:"turn_id"`
+	Item         string          `json:"item_id"`
+	Text         string          `json:"text"`
+	Mode         string          `json:"mode"`
+	Model        string          `json:"model"`
+	Effort       string          `json:"effort"`
+	Cwd          string          `json:"cwd"`
+	Project      string          `json:"project_id"`
+	Name         string          `json:"name"`
+	Search       string          `json:"search"`
+	Archived     bool            `json:"archived"`
+	Pinned       bool            `json:"pinned"`
+	Limit        int             `json:"limit"`
+	Request      string          `json:"request_id"`
+	Response     json.RawMessage `json:"response"`
+	Confirmation string          `json:"confirmation"`
 }
 
 type webConnection struct {
@@ -92,6 +94,7 @@ type WebChat struct {
 	generation  uint64
 	writers     webWriterMonitor
 	usageCache  webUsageCache
+	guiQuit     webGUIQuit
 }
 
 func NewWebChat(ctx context.Context, c config.Config) *WebChat {
@@ -236,6 +239,9 @@ func (w *WebChat) Dispatch(ctx context.Context, r Request) (any, error) {
 	if p.Thread != "" && !threadID.MatchString(p.Thread) {
 		return nil, errors.New("complete local thread UUID required")
 	}
+	if len(p.Confirmation) > 128 {
+		return nil, errors.New("invalid confirmation")
+	}
 	if len(p.Cursor) > 4096 || len(p.Text) > 128*1024 || len(p.Name) > 200 || len(p.Search) > 500 || len(p.Turn) > 256 || len(p.Item) > 256 || len(p.Project) > 256 || len(p.Cwd) > 4096 || len(p.Request) > 256 || len(p.Response) > 128*1024 || len(p.Model) > 200 || len(p.Effort) > 64 {
 		return nil, errors.New("web chat input is too large")
 	}
@@ -256,6 +262,11 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return w.thread(ctx, p.Thread)
 	case "web.usage":
 		return w.usage(p.Account)
+	case "web.guiQuitPreview":
+		return w.guiQuit.preview(ctx, r.Owner, findWebDesktop)
+	case "web.guiQuit":
+		err := w.guiQuit.quit(ctx, r.Owner, p.Confirmation, findWebDesktop, stopWebDesktop)
+		return err == nil, err
 	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {

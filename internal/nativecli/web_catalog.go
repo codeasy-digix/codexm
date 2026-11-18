@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
 
+	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
@@ -280,5 +282,21 @@ func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (a
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"threads": threads, "nextCursor": next, "projects": desktop.Projects, "otherProjects": desktop.AdditionalProjects, "pinned": pinned, "accounts": accountList, "defaultCwd": webDefaultCwd(), "total": len(items)}, nil
+	return map[string]any{
+		"threads": threads, "nextCursor": next, "projects": desktop.Projects, "otherProjects": desktop.AdditionalProjects,
+		"pinned": pinned, "accounts": accountList, "defaultAccount": webDefaultAccount(w.c, accountList),
+		"guiQuitAvailable": runtime.GOOS == "darwin", "defaultCwd": webDefaultCwd(), "total": len(items),
+	}, nil
+}
+
+func webDefaultAccount(c config.Config, registered []Account) string {
+	for _, account := range registered {
+		if account.Default {
+			return account.Name
+		}
+	}
+	if name := accounts.LinkedNativeDefault(c); name != "" {
+		return name
+	}
+	return accounts.InspectIdentity(c, "default").Email
 }

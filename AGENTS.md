@@ -72,9 +72,9 @@
   replay uncertain archive requests. Never delete native writer locks, edit native
   SQLite/rollouts, kill an unverified external CLI, silently fork, or assume unarchive
   guarantees takeover of a live writer. Preserve IDs, credentials, goals and budgets.
-- A verified macOS GUI writer may be stopped with SIGTERM only after an explicit
-  foreground terminal confirmation for that execution. Show that all GUI jobs
-  stop and do not auto-continue. Never persist consent, accept piped confirmation,
+- A native CLI handoff may stop a verified macOS GUI writer with SIGTERM only
+  after an explicit foreground terminal confirmation for that execution. Show that
+  all GUI jobs stop and do not auto-continue. Never persist consent, accept piped confirmation,
   SIGKILL the GUI, or retry uncertain archive mutations via process termination.
   Arm the bounded GUI-reopen helper before stopping it, reopen after the selected
   CLI owns its writer or on failure, and preserve unrelated CLI/daemon processes.
@@ -132,6 +132,10 @@
   never expose the native listener or retain plaintext passwords. Its bridge methods
   are an explicit allowlist. Render user/native output as text. No shell evaluation
   of thread IDs, account names, input, directory names or terminal keys.
+- The web header's manual GUI quit requires fresh browser confirmation for each
+  request. Default to cancel and explain that all GUI jobs stop. Bind confirmation
+  to the authenticated browser and verified signed app process. Send one SIGTERM
+  to that app only. A later web resume uses the existing writer checks.
 - Keep running work and old metadata. During migration retire only verified idle
   legacy product services; do not stop official Codex, GUI or unrelated tmux jobs.
   All new jobs use named windows in the default server’s single `codexm` session.

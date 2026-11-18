@@ -6,6 +6,7 @@ import { Accounts } from "./Accounts";
 import { ChatActivityLabel } from "./ChatActivity";
 import { Approval, ChatMessages } from "./ChatMessages";
 import { Composer } from "./Composer";
+import { GUIQuitDialog } from "./GUIQuitDialog";
 import { Modal } from "./Modal";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { TurnSettings } from "./TurnSettings";
@@ -13,7 +14,7 @@ import { readChatShortcuts } from "./chat-shortcuts";
 import { useCatalog, useChatActivity, useChatHistory, useChatModels } from "./chat-hooks";
 import "./styles/native.css";
 
-type Dialog = {kind:"new"|"project"|"accounts"|"settings"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
+type Dialog = {kind:"new"|"project"|"accounts"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
 type Section = "chats"|"pinned"|"archived";
 
 export function App() {
@@ -56,6 +57,8 @@ export function App() {
   const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null),olderBusy=useRef(false);
   const first=new Date().getHours()<12?"무엇부터 시작할까요?":"어떤 작업을 이어갈까요?";
   const accounts=catalog?.accounts||data.snapshot?.accounts||[];
+  const defaultAccount = catalog?.defaultAccount || accounts.find((candidate: {name: string; default?: boolean}) => candidate.default)?.name;
+  const defaultLabel = defaultAccount ? `기본 계정 · ${defaultAccount}` : "기본 계정";
   const chat=selected&&history?{
     ...history.thread,
     name: history.thread.name || selected.name,
@@ -208,11 +211,15 @@ export function App() {
     </aside>
     <main className="conversation" data-thread-id={selected?.id||""}>
       <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
-        <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}`}>
+        <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}${catalog?.guiQuitAvailable ? " has-gui-quit" : ""}`}>
           <div className="account-header">
-            <label className="account-select">계정
-              <select aria-label="이번에 사용할 계정" value={account} disabled={!!threadId && !selected} onChange={e=>setAccount(e.target.value)}><option value="default">기본 계정</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
-            </label>
+            <div className="account-actions-row">
+              <label className="account-select">계정
+                <select aria-label="이번에 사용할 계정" title={account === "default" ? defaultLabel : account} value={account} disabled={!!threadId && !selected} onChange={e=>setAccount(e.target.value)}><option value="default">{defaultLabel}</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
+              </label>
+              {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" onClick={() => openDialog({kind: "gui-quit"})}>GUI 종료</button>}
+            </div>
+            {account !== "default" && defaultAccount && <small className="default-account-name" title={defaultLabel}>{defaultLabel}</small>}
             {(!threadId || selected) && <AccountLimits key={account} account={account} />}
           </div>
           {chat && !isArchived && <TurnSettings
@@ -263,7 +270,12 @@ export function App() {
       />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
     </main>
-    {dialog&&<Modal title={dialog.kind==="settings"?"단축키 설정":dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
+    {dialog?.kind === "gui-quit" ? <GUIQuitDialog onClose={() => setDialog(null)} onStopped={() => {
+      setDialog(null);
+      setNotice("Codex GUI를 종료했습니다. 채팅과 계정을 선택해 작업을 이어갈 수 있습니다.");
+      void chatState.refresh();
+      void catalogState.refresh();
+    }} /> : dialog&&<Modal title={dialog.kind==="settings"?"단축키 설정":dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
       {dialog.kind==="accounts"?<Accounts accounts={accounts}/>:dialog.kind==="settings"?<ShortcutSettings
         bindings={shortcuts}
         models={modelState.models}

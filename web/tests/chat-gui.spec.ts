@@ -21,6 +21,55 @@ async function authenticate(page:Page){
 
 async function menu(page:Page){if(await page.getByRole("button",{name:"메뉴 열기",exact:true}).isVisible())await page.getByRole("button",{name:"메뉴 열기",exact:true}).click();}
 
+test("header shows the configured default and confirms GUI quit each time", async ({ page }) => {
+  await authenticate(page);
+  // Use a synthetic preview with an invalid native ticket. This fixture never
+  // requests a real GUI shutdown, even if the client shim fails.
+  await page.evaluate(() => {
+    const m = (window as any).Meteor;
+    const apply = m.apply;
+    (window as any).__quitConfirmations = [];
+    m.apply = function (method: string, args: any[], options: any, callback: any) {
+      if (method !== "codexm.call") return apply.call(this, method, args, options, callback);
+      if (args[0] === "web.guiQuitPreview") {
+        queueMicrotask(() => callback(null, { application: "Isolated Desktop Fixture", confirmation: "invalid-fixture-ticket" }));
+        return;
+      }
+      if (args[0] === "web.guiQuit") {
+        (window as any).__quitConfirmations.push(args[1].confirmation);
+        queueMicrotask(() => callback(null, true));
+        return;
+      }
+      if (args[0] === "web.catalog") {
+        return apply.call(this, method, args, options, (error: any, result: any) => callback(error, error ? result : {
+          ...result, defaultAccount: "first-fixture", guiQuitAvailable: true,
+          accounts: [{ name: "first-fixture", default: true }, { name: "second-fixture" }],
+        }));
+      }
+      return apply.call(this, method, args, options, callback);
+    };
+  });
+  await page.getByRole("textbox", {name: "채팅 검색", exact: true}).fill("긴 이력");
+  const account = page.getByRole("combobox", {name: "이번에 사용할 계정", exact: true});
+  await expect(account).toHaveAttribute("title", "기본 계정 · first-fixture");
+  await account.selectOption("second-fixture");
+  await expect(page.locator(".default-account-name")).toHaveText("기본 계정 · first-fixture");
+  const quit = page.getByRole("button", {name: "GUI 종료", exact: true});
+  await quit.click();
+  const dialog = page.getByRole("dialog", {name: "Codex GUI 전체 종료"});
+  await expect(dialog).toContainText("모든 작업이 중단됩니다");
+  await expect(dialog).toContainText("Isolated Desktop Fixture");
+  await dialog.getByRole("button", {name: "취소", exact: true}).click();
+  expect(await page.evaluate(() => (window as any).__quitConfirmations)).toEqual([]);
+  await quit.click();
+  await expect(dialog).toContainText("Isolated Desktop Fixture");
+  await dialog.screenshot({path: join(fixtureRoot!, "confirm-gui-quit.png")});
+  await dialog.getByRole("button", {name: "GUI 전체 종료", exact: true}).click();
+  await expect(page.getByRole("status").filter({hasText: "Codex GUI를 종료했습니다"})).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__quitConfirmations)).toEqual(["invalid-fixture-ticket"]);
+  await expect(account).toHaveValue("second-fixture");
+});
+
 test("recent-only history, anchored upward pagination, safe Markdown and lazy details",async({page})=>{
   await authenticate(page);
   await page.evaluate(()=>{
