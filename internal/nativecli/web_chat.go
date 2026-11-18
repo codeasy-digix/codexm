@@ -33,6 +33,8 @@ var WebMethods = []Method{
 	{"web.guiRelayStatus", false, false},
 	{"web.completions", false, false},
 	{"web.historyVersion", false, false},
+	{"web.historySources", false, false},
+	{"web.historyPage", false, false},
 }
 
 func webSharedMethod(name string) bool {
@@ -278,6 +280,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return w.readCompletions(ctx, p.After)
 	case "web.historyVersion":
 		return w.historyVersion(ctx, p.Thread)
+	case "web.historySources":
+		return w.historySources(ctx)
 	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {
@@ -289,6 +293,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return connection.availableModels(ctx)
 	case "web.history":
 		return w.history(ctx, connection, p)
+	case "web.historyPage":
+		return w.readHistoryPage(ctx, connection, p)
 	case "web.items":
 		return w.items(ctx, connection, p)
 	case "web.item":

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -32,7 +33,7 @@ type WebTurn struct {
 
 // Read the native index and file identity without loading or parsing a rollout.
 // A missing, replaced, archived, or rewritten source cannot reuse the old page.
-func webHistoryRevision(home string, entry catalog.Entry) string {
+func webRolloutRevision(home string, entry catalog.Entry) string {
 	if !filepath.IsAbs(entry.RolloutPath) {
 		return ""
 	}
@@ -64,6 +65,72 @@ func webHistoryRevision(home string, entry catalog.Entry) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 }
 
+// The native projection can retain a complete transcript after an older
+// rollout file is moved. Its per-thread progress is a cheap revision source.
+// Also include it for live rollouts so a delayed index update invalidates pages.
+func webHistoryProjectionVersions(ctx context.Context, home, id string) (map[string]string, error) {
+	result := map[string]string{}
+	filename := filepath.Join(home, "thread_history_1.sqlite")
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return result, nil
+	}
+	db, err := catalog.OpenReadOnly(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	query := `SELECT thread_id, next_rollout_byte_offset, next_rollout_ordinal FROM thread_history_projection_state`
+	var args []any
+	if id != "" {
+		query += " WHERE thread_id = ?"
+		args = append(args, id)
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table: thread_history_projection_state") {
+			return result, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var thread string
+		var offset, ordinal int64
+		if err := rows.Scan(&thread, &offset, &ordinal); err != nil {
+			return nil, err
+		}
+		if ordinal > 0 {
+			result[thread] = fmt.Sprintf("%d:%d:%d:%d", stat.Dev, stat.Ino, offset, ordinal)
+		}
+	}
+	return result, rows.Err()
+}
+
+func webHistoryRevision(home string, entry catalog.Entry, projection string) string {
+	rollout := webRolloutRevision(home, entry)
+	if rollout == "" && projection == "" {
+		return ""
+	}
+	key := fmt.Sprintf("%s\x00%s\x00%t:%d\x00%s:%s", home, entry.ID, entry.Archived, entry.ModifiedAt, rollout, projection)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+}
+
+func webHistoryEntryRevision(ctx context.Context, home string, entry catalog.Entry) (string, error) {
+	projection, err := webHistoryProjectionVersions(ctx, home, entry.ID)
+	if err != nil {
+		return "", err
+	}
+	return webHistoryRevision(home, entry, projection[entry.ID]), nil
+}
+
 func (w *WebChat) historyVersion(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", errors.New("thread UUID required")
@@ -76,7 +143,73 @@ func (w *WebChat) historyVersion(ctx context.Context, id string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return webHistoryRevision(home, entry), nil
+	return webHistoryEntryRevision(ctx, home, entry)
+}
+
+type webHistorySource struct {
+	Thread   string `json:"thread"`
+	Revision string `json:"revision"`
+}
+
+func (w *WebChat) historySources(ctx context.Context) ([]webHistorySource, error) {
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	index, err := catalog.Read(ctx, home)
+	if err != nil {
+		return nil, err
+	}
+	projection, err := webHistoryProjectionVersions(ctx, home, "")
+	if err != nil {
+		return nil, err
+	}
+	// Native recency can move when a chat is opened. Prefer actual modifications
+	// while using the file revision, even if two changes share one timestamp.
+	sort.SliceStable(index.Sessions, func(i, j int) bool { return index.Sessions[i].ModifiedAt > index.Sessions[j].ModifiedAt })
+	sources := make([]webHistorySource, 0, len(index.Sessions))
+	for _, entry := range index.Sessions {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if entry.ID == w.c.Runtime.WebGUIRelay || !threadID.MatchString(entry.ID) || entry.AttachedParent != "" ||
+			(entry.Source != "cli" && entry.Source != "vscode") {
+			continue
+		}
+		if revision := webHistoryRevision(home, entry, projection[entry.ID]); revision != "" {
+			sources = append(sources, webHistorySource{entry.ID, revision})
+		}
+	}
+	return sources, nil
+}
+
+// Background reads never load a thread, take a writer lock or request a model.
+// A page is reusable only if the same native revision exists before and after it.
+func (w *WebChat) readHistoryPage(ctx context.Context, c *webConnection, p webParams) (any, error) {
+	limit, err := webPageLimit(p.Limit, 20, 8)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	revision, err := w.historyVersion(ctx, p.Thread)
+	if err != nil || revision == "" || revision != p.HistoryRevision {
+		return nil, err
+	}
+	if p.Cursor == "" {
+		writers, _ := w.writerSnapshot()
+		state := writers[p.Thread].activity.State
+		thread, err := c.client.Read(ctx, p.Thread, false)
+		if err != nil || thread.Status.Type == "active" || state == "running" || state == "waiting" {
+			return nil, err
+		}
+	}
+	turns, next, complete, err := w.historyPage(ctx, c, p, limit)
+	if err != nil || !complete {
+		return nil, err
+	}
+	current, err := w.historyVersion(ctx, p.Thread)
+	if err != nil || current != revision {
+		return nil, err
+	}
+	return map[string]any{"turns": turns, "nextCursor": next, "historyRevision": revision}, nil
 }
 
 func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (any, error) {
@@ -114,9 +247,16 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	if read.Thread.Effort == "" {
 		read.Thread.Effort = entry.Effort
 	}
-	owners, err := writerProcesses(ctx, home, p.Thread)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+	writers, writersKnown := w.writerSnapshot()
+	var owners []int
+	if writer, found := writers[p.Thread]; writersKnown && found && writer.pid > 0 {
+		owners = []int{writer.pid}
+	} else if !writersKnown || found {
+		// A slow owner probe must not hide saved messages. Mutations check
+		// the actual writer separately and never use this observation.
+		probe, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		owners, _ = writerProcesses(probe, home, p.Thread)
+		cancel()
 	}
 	read.Thread.External = len(owners) > 0 && (len(owners) != 1 || owners[0] != c.process.PID)
 	var delivery *webDelivery
@@ -124,7 +264,6 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	if read.Thread.External && p.Cursor == "" && !read.Thread.Archived {
 		control := w.externalDelivery(ctx, p.Thread, owners)
 		delivery = &control
-		writers, _ := w.writerSnapshot()
 		activity := writers[p.Thread].activity
 		if activity.State == "running" {
 			externalTurn = activity.TurnID
@@ -142,10 +281,10 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		}
 	}
 	result := map[string]any{
-		"thread": read.Thread, "queue": queue.Data, "queueNextCursor": queue.NextCursor, "pending": w.pending(c, p.Thread),
+		"thread": read.Thread, "queue": queue.Data, "queueNextCursor": queue.NextCursor, "pending": w.writerPending(c, p.Thread, owners),
 		"delivery": delivery, "loginDraining": w.loginChanged(c), "loginGeneration": c.generation,
 	}
-	revision := webHistoryRevision(home, entry)
+	revision, _ := webHistoryEntryRevision(ctx, home, entry)
 	// The live reply and queue above are always read from the official server.
 	// Keep unfinished turns out of the persistent cache.
 	live := read.Thread.Status.Type == "active" || externalTurn != "" ||
@@ -158,18 +297,20 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		result["historyUnchanged"] = true
 		return result, nil
 	}
-	page, next, stable, err := w.historyPage(ctx, c, home, p, limit, read.Thread.Archived, externalTurn)
+	page, next, stable, err := w.historyPage(ctx, c, p, limit)
 	if err != nil {
 		return nil, err
 	}
 	result["turns"], result["nextCursor"] = page, next
-	if stable && revision != "" && revision == webHistoryRevision(home, entry) {
-		result["historyRevision"] = revision
+	if stable && revision != "" {
+		if current, err := w.historyVersion(ctx, p.Thread); err == nil && current == revision {
+			result["historyRevision"] = revision
+		}
 	}
 	return result, nil
 }
 
-func (w *WebChat) historyPage(ctx context.Context, c *webConnection, home string, p webParams, limit int, archived bool, externalTurn string) ([]WebTurn, *string, bool, error) {
+func (w *WebChat) historyPage(ctx context.Context, c *webConnection, p webParams, limit int) ([]WebTurn, *string, bool, error) {
 	var page struct {
 		Data       []WebTurn `json:"data"`
 		NextCursor *string   `json:"nextCursor"`
@@ -186,77 +327,60 @@ func (w *WebChat) historyPage(ctx context.Context, c *webConnection, home string
 		return []WebTurn{}, nil, false, nil
 	}
 	slices.Reverse(page.Data)
-	turnIDs := make([]string, len(page.Data))
-	for i, turn := range page.Data {
-		turnIDs[i] = turn.ID
-	}
-	commentary, err := readWebCommentary(ctx, home, p.Thread, turnIDs)
-	stable := err == nil || errors.Is(err, os.ErrNotExist)
+	stable := true
+	itemsCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
 	for i := range page.Data {
 		turn := &page.Data[i]
-		appendWebCommentary(turn, commentary[turn.ID])
-		stable = stable && turn.Status != "inProgress"
-	}
-	if p.Cursor == "" && !archived {
-		// The compact summary drops additional user input within a turn.
-		// Include recent in-turn messages even after a queued turn starts.
-		itemsCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		for i := max(0, len(page.Data)-2); i < len(page.Data); i++ {
-			turn := &page.Data[i]
-			if !addRecentMessages(itemsCtx, c, p.Thread, turn, turn.ID == externalTurn) {
-				stable = false
-			}
+		messages, err := webTurnMessages(itemsCtx, c, p.Thread, turn.ID)
+		if err != nil {
+			stable = false
+			continue // Keep the native summary available while the item source catches up.
 		}
+		turn.Items = messages
+		stable = stable && turn.Status != "inProgress"
 	}
 	return page.Data, page.NextCursor, stable, nil
 }
 
-// Keep the summary bounded and leave tool output deferred. External running
-// commentary can be read from persisted items without claiming the chat.
-func addRecentMessages(ctx context.Context, c *webConnection, thread string, turn *WebTurn, progress bool) bool {
-	var page struct {
-		Data []struct {
-			Item json.RawMessage
-		}
-	}
+// Keep every displayed user and agent message in order, including input steered
+// into older turns. Tool output continues to load through the existing details API.
+func webTurnMessages(ctx context.Context, c *webConnection, thread, turn string) ([]json.RawMessage, error) {
 	args := map[string]any{
-		"threadId": thread, "turnId": turn.ID, "limit": 12, "sortDirection": "desc",
+		"threadId": thread, "turnId": turn, "limit": 50, "sortDirection": "asc",
 		"deferOutput": map[string]bool{"commandExecution": true, "mcpToolCall": true},
 	}
-	if err := c.client.Call(ctx, "thread/items/list", args, &page); err != nil {
-		return false
-	}
-	seen := make(map[string]bool)
-	for _, raw := range turn.Items {
-		var existing struct{ ID string }
-		if json.Unmarshal(raw, &existing) == nil {
-			seen[existing.ID] = true
+	messages := []json.RawMessage{}
+	seen := map[string]bool{}
+	for {
+		var page struct {
+			Data       []struct{ Item json.RawMessage }
+			NextCursor string
 		}
-	}
-	slices.Reverse(page.Data)
-	for _, entry := range page.Data {
-		var item struct {
-			ID         string
-			Type       string
-			Phase      string
-			Text       string
-			Moderation *struct{ Moderated bool }
+		if err := c.client.Call(ctx, "thread/items/list", args, &page); err != nil {
+			return nil, err
 		}
-		if json.Unmarshal(entry.Item, &item) != nil || seen[item.ID] || item.ID == "" {
-			continue
-		}
-		switch item.Type {
-		case "userMessage":
-			turn.Items = append(turn.Items, entry.Item)
-		case "agentMessage":
-			if progress && item.Phase == "commentary" && item.Text != "" && (item.Moderation == nil || !item.Moderation.Moderated) {
-				raw, _ := json.Marshal(map[string]string{"id": item.ID, "type": item.Type, "phase": item.Phase, "text": limitLiveText(item.Text)})
-				turn.Items = append(turn.Items, raw)
+		for _, entry := range page.Data {
+			var item struct {
+				Type       string
+				Moderation *struct{ Moderated bool }
+			}
+			if err := json.Unmarshal(entry.Item, &item); err != nil {
+				return nil, err
+			}
+			if item.Type == "userMessage" || item.Type == "agentMessage" && (item.Moderation == nil || !item.Moderation.Moderated) {
+				messages = append(messages, entry.Item)
 			}
 		}
+		if page.NextCursor == "" {
+			return messages, nil
+		}
+		if seen[page.NextCursor] {
+			return nil, errors.New("native item cursor did not advance")
+		}
+		seen[page.NextCursor] = true
+		args["cursor"] = page.NextCursor
 	}
-	return true
 }
 
 func (w *WebChat) items(ctx context.Context, c *webConnection, p webParams) (any, error) {
@@ -287,66 +411,4 @@ func (w *WebChat) item(ctx context.Context, c *webConnection, p webParams) (any,
 		return nil, err
 	}
 	return result, nil
-}
-
-func (w *WebChat) pending(c *webConnection, id string) []any {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	result := []any{}
-	for key, event := range c.pending {
-		var params map[string]any
-		if json.Unmarshal(event.Params, &params) != nil {
-			continue
-		}
-		thread, _ := params["threadId"].(string)
-		if id != "" && thread != id {
-			continue
-		}
-		result = append(result, map[string]any{"request_id": key, "method": event.Method, "params": params})
-	}
-	return result
-}
-
-func (w *WebChat) respond(ctx context.Context, c *webConnection, p webParams) (any, error) {
-	if p.Thread == "" || p.Request == "" {
-		return nil, errors.New("thread and pending request IDs required")
-	}
-	if err := w.verifyOwner(ctx, c, p.Thread, true); err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	event, ok := c.pending[p.Request]
-	if !ok {
-		return nil, errors.New("request is no longer pending; no response was replayed")
-	}
-	var target struct {
-		Thread string `json:"threadId"`
-	}
-	if json.Unmarshal(event.Params, &target) != nil || target.Thread != p.Thread {
-		return nil, errors.New("pending request belongs to another thread")
-	}
-	var response map[string]any
-	if err := json.Unmarshal(p.Response, &response); err != nil {
-		return nil, err
-	}
-	switch event.Method {
-	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-		decision, _ := response["decision"].(string)
-		if decision != "accept" && decision != "decline" && decision != "cancel" {
-			return nil, errors.New("select accept, decline or cancel")
-		}
-		response = map[string]any{"decision": decision}
-	case "item/tool/requestUserInput":
-		if _, ok := response["answers"].(map[string]any); !ok {
-			return nil, errors.New("answers are required")
-		}
-	default:
-		return nil, errors.New("this request type cannot be approved by the web frontend")
-	}
-	if err := c.client.Reply(event.ID, response); err != nil {
-		return nil, err
-	}
-	delete(c.pending, p.Request)
-	return map[string]any{"responded": true}, nil
 }

@@ -34,6 +34,7 @@ const pushes = (() => {
 })();
 const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
+const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage"]);
 let capabilities: any;
 const owner = (id?: string) => {
   try {
@@ -228,7 +229,7 @@ Meteor.methods({
       throw new Meteor.Error("invalid_input");
     if (!capabilities) await bootstrap();
     const spec = methods.get(method);
-    if (!spec || method === "web.completions" || method === "web.historyVersion") throw new Meteor.Error("unsupported");
+    if (!spec || internalMethods.has(method)) throw new Meteor.Error("unsupported");
     if (spec.mutation && !/^[A-Za-z0-9_-]{16,128}$/.test(operation))
       throw new Meteor.Error("invalid_input", "요청 ID가 필요합니다.");
     try {
@@ -328,6 +329,20 @@ Meteor.startup(async () => {
   if (pushes) setInterval(() => {
     void pushes.poll().catch(() => { /* Poll again after a temporary read failure. */ });
   }, 5000).unref();
+  // Reconcile native CLI/GUI writes even when every browser is closed.
+  const refreshHistory = async () => {
+    if (bridge.busy) {
+      setTimeout(refreshHistory, 750).unref();
+      return;
+    }
+    await historyCache.refresh(
+      () => bridge.call("web.historySources"),
+      (source, cursor) => bridge.call("web.historyPage", { thread_id: source.thread, history_revision: source.revision, cursor }),
+      () => bridge.busy,
+    ).catch(() => { /* The next scan resumes from its last durable cursor. */ });
+    setTimeout(refreshHistory, 5000).unref();
+  };
+  void refreshHistory();
 });
 process.on("exit", () => bridge.close());
 for (const signal of ["SIGTERM", "SIGINT"] as const)

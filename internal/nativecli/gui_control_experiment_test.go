@@ -81,6 +81,26 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"fixture-response\"}}\n\n")
 		w.(http.Flusher).Flush()
+		if strings.Contains(string(body), "WEB_QUESTION_FIXTURE") {
+			if !strings.Contains(string(body), "fixture-web-question") {
+				questions := []map[string]any{
+					{"id": "approach", "header": "진행 방식", "question": "어떤 방식으로 진행할까요?", "isOther": true,
+						"options": []map[string]string{{"label": "기본 방식", "description": "기본 순서대로 진행합니다."}, {"label": "빠른 방식", "description": "먼저 결과를 확인합니다."}}},
+					{"id": "confirmation", "header": "확인 값", "question": "확인 값을 입력해 주세요.", "isSecret": true,
+						"options": []map[string]string{{"label": "건너뛰기", "description": "값을 생략합니다."}, {"label": "중단", "description": "검증을 중단합니다."}}},
+				}
+				args, _ := json.Marshal(map[string]any{"questions": questions})
+				writeFixtureStreamEvent(w, map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{
+					"type": "function_call", "name": "request_user_input", "call_id": "fixture-web-question", "arguments": string(args),
+				}})
+				fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
+				return
+			}
+			if strings.Contains(string(body), "fixture-confirmed-answer") &&
+				(strings.Contains(string(body), "fixture-own-choice") || strings.Contains(string(body), "기본 방식")) {
+				responseText = "웹에서 보낸 답변을 받았습니다."
+			}
+		}
 		if commandFixture && strings.Contains(string(body), "WEB_COMMAND_FIXTURE") && !strings.Contains(string(body), "web-fixture-command") {
 			var request struct {
 				Tools []struct {

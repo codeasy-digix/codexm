@@ -82,7 +82,8 @@ func (w *WebChat) connection(ctx context.Context, account string) (*webConnectio
 	}
 	home := config.Expand(w.c.Runtime.SharedCodexHome)
 	shared, _ := json.Marshal(home)
-	cmd := exec.Command(r.Binary, "--no-daemon", "-c", "sqlite_home="+string(shared), "-c", `cli_auth_credentials_store="file"`, "app-server", "--listen", "stdio://")
+	cmd := exec.Command(r.Binary, "--no-daemon", "-c", "sqlite_home="+string(shared), "-c", `cli_auth_credentials_store="file"`,
+		"-c", "features.default_mode_request_user_input=true", "app-server", "--listen", "stdio://")
 	cmd.Env, cmd.Dir = environment(w.c, runtimeAccount), home
 	if err := os.MkdirAll(home, 0700); err != nil {
 		return nil, err

@@ -16,6 +16,7 @@ export class BridgeClient extends EventEmitter {
   private closing = false;
   private buffer = "";
   private restart?: NodeJS.Timeout;
+  get busy() { return this.pending.size !== 0; }
   constructor(
     readonly binary: string,
     readonly config: string,

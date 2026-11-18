@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { call } from "../../client/data";
-import type { ChatItem, ChatTurn, PendingRequest } from "../contracts/web";
+import type { ChatItem, ChatTurn } from "../contracts/web";
 
 const markdownComponents: Components = {
   table({ node: _node, ...props }) {
@@ -83,22 +83,4 @@ export function ChatMessages({thread,turns,account,external,liveTurnId}:{thread:
       </div>
     </article>;
   })}</div>;
-}
-
-export function Approval({request,thread,account,onDone}:{request:PendingRequest;thread:string;account:string;onDone:()=>void}) {
-  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[answers,setAnswers]=useState<Record<string,string>>({});
-  const input=request.method==="item/tool/requestUserInput";
-  const questions:Array<{id:string;question:string;header?:string;options?:Array<{label:string;description?:string}>}>=request.params.questions||[];
-  async function respond(accept:boolean) {
-    setBusy(true);setError("");
-    const response=input?{answers:Object.fromEntries(questions.map(q=>[q.id,{answers:[answers[q.id]||""]}]))}:{decision:accept?"accept":"decline"};
-    try {await call("web.respond",{thread_id:thread,account,request_id:request.request_id,response},crypto.randomUUID());onDone();}
-    catch(e){setError((e as Error).message);}finally{setBusy(false);}
-  }
-  return <section className="approval" aria-label={input?"추가 확인":"실행 승인"}>
-    <h3>{input?"추가 확인이 필요합니다":request.method.includes("fileChange")?"파일 변경 승인":"명령 실행 승인"}</h3>
-    {input?questions.map(q=><label key={q.id}>{q.question}{q.options?.length?<select value={answers[q.id]||""} onChange={e=>setAnswers({...answers,[q.id]:e.target.value})}><option value="">선택하세요</option>{q.options.map(o=><option key={o.label} value={o.label}>{o.label}</option>)}</select>:<input value={answers[q.id]||""} onChange={e=>setAnswers({...answers,[q.id]:e.target.value})}/>}</label>):<pre>{typeof request.params.command==="string"?request.params.command:JSON.stringify(request.params.command||request.params.reason||request.params,null,2)}</pre>}
-    {error&&<p role="alert">{error}</p>}
-    <div className="button-row">{!input&&<button onClick={()=>void respond(false)} disabled={busy}>거절</button>}<button className="primary" onClick={()=>void respond(true)} disabled={busy||(input&&questions.some(q=>!answers[q.id]))}>{input?"답변 전달":"이번 실행 승인"}</button></div>
-  </section>;
 }

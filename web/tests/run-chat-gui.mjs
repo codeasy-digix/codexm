@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, writeFile, open, lstat, realpath, symlink, rm
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { MongoClient } from "mongodb";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = dirname(root);
@@ -87,6 +88,14 @@ try {
     if (!listening) throw new Error("isolated MongoDB socket did not become ready");
     await mkdir(manifest.state, { mode: 0o700, recursive: true });
     await symlink(mongoDirectory, join(manifest.state, "history-cache"), "dir");
+    const client = new MongoClient("mongodb://" + encodeURIComponent(socket) + "/codexm", { directConnection: true });
+    try {
+      const pages = client.db().collection("history_pages_v1");
+      await pages.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+      await pages.insertOne({ _id: "older-cache-fixture", expiresAt: new Date(Date.now() + 86_400_000) });
+    } finally {
+      await client.close();
+    }
   }
   const nativeConfig = join(manifest.home, "shared", "config.toml");
   const settings = await readFile(nativeConfig, "utf8");

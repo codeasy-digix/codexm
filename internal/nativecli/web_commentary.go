@@ -2,7 +2,6 @@ package nativecli
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -60,27 +59,4 @@ func readWebCommentary(ctx context.Context, home, thread string, turns []string)
 		slices.Reverse(items)
 	}
 	return result, nil
-}
-
-func appendWebCommentary(turn *WebTurn, commentary []webLiveItem) {
-	if len(commentary) == 0 {
-		return
-	}
-	seen := make(map[string]bool, len(turn.Items))
-	for _, raw := range turn.Items {
-		var item struct{ ID string }
-		if json.Unmarshal(raw, &item) == nil {
-			seen[item.ID] = true
-		}
-	}
-	for _, item := range commentary {
-		if seen[item.ID] {
-			continue
-		}
-		raw, _ := json.Marshal(struct {
-			Type string `json:"type"`
-			webLiveItem
-		}{Type: "agentMessage", webLiveItem: item})
-		turn.Items = append(turn.Items, raw)
-	}
 }

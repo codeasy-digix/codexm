@@ -67,7 +67,13 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if err := f.client.Call(f.ctx, "thread/name/set", map[string]any{"threadId": command, "name": "긴 명령 출력 검증"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{first.Thread.ID, second, archived, command} {
+	catchup := f.thread()
+	f.start(catchup, "브라우저가 열리기 전 이력")
+	f.completed(catchup, 1)
+	if err := f.client.Call(f.ctx, "thread/name/set", map[string]any{"threadId": catchup, "name": "오프라인 갱신 테스트"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{first.Thread.ID, second, archived, command, catchup} {
 		if err := f.client.Call(f.ctx, "thread/archive", map[string]any{"threadId": id}, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -88,18 +94,31 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if err := os.MkdirAll(output, 0700); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(map[string]any{"home": f.cmd.Dir, "config": f.c.Path, "state": filepath.Join(f.c.Storage.StateDir, "web"), "thread": first.Thread.ID, "second": second, "archived": archived, "project": project.Project.ID})
+	b, _ := json.Marshal(map[string]any{"home": f.cmd.Dir, "config": f.c.Path, "state": filepath.Join(f.c.Storage.StateDir, "web"), "thread": first.Thread.ID, "second": second, "archived": archived, "project": project.Project.ID, "catchup": catchup})
 	if err := os.WriteFile(filepath.Join(output, "fixture.json"), b, 0600); err != nil {
 		t.Fatal(err)
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	foreignReleased, progressReleased := false, false
+	foreignReleased, progressReleased, catchupSaved := false, false, false
 	for {
 		select {
 		case <-f.ctx.Done():
 			t.Fatal("browser fixture timed out")
 		case <-ticker.C:
+			if _, err := os.Stat(filepath.Join(output, "append-offline-history")); err == nil && !catchupSaved {
+				if err := f.client.Call(f.ctx, "thread/resume", map[string]any{"threadId": catchup, "excludeTurns": true}, nil); err != nil {
+					t.Fatal(err)
+				}
+				for i := 1; i <= 18; i++ {
+					f.start(catchup, fmt.Sprintf("웹을 닫은 동안 추가된 이력 %02d", i))
+					f.completed(catchup, i+1)
+				}
+				if err := os.WriteFile(filepath.Join(output, "appended-offline-history"), []byte("complete"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				catchupSaved = true
+			}
 			if _, err := os.Stat(filepath.Join(output, "show-foreign-progress")); err == nil && !progressReleased {
 				close(f.foreignUpdate)
 				progressReleased = true

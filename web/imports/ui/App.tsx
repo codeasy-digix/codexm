@@ -4,7 +4,8 @@ import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTur
 import { AccountLimits } from "./AccountLimits";
 import { Accounts } from "./Accounts";
 import { ChatActivityLabel } from "./ChatActivity";
-import { Approval, ChatMessages } from "./ChatMessages";
+import { ChatMessages } from "./ChatMessages";
+import { ChatRequest } from "./ChatRequest";
 import { Composer } from "./Composer";
 import { GUIQuitDialog } from "./GUIQuitDialog";
 import { Modal } from "./Modal";
@@ -41,10 +42,14 @@ export function App() {
   const chatState=useChatHistory(ready,selected,account);
   const history=chatState.history?.thread.id===selected?.id?chatState.history:undefined;
   const activity = useChatActivity(ready, selected?.id || "", account);
+  const pending = activity.pending ?? history?.pending ?? [];
+  const blocking = pending.find(request => request.params.isBlocking !== false);
   const externalDelivery = history?.thread.externalOwner ? history.delivery : undefined;
   const externalState = externalDelivery?.state === "ready" ? "running" :
     externalDelivery?.state === "idle" || externalDelivery?.state === "waiting" ? externalDelivery.state : undefined;
-  const openActivity: ChatActivity | undefined = externalState ? { source: "external", state: externalState, turnId: externalDelivery?.turnId } :
+  const openActivity: ChatActivity | undefined = blocking ? {
+    source: "web", state: "waiting", turnId: String(blocking.params.turnId || ""),
+  } : externalState ? { source: "external", state: externalState, turnId: externalDelivery?.turnId } :
     (selected && activity.threads?.[selected.id]) ||
     (history?.thread.externalOwner ? { source: "external", state: "unknown" } :
       history?.thread.status.type === "active" ? {
@@ -247,7 +252,6 @@ export function App() {
           {chatState.error&&<p role="alert" className="inline-error">{chatState.error}</p>}
           {!!turns.length&&<ChatMessages thread={selected.id} turns={turns} account={account} external={history?.thread.externalOwner} liveTurnId={liveTurnId}/>}
           {history&&!turns.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
-          {history?.pending.map(p=><Approval key={p.request_id} request={p} thread={selected.id} account={account} onDone={()=>void chatState.refresh()}/>)}
         </div>:path !== "/" ? <div className="message-inner">
           {(openError || !threadId)
             ? <div className="empty-conversation" role="alert">
@@ -259,6 +263,12 @@ export function App() {
         </div>:<div className="welcome"><span className="welcome-mark">C</span><p className="eyebrow">CODEXM · LOCAL WORKSPACE</p><h2>{first}</h2><p>최근 채팅을 이어가거나,<br/>프로젝트에서 새 작업을 시작하세요.</p><button className="primary" disabled={!newChatReady} onClick={()=>openDialog({kind:"new"})}>＋ 새 채팅 시작</button></div>}
       </div>
       {chat && !isArchived && <ChatActivityLabel activity={openActivity} known={activity.writersKnown} lastTurn={turns.at(-1)} footer />}
+      {selected && pending.length > 0 && <div className="pending-requests" aria-live="polite">
+        {pending.map(request => <ChatRequest key={request.request_id} request={request} thread={selected.id}
+          onDone={() => void chatState.refresh()} />)}
+      </div>}
+      {selected && openActivity?.source === "external" && openActivity.state === "waiting" && !pending.length &&
+        <p className="external-request-note" role="status">이 채팅을 열어 둔 Codex 앱이나 CLI에서 응답해 주세요.</p>}
       {chat&&!isArchived&&<Composer
         key={composerKey}
         chat={chat}

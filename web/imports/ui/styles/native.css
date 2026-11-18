@@ -124,3 +124,29 @@
 .account-limit meter::-webkit-meter-optimum-value { border-radius: 4px; background: var(--accent); }
 .account-limit meter::-moz-meter-bar { border-radius: 4px; background: var(--accent); }
 .chat-header-controls:not(.has-turn-settings) .account-header { min-width: 110px; }
+
+.pending-requests {
+  flex: none;
+  max-height: min(42dvh, 420px);
+  width: min(100%, 820px);
+  align-self: center;
+  overflow: auto;
+  padding: 0 16px;
+}
+.pending-requests .approval { margin: 6px 0; }
+.approval fieldset { border: 0; min-width: 0; padding: 0; margin: 0 0 16px; }
+.approval legend { font-weight: 600; }
+.approval fieldset p { margin: 6px 0; }
+.approval .request-option {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.approval .request-option input { width: auto; flex: none; margin: 3px 0 0; }
+.approval .request-option small { display: block; color: var(--muted); margin-top: 3px; }
+.approval input:not([type="radio"]) { font-size: 16px; }
+.external-request-note { align-self: center; color: var(--muted); margin: 6px 16px; font-size: 13px; }

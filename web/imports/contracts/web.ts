@@ -27,6 +27,8 @@ export const bridgeContract = {
     { name: "web.guiRelayStatus", mutation: false, model: false },
     { name: "web.completions", mutation: false, model: false },
     { name: "web.historyVersion", mutation: false, model: false },
+    { name: "web.historySources", mutation: false, model: false },
+    { name: "web.historyPage", mutation: false, model: false },
   ],
 };
 
@@ -35,7 +37,13 @@ export type ChatTurn = { id: string; status: string; items: ChatItem[]; itemsVie
 export type ChatThread = { id: string; name?: string; preview?: string; cwd: string; projectId?: string; status: { type: string }; updatedAt: number; recencyAt?: number; pinned?: boolean; archived?: boolean; externalOwner?: boolean; model?: string; reasoningEffort?: string; account?:string };
 export type Project = { id: string; name: string; roots: Array<{ path: string }>; nativeId?:string };
 export type Catalog = { threads: ChatThread[]; projects: Project[]; otherProjects?:Project[]; pinned: ChatThread[]; nextCursor?: string | null; accounts: Array<{ name: string; default?: boolean }>; defaultAccount?: string; guiQuitAvailable?: boolean; defaultCwd: string; total?:number };
-export type PendingRequest = { request_id: string; method: string; params: Record<string, any> };
+export type PendingRequest = {
+  request_id: string;
+  method: string;
+  account: string;
+  params: Record<string, unknown>;
+  decisions?: string[];
+};
 export type ChatHistoryPage = {
   turns: ChatTurn[];
   nextCursor?: string | null;
@@ -69,7 +77,7 @@ export type LiveTurn = {
   status: string;
   items: Array<{ id: string; phase?: string; text: string; streaming: boolean }>;
 };
-export type ChatActivitySnapshot = { writersKnown: boolean; threads: Record<string, ChatActivity>; turn?: LiveTurn; accountTurn?: boolean };
+export type ChatActivitySnapshot = { writersKnown: boolean; threads: Record<string, ChatActivity>; turn?: LiveTurn; accountTurn?: boolean; pending?: PendingRequest[] };
 
 export function workingActivity(activity?: ChatActivity) {
   return activity?.state === "running" || activity?.state === "responding";

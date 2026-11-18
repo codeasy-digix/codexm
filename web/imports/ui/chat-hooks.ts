@@ -27,7 +27,7 @@ export function useChatActivity(enabled: boolean, thread: string, account: strin
           setObservation({ thread, account, snapshot });
         }
         const selected = snapshot.threads[thread];
-        if (workingActivity(selected)) delay = selected?.source === "web" ? 350 : 1000;
+        if (workingActivity(selected) || selected?.state === "waiting") delay = selected?.source === "web" ? 350 : 1000;
       } catch {
         last = "";
         if (active) setObservation(undefined);
@@ -50,6 +50,7 @@ export function useChatActivity(enabled: boolean, thread: string, account: strin
     writersKnown: enabled && !!observation?.snapshot.writersKnown,
     turn: selected?.turn,
     accountTurn: selected?.accountTurn ? selected.turn : undefined,
+    pending: selected?.pending,
   };
 }
 

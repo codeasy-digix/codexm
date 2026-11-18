@@ -1,8 +1,10 @@
 import { test,expect,type BrowserContext,type Page } from "@playwright/test";
-import { readFileSync,writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createECDH, randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { MongoClient } from "mongodb";
+import type { ChatHistoryPage } from "../imports/contracts/web";
 
 const fixtureRoot=process.env.CODEXM_CHAT_GUI_FIXTURE;
 const binary=process.env.CODEXM_CHAT_GUI_BINARY;
@@ -247,6 +249,53 @@ test("MongoDB history renders while the native refresh is pending", async ({ pag
   }
 });
 
+test("MongoDB catches up all native turns after the browser closes and retains old records", async ({ context }) => {
+  test.skip(process.env.CODEXM_WEB_TEST_MONGO !== "1", "requires the isolated MongoDB fixture");
+  const f = fixture();
+  const socket = realpathSync(join(f.state, "history-cache", "mongodb.sock"));
+  const mongo = new MongoClient("mongodb://" + encodeURIComponent(socket) + "/codexm", { directConnection: true });
+  try {
+    const db = mongo.db();
+    const checkpoints = db.collection<{ _id: string; revision: string; nextCursor: string | null }>("history_progress_v1");
+    const pages = db.collection<{ _id: string; thread?: string; revision?: string; format?: number; page?: ChatHistoryPage; expiresAt?: Date }>("history_pages_v1");
+    await expect.poll(async () => (await checkpoints.findOne({ _id: f.catchup }))?.nextCursor, { timeout: 25_000 }).toBeNull();
+    const previous = (await checkpoints.findOne({ _id: f.catchup }))?.revision;
+    const before = await context.newPage();
+    await authenticate(before);
+    await before.getByRole("link", { name: /오프라인 갱신 테스트/ }).click();
+    await expect(before.getByText("브라우저가 열리기 전 이력", { exact: true })).toBeVisible();
+    await before.close();
+    writeFileSync(join(fixtureRoot!, "append-offline-history"), "append through original official app-server");
+    await expect.poll(() => existsSync(join(fixtureRoot!, "appended-offline-history")), { timeout: 15_000 }).toBe(true);
+    const saved = () => checkpoints.findOne({ _id: f.catchup, revision: { $ne: previous }, nextCursor: null });
+    await expect.poll(async () => !!await saved(), { timeout: 30_000 }).toBe(true);
+    const revision = (await saved())?.revision;
+    const chunks = await pages.find({ thread: f.catchup, revision, format: 2 }).toArray();
+    const turns = chunks.flatMap(chunk => chunk.page?.turns ?? []);
+    expect(new Set(turns.map(turn => turn.id)).size).toBe(19);
+    for (let i = 1; i <= 18; i++) {
+      expect(JSON.stringify(turns)).toContain("웹을 닫은 동안 추가된 이력 " + String(i).padStart(2, "0"));
+    }
+    const legacy = await pages.findOne({ _id: "older-cache-fixture" });
+    expect(legacy).not.toBeNull();
+    expect(legacy?.expiresAt).toBeUndefined();
+    expect((await pages.indexes()).some(index => index.expireAfterSeconds !== undefined)).toBe(false);
+    const after = await context.newPage();
+    await authenticate(after);
+    await after.getByRole("link", { name: /오프라인 갱신 테스트/ }).click();
+    await expect(after.getByText("웹을 닫은 동안 추가된 이력 18", { exact: true })).toBeVisible();
+    const older = after.getByRole("button", { name: "이전 메시지 불러오기", exact: true });
+    await older.click();
+    await expect(after.locator(".turn")).toHaveCount(16);
+    await older.click();
+    await expect(after.locator(".turn")).toHaveCount(19);
+    await expect(after.getByText("브라우저가 열리기 전 이력", { exact: true })).toBeVisible();
+    await after.close();
+  } finally {
+    await mongo.close();
+  }
+});
+
 test("project picker, idle send, Enter intervention and Command+Enter for a separate native writer", async ({page}) => {
   const row = page.getByRole("link",{name:/진행 중 개입 테스트/});
   const input = page.getByLabel("메시지", {exact: true});
@@ -392,6 +441,35 @@ test("streamed answer, intervention, queue, browser reconnect and default login 
   await expect(next.getByText("다음 단계는 큐로 진행합니다",{exact:true})).toBeVisible();
   await expect(next.getByText(renewal, {exact: true})).toHaveCount(0, {timeout: 10000});
   await next.screenshot({path:join(fixtureRoot!,"desktop-conversation.png")});
+});
+
+test("native questions appear above the composer and submit the selected or typed answers", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await authenticate(page);
+  await menu(page);
+  await page.getByRole("button", { name: "새 채팅", exact: true }).click();
+  await page.getByRole("button", { name: "채팅 만들기", exact: true }).click();
+  const message = page.getByRole("textbox", { name: "메시지", exact: true });
+  await message.fill("WEB_QUESTION_FIXTURE");
+  await message.press("Enter");
+  const card = page.getByRole("region", { name: "추가 확인" });
+  await expect(card).toBeVisible();
+  await expect(card.getByText("어떤 방식으로 진행할까요?")).toBeVisible();
+  await expect(card.getByText("기본 순서대로 진행합니다.")).toBeVisible();
+  const answer = card.getByRole("button", { name: "답변 전달" });
+  await expect(answer).toBeDisabled();
+  await card.getByRole("group", { name: "진행 방식" }).getByText("직접 입력", { exact: true }).click();
+  await card.getByLabel("진행 방식 답변").fill("fixture-own-choice");
+  await card.getByRole("group", { name: "확인 값" }).getByText("직접 입력", { exact: true }).click();
+  const secret = card.getByLabel("확인 값 답변");
+  await expect(secret).toHaveAttribute("type", "password");
+  await secret.fill("fixture-confirmed-answer");
+  await expect(answer).toBeEnabled();
+  const chat = page.url();
+  await answer.click();
+  await expect(card).toHaveCount(0);
+  await expect(page.getByText("웹에서 보낸 답변을 받았습니다.", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(chat);
 });
 
 test("header model controls and editable keyboard combinations", async ({ page }) => {

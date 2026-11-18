@@ -3,10 +3,13 @@ package nativecli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/codeasy-digix/codexm/internal/catalog"
 )
 
 func TestWebChatOfficialCore(t *testing.T) {
@@ -45,24 +48,21 @@ func TestWebChatOfficialCore(t *testing.T) {
 		r := call("web.history", map[string]any{"thread_id": id})
 		turns := r["turns"].([]any)
 		if len(turns) > 0 && turns[len(turns)-1].(map[string]any)["status"] == "completed" {
-			b, _ := json.Marshal(turns)
-			t.Log("summary turn payload", string(b))
 			if revision, _ = r["historyRevision"].(string); revision != "" {
-				break
+				cached := call("web.history", map[string]any{"thread_id": id, "history_revision": revision})
+				if cached["historyUnchanged"] == true && cached["turns"] == nil && cached["queue"] != nil {
+					break
+				}
 			}
 		}
 		if time.Now().After(until) {
-			t.Fatal("web turn did not complete")
+			t.Fatal("web turn did not complete and validate its final revision")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	cached := call("web.history", map[string]any{"thread_id": id, "history_revision": revision})
-	if cached["historyUnchanged"] != true || cached["turns"] != nil || cached["queue"] == nil {
-		t.Fatal("unchanged history was read again or live queue state was omitted")
-	}
 	call("web.pin", map[string]any{"thread_id": id, "pinned": true})
-	catalog := call("web.catalog", map[string]any{})
-	if len(catalog["pinned"].([]any)) != 1 {
+	list := call("web.catalog", map[string]any{})
+	if len(list["pinned"].([]any)) != 1 {
 		t.Fatal("pin not persisted")
 	}
 	call("web.move", map[string]any{"thread_id": id, "project_id": ""})
@@ -70,6 +70,34 @@ func TestWebChatOfficialCore(t *testing.T) {
 	archived := call("web.history", map[string]any{"thread_id": id, "history_revision": revision})
 	if archived["historyUnchanged"] == true || archived["thread"].(map[string]any)["archived"] != true || len(archived["turns"].([]any)) != 1 || len(archived["queue"].([]any)) != 0 {
 		t.Fatal("archived history was not readable without changing its state")
+	}
+	entry, err := catalog.Lookup(f.ctx, f.c.Runtime.SharedCodexHome, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Reproduce an older projection-only thread using this fixture's own file.
+	original := entry.RolloutPath
+	hidden := original + ".fixture-held"
+	if err := os.Rename(original, hidden); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := os.Stat(hidden); err == nil {
+			if err := os.Rename(hidden, original); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	projectedVersion, err := w.historyVersion(f.ctx, id)
+	if err != nil || projectedVersion == "" || projectedVersion == archived["historyRevision"] {
+		t.Fatal("the projection-only source could not be discovered independently of the rollout", err)
+	}
+	sources, err := w.historySources(f.ctx)
+	if err != nil || !slices.Contains(sources, webHistorySource{id, projectedVersion}) {
+		t.Fatal("the projection-only source was not eligible for background reconciliation", err)
+	}
+	if err := os.Rename(hidden, original); err != nil {
+		t.Fatal(err)
 	}
 	call("web.archive", map[string]any{"thread_id": id, "archived": false})
 	call("web.delete", map[string]any{"thread_id": id})
@@ -85,6 +113,56 @@ func TestWebChatOfficialCore(t *testing.T) {
 			t.Fatal("owned web server did not exit on EOF")
 		}
 	}
+}
+
+func TestWebChatOfficialRequestUserInput(t *testing.T) {
+	f := newGUIControlFixture(t, "stdio")
+	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-web-questions")
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	if _, err := call("web.send", map[string]any{"thread_id": id, "mode": "immediate", "text": "WEB_QUESTION_FIXTURE"}); err != nil {
+		t.Fatal(err)
+	}
+	var request webPendingRequest
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if pending := w.activity(id, "default").Pending; len(pending) == 1 {
+			request = pending[0]
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if request.Method != "item/tool/requestUserInput" || request.Account != "default" || !strings.Contains(string(request.Params), `"isSecret":true`) {
+		t.Fatal("the official connection did not surface the question with its secret-input flag", request.Method)
+	}
+	reply := map[string]any{"thread_id": id, "account": request.Account, "request_id": request.ID,
+		"response": map[string]any{"answers": map[string]any{"approach": map[string]any{"answers": []string{"기본 방식"}}}},
+	}
+	if _, err := call("web.respond", reply); err == nil {
+		t.Fatal("an incomplete answer reached the native thread")
+	}
+	reply["response"].(map[string]any)["answers"].(map[string]any)["confirmation"] = map[string]any{"answers": []string{"fixture-confirmed-answer"}}
+	result, err := call("web.respond", reply)
+	if err != nil || result["responded"] != true {
+		t.Fatal("answer was not delivered through the waiting official connection", err)
+	}
+	if _, err := call("web.respond", reply); err == nil {
+		t.Fatal("the completed request accepted another answer")
+	}
+	for deadline := time.Now().Add(6 * time.Second); time.Now().Before(deadline); {
+		history, err := call("web.history", map[string]any{"thread_id": id})
+		b, _ := json.Marshal(history["turns"])
+		if err == nil && strings.Contains(string(b), "웹에서 보낸 답변을 받았습니다.") {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the same turn did not receive the answer")
 }
 
 func TestWebChatOfficialModelSelection(t *testing.T) {

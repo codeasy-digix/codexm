@@ -35,6 +35,7 @@ type webActivityReply struct {
 	Threads      map[string]webActivity `json:"threads"`
 	Turn         *webLiveTurn           `json:"turn,omitempty"`
 	AccountTurn  bool                   `json:"accountTurn,omitempty"`
+	Pending      []webPendingRequest    `json:"pending"`
 }
 
 type webLiveEntry struct {
@@ -182,7 +183,7 @@ func (w *WebChat) activity(selected, account string) webActivityReply {
 		account = "default"
 	}
 	writers, known := w.writerSnapshot()
-	result := webActivityReply{WritersKnown: known, Threads: make(map[string]webActivity, len(writers))}
+	result := webActivityReply{WritersKnown: known, Threads: make(map[string]webActivity, len(writers)), Pending: []webPendingRequest{}}
 	for id, writer := range writers {
 		result.Threads[id] = writer.activity
 	}
@@ -201,6 +202,9 @@ func (w *WebChat) activity(selected, account string) webActivityReply {
 			}
 		}
 		c.mu.Lock()
+		if writer, observed := writers[selected]; selected != "" && (!observed || writer.pid == c.process.PID) {
+			result.Pending = append(result.Pending, c.pendingForThread(selected)...)
+		}
 		for id, entry := range c.live {
 			if writer, found := writers[id]; found && writer.pid != c.process.PID {
 				continue

@@ -10,8 +10,12 @@ type CachedPage = {
   thread: string;
   revision: string;
   page: ChatHistoryPage;
-  expiresAt: Date;
+  format?: number;
+  expiresAt?: Date;
 };
+type HistorySource = { thread: string; revision: string };
+type SavedProgress = { _id: string; revision: string; nextCursor: string | null };
+type NativePage = ChatHistoryPage & { historyRevision: string };
 type NativeHistory = Omit<ChatHistory, keyof ChatHistoryPage> & Partial<ChatHistoryPage> & {
   historyRevision?: string;
   historyUnchanged?: boolean;
@@ -32,8 +36,12 @@ export class ChatHistoryCache {
   private readonly directory: string;
   private client?: MongoClient;
   private collection?: Collection<CachedPage>;
+  private progress?: Collection<SavedProgress>;
   private indexes?: Promise<unknown>;
+  private readonly threadWrites = new Map<string, Promise<unknown>>();
   private retryAfter = 0;
+  private scanning = false;
+  private lastThread = "";
 
   constructor(state: string) {
     this.directory = join(state, "history-cache");
@@ -56,15 +64,37 @@ export class ChatHistoryCache {
       directConnection: true, serverSelectionTimeoutMS: 250, connectTimeoutMS: 250,
       socketTimeoutMS: 500, maxPoolSize: 4, waitQueueTimeoutMS: 250, retryReads: false, retryWrites: false,
     });
-    return this.collection = this.client.db().collection<CachedPage>("history_pages_v1");
+    const db = this.client.db();
+    this.progress = db.collection<SavedProgress>("history_progress_v1");
+    return this.collection = db.collection<CachedPage>("history_pages_v1");
+  }
+
+  private async prepare(pages: Collection<CachedPage>) {
+    try { await pages.dropIndex("expiresAt_1"); }
+    catch (error) {
+      if (![26, 27].includes((error as { code?: number }).code ?? 0)) throw error;
+    }
+    await pages.createIndex({ thread: 1 });
+    await pages.updateMany({ expiresAt: { $exists: true } }, { $unset: { expiresAt: "" } });
   }
 
   private async load(key?: PageKey) {
     if (!key) return;
     try {
-      return await this.pages()?.findOne({ _id: key.id, expiresAt: { $gt: new Date() } });
+      return await this.pages()?.findOne({ _id: key.id, format: 2 });
     } catch {
       this.retryAfter = Date.now() + 5000;
+    }
+  }
+
+  // A foreground read, a background page and an explicit deletion for the same
+  // thread must finish in order. An old write cannot invalidate a newer cursor.
+  private async withThread<T>(thread: string, action: () => Promise<T>) {
+    const current = (this.threadWrites.get(thread) ?? Promise.resolve()).catch(() => {}).then(action);
+    this.threadWrites.set(thread, current);
+    try { return await current; }
+    finally {
+      if (this.threadWrites.get(thread) === current) this.threadWrites.delete(thread);
     }
   }
 
@@ -73,49 +103,106 @@ export class ChatHistoryCache {
     const saved = await this.load(key);
     if (!saved || !key) return null;
     const revision = await nativeVersion(key.thread);
-    if (!revision) await this.deleted(key.thread);
     return revision === saved.revision ? saved.page : null;
   }
 
   async read(params: Record<string, unknown>, nativeRead: (revision: string) => Promise<NativeHistory>) {
     const key = pageKey(params);
-    const saved = await this.load(key);
-    const result = await nativeRead(saved?.revision ?? "");
-    const { historyRevision: revision, historyUnchanged, ...response } = result;
-    if (historyUnchanged && saved && revision === saved.revision) {
-      return { ...response, ...saved.page };
-    }
-    if (key && revision && Array.isArray(response.turns) && response.turns.length) {
-      await this.save(key, revision, { turns: response.turns, nextCursor: response.nextCursor ?? null });
-    }
-    return response;
+    if (!key || !this.pages()) return nativeRead("");
+    return this.withThread(key.thread, async () => {
+      const saved = await this.load(key);
+      const result = await nativeRead(saved?.revision ?? "");
+      const { historyRevision: revision, historyUnchanged, ...response } = result;
+      if (historyUnchanged && saved && revision === saved.revision) {
+        return { ...response, ...saved.page };
+      }
+      if (revision && Array.isArray(response.turns) && response.turns.length) {
+        await this.save(key, revision, { turns: response.turns, nextCursor: response.nextCursor ?? null });
+      }
+      return response;
+    });
   }
 
   private async save(key: PageKey, revision: string, page: ChatHistoryPage) {
-    if (!/^[0-9a-f]{64}$/.test(revision) || Buffer.byteLength(JSON.stringify(page)) > 4 * 1024 * 1024) return;
+    if (!/^[0-9a-f]{64}$/.test(revision) || Buffer.byteLength(JSON.stringify(page)) > 12 * 1024 * 1024) return false;
     try {
       const pages = this.pages();
-      if (!pages) return;
-      this.indexes ??= Promise.all([
-        pages.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
-        pages.createIndex({ thread: 1 }),
-      ]);
+      if (!pages) return false;
+      this.indexes ??= this.prepare(pages);
       await this.indexes;
-      await pages.replaceOne({ _id: key.id }, {
-        thread: key.thread, revision, page, expiresAt: new Date(Date.now() + 30 * 86_400_000),
-      }, { upsert: true });
+      const receipt = await pages.replaceOne({ _id: key.id }, {
+        thread: key.thread, revision, page, format: 2,
+      }, { upsert: true, writeConcern: { w: 1, journal: true } });
+      return receipt.acknowledged;
     } catch {
       this.indexes = undefined;
       this.retryAfter = Date.now() + 5000;
+      return false;
+    }
+  }
+
+  // One in-flight walk and one checkpoint per thread. A cursor is published
+  // only after its page is durable, so restart or temporary errors can repeat
+  // that read without losing turns. The old native cursors are revision-bound.
+  async refresh(
+    sources: () => Promise<HistorySource[]>,
+    nativePage: (source: HistorySource, cursor: string) => Promise<NativePage | null>,
+    busy: () => boolean,
+  ) {
+    if (this.scanning || busy()) return;
+    const pages = this.pages(), progress = this.progress;
+    if (!pages || !progress) return;
+    this.scanning = true;
+    try {
+      this.indexes ??= this.prepare(pages);
+      await this.indexes;
+      if (busy()) return;
+      const current = await sources();
+      const saved = new Map((await progress.find({ _id: { $in: current.map(s => s.thread) } }).toArray()).map(row => [row._id, row]));
+      const offset = current.findIndex(s => s.thread === this.lastThread) + 1;
+      let budget = 4;
+      for (const source of [...current.slice(offset), ...current.slice(0, offset)]) {
+        if (busy() || budget === 0) break;
+        this.lastThread = source.thread;
+        const previous = saved.get(source.thread);
+        const cursor = previous?.revision === source.revision ? previous.nextCursor : "";
+        if (cursor === null) continue;
+        const key = pageKey({ thread_id: source.thread, cursor });
+        if (!key) continue;
+        budget--;
+        await this.withThread(source.thread, async () => {
+          const cached = await this.load(key);
+          let page = cached?.revision === source.revision ? cached.page : undefined;
+          if (!page) {
+            if (busy()) return;
+            const fetched = await nativePage(source, cursor).catch(() => null);
+            if (!fetched || fetched.historyRevision !== source.revision || !Array.isArray(fetched.turns)) return;
+            page = { turns: fetched.turns, nextCursor: fetched.nextCursor ?? null };
+            if (!await this.save(key, source.revision, page)) return;
+          }
+          const nextCursor = page.nextCursor ?? null;
+          if (nextCursor !== null && (!nextCursor || nextCursor === cursor || !page.turns.length)) return;
+          await progress.updateOne({ _id: source.thread }, { $set: { revision: source.revision, nextCursor } },
+            { upsert: true, writeConcern: { w: 1, journal: true } });
+        });
+      }
+    } catch {
+      this.indexes = undefined;
+      this.retryAfter = Date.now() + 5000;
+    } finally {
+      this.scanning = false;
     }
   }
 
   async deleted(thread: string) {
-    try {
-      await this.pages()?.deleteMany({ thread });
-    } catch {
-      this.retryAfter = Date.now() + 5000;
-    }
+    await this.withThread(thread, async () => {
+      try {
+        await this.pages()?.deleteMany({ thread });
+        await this.progress?.deleteOne({ _id: thread });
+      } catch {
+        this.retryAfter = Date.now() + 5000;
+      }
+    });
   }
 
   async close() { await this.client?.close(); }
