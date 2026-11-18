@@ -8,3 +8,12 @@
 .project-group>summary{padding:9px 7px;color:var(--muted);font-size:12px;cursor:pointer}
 .sidebar{overflow:hidden}.chat-list{min-height:0}.sidebar-footer{flex-shrink:0}
 @media(max-height:850px){.sidebar{padding-top:14px}.brand{margin-bottom:14px}.sidebar-search{margin:12px 0 8px}.sections{display:grid;grid-template-columns:1fr 1fr;gap:2px}.sections button{padding:8px 7px;font-size:12px;gap:7px}.project-list{max-height:16vh}.list-heading{padding:12px 12px 8px}.sidebar-footer{margin-top:8px;padding-top:9px}}
+.turn-settings{display:flex;flex-wrap:wrap;gap:8px 12px;padding:3px 12px 7px}
+.turn-settings label{flex:1 1 132px;min-width:0;max-width:240px;gap:4px;color:var(--muted);font-size:11px}
+.turn-settings select,.shortcut-settings select{width:100%;min-width:0;padding:7px 9px;font-size:13px;text-overflow:ellipsis}
+.model-load-error{margin:0 12px 5px;font-size:12px;color:var(--muted)}
+.model-load-error button{font-size:inherit}
+.shortcut-settings>p{font-size:13px}
+.shortcut-grid{display:grid;gap:8px}
+.shortcut-grid label{display:grid;grid-template-columns:2.6em minmax(0,1fr);align-items:center}
+.shortcut-grid kbd{font:inherit;color:var(--muted)}

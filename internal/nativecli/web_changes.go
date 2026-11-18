@@ -64,12 +64,20 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 		}
 		var result struct {
 			Thread WebThread `json:"thread"`
+			Model  string    `json:"model"`
+			Effort string    `json:"reasoningEffort"`
 		}
 		if err := c.client.Call(ctx, "thread/start", args, &result); err != nil {
 			return nil, err
 		}
 		w.rememberAccount(result.Thread.ID, c.account)
 		result.Thread.Account = c.account
+		if result.Thread.Model == "" {
+			result.Thread.Model = result.Model
+		}
+		if result.Thread.Effort == "" {
+			result.Thread.Effort = result.Effort
+		}
 		return map[string]any{"thread": result.Thread, "account": c.account}, nil
 	}
 	if p.Thread == "" {
@@ -187,8 +195,21 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 	if p.Mode != "immediate" && p.Mode != "queue" {
 		return nil, errors.New("choose immediate or queue delivery")
 	}
+	if p.Model != "" || p.Effort != "" {
+		if p.Mode != "immediate" || p.Turn != "" {
+			return nil, errors.New("모델과 effort는 새 턴을 시작할 때 선택할 수 있습니다.")
+		}
+		if p.Model == "" {
+			return nil, errors.New("effort를 적용할 모델을 선택해 주세요.")
+		}
+	}
 	if err := w.verifyLogin(ctx, c); err != nil {
 		return nil, err
+	}
+	if p.Model != "" {
+		if err := c.validateTurnModel(ctx, p.Model, p.Effort); err != nil {
+			return nil, err
+		}
 	}
 	if p.Mode == "queue" {
 		owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
@@ -227,6 +248,12 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 		args["expectedTurnId"] = p.Turn
 	} else if p.Turn != "" {
 		return nil, errors.New("the previous turn finished; refresh before sending a new turn")
+	}
+	if p.Model != "" {
+		args["model"] = p.Model
+		if p.Effort != "" {
+			args["effort"] = p.Effort
+		}
 	}
 	var reply struct {
 		Turn struct {

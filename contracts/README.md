@@ -9,7 +9,7 @@ are the shared account/login methods plus `WebMethods` in
 `internal/nativecli/web_chat.go`. It excludes terminal controls, the old archive
 endpoints and menu usage activation. `snapshot` returns only account display
 metadata; it never scans all conversations once a second. Chat pages use
-`web.catalog/history/items/item`, and writes use create/send/interrupt/pin/move/
+`web.catalog/history/items/item/models`, and writes use create/send/interrupt/pin/move/
 archive/delete/projectCreate/respond. `web.pending` reads pending native requests.
 Mutations require the authenticated browser owner and an operation ID. Native
 ChatGPT identity, writer ownership and expected active turn are validated where

@@ -50,13 +50,13 @@ test("recent-only history, anchored upward pagination, safe Markdown and lazy de
   await page.screenshot({path:join(fixtureRoot!,"desktop-history.png")});
 });
 
-test("new chat, Enter intervention, Shift+Enter queue and browser reconnect",async({page,context})=>{
+test("new chat, Enter intervention, Command+Enter queue and browser reconnect",async({page,context})=>{
   await authenticate(page);
   await page.getByRole("button",{name:"새 채팅",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"새 채팅",exact:true});
   await dialog.getByLabel("프로젝트",{exact:true}).selectOption(fixture().project);
   await dialog.getByRole("button",{name:"채팅 만들기",exact:true}).click();
-  await expect(page.getByText("새 채팅이 준비됐습니다")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "표시할 메시지가 없습니다" })).toBeVisible();
   const input=page.getByLabel("메시지",{exact:true});
   await input.fill("GUI_FIXTURE_ACTIVE_BROWSER");
   await input.dispatchEvent("keydown",{key:"Enter",keyCode:229,isComposing:true});
@@ -66,7 +66,13 @@ test("new chat, Enter intervention, Shift+Enter queue and browser reconnect",asy
   const id=await page.locator("main.conversation").getAttribute("data-thread-id");
   await input.fill("지금 방향을 바로 수정합니다");await input.press("Enter");
   await expect(page.getByText("현재 작업에 전달했습니다.",{exact:true})).toBeVisible();
-  await input.fill("다음 단계는 큐로 진행합니다");await input.press("Shift+Enter");
+  await input.fill("다음 단계는 큐로 진행합니다");
+  await input.press("End");
+  await input.press("Shift+Enter");
+  await expect(input).toHaveValue("다음 단계는 큐로 진행합니다\n");
+  await expect(page.locator(".queue-preview")).toHaveCount(0);
+  await input.fill("다음 단계는 큐로 진행합니다");
+  await input.press("Meta+Enter");
   await expect(page.getByText("큐에 추가했습니다.",{exact:true})).toBeVisible();
   await expect(page.locator(".queue-preview summary")).toContainText("1개");
   await page.close();
@@ -78,6 +84,39 @@ test("new chat, Enter intervention, Shift+Enter queue and browser reconnect",asy
   await expect(next.locator(".working")).toHaveCount(0,{timeout:20000});
   await expect(next.getByText("다음 단계는 큐로 진행합니다",{exact:true})).toBeVisible();
   await next.screenshot({path:join(fixtureRoot!,"desktop-conversation.png")});
+});
+
+test("chat model controls and saved shortcut assignments", async ({ page }) => {
+  await authenticate(page);
+  await page.getByRole("button", { name: /긴 이력 페이지 테스트/ }).click();
+  const model = page.getByRole("combobox", { name: "모델", exact: true });
+  const effort = page.getByRole("combobox", { name: "Reasoning effort", exact: true });
+  await expect(model).toBeEnabled();
+  const choice = (await model.locator("option").nth(1).getAttribute("value"))!;
+  await model.selectOption(choice);
+  await expect(model).toHaveValue(choice);
+  const supported = await effort.locator("option[value=high]").count();
+  const effortValue = supported ? "high" : (await effort.locator("option").nth(1).getAttribute("value"))!;
+  await effort.selectOption(effortValue);
+  const input = page.getByLabel("메시지", { exact: true });
+  await input.fill("보내지 않은 초안");
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "단축키 설정", exact: true });
+  await expect(dialog.getByLabel("⌘3 할당", { exact: true })).toHaveValue("");
+  await dialog.getByLabel("⌘7 할당", { exact: true }).selectOption(`model:${choice}`);
+  await dialog.getByLabel("⌘8 할당", { exact: true }).selectOption(`effort:${effortValue}`);
+  await dialog.getByRole("button", { name: "저장", exact: true }).click();
+  await model.selectOption("");
+  await input.press("Meta+7");
+  await expect(model).toHaveValue(choice);
+  await effort.selectOption("");
+  await input.press("Control+Shift+8");
+  await expect(effort).toHaveValue(effortValue);
+  await expect(input).toHaveValue("보내지 않은 초안");
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  await expect(dialog.getByLabel("⌘7 할당", { exact: true })).toHaveValue(`model:${choice}`);
+  await expect(dialog.getByLabel("⌘8 할당", { exact: true })).toHaveValue(`effort:${effortValue}`);
 });
 
 test("long command output is fetched only when its nested accordion opens",async({page})=>{

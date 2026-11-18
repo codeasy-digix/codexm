@@ -3,6 +3,8 @@ package nativecli
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,4 +72,71 @@ func TestWebChatOfficialCore(t *testing.T) {
 			t.Fatal("owned web server did not exit on EOF")
 		}
 	}
+}
+
+func TestWebChatOfficialModelSelection(t *testing.T) {
+	f := newGUIControlFixture(t, "stdio")
+	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-web-model-selection")
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	listed, err := w.Dispatch(f.ctx, Request{Version: 1, Method: "web.models", Params: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chosen webModel
+	for _, model := range listed.([]webModel) {
+		if slices.Contains(model.Efforts, "xhigh") {
+			chosen = model
+			break
+		}
+	}
+	if chosen.Model == "" {
+		t.Fatal("official model list has no model with Extra High support")
+	}
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := created["thread"].(map[string]any)["id"].(string)
+	parameters := map[string]any{"thread_id": thread, "mode": "immediate", "text": "WEB_MODEL_SELECTION_FIXTURE", "model": chosen.Model, "effort": "unsupported-effort"}
+	if _, err := call("web.send", parameters); err == nil || !strings.Contains(err.Error(), "effort") {
+		t.Fatal("accepted an unsupported effort", err)
+	}
+	// The synthetic Responses provider uses the standard API effort range.
+	// Prove a non-default selection reaches that provider without normalization.
+	parameters["effort"] = "xhigh"
+	parameters["mode"] = "queue"
+	if _, err := call("web.send", parameters); err == nil {
+		t.Fatal("accepted an override on a queue request")
+	}
+	parameters["mode"] = "immediate"
+	if _, err := call("web.send", parameters); err != nil {
+		t.Fatal(err)
+	}
+	for until := time.Now().Add(5 * time.Second); time.Now().Before(until); {
+		f.mu.Lock()
+		bodies := append([]string{}, f.bodies...)
+		f.mu.Unlock()
+		for _, body := range bodies {
+			if !strings.Contains(body, "WEB_MODEL_SELECTION_FIXTURE") {
+				continue
+			}
+			var request struct {
+				Model     string `json:"model"`
+				Reasoning struct {
+					Effort string `json:"effort"`
+				} `json:"reasoning"`
+			}
+			if err := json.Unmarshal([]byte(body), &request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Model != chosen.Model || request.Reasoning.Effort != parameters["effort"] {
+				t.Fatalf("model input got %s/%s, want %s/%s", request.Model, request.Reasoning.Effort, chosen.Model, parameters["effort"])
+			}
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("the isolated model provider did not receive the requested turn")
 }

@@ -1,35 +1,44 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
-import { chatTitle, type ChatThread } from "../contracts/web";
+import { chatTitle, inheritTurnSelection, type ChatThread, type TurnSelection } from "../contracts/web";
 import { Accounts } from "./Accounts";
 import { Approval, ChatMessages } from "./ChatMessages";
 import { Composer } from "./Composer";
 import { Modal } from "./Modal";
-import { useCatalog, useChatHistory } from "./chat-hooks";
+import { readChatShortcuts, ShortcutSettings } from "./ShortcutSettings";
+import { useCatalog, useChatHistory, useChatModels } from "./chat-hooks";
 import "./styles/native.css";
 
-type Dialog = {kind:"new"|"project"|"accounts"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
+type Dialog = {kind:"new"|"project"|"accounts"|"settings"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
 type Section = "recents"|"projects"|"pinned"|"archived";
 
 export function App() {
   const access=useAccess(),data=useStateData();
   const [account,setAccount]=useState("default"),[section,setSection]=useState<Section>("recents"),[project,setProject]=useState("");
   const [query,setQuery]=useState(""),[selected,setSelected]=useState<ChatThread|null>(null),[sidebar,setSidebar]=useState(false);
+  const [turnSelections, setTurnSelections] = useState<Record<string, TurnSelection>>({});
+  const [shortcuts, setShortcuts] = useState(readChatShortcuts);
   const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
   const catalogState=useCatalog(access.ready,account,query,project,section==="archived");
   const {catalog}=catalogState;
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
   const chatState=useChatHistory(access.ready,selected?.id||"",account);
-  const {history}=chatState;
+  const history=chatState.history?.thread.id===selected?.id?chatState.history:undefined;
   const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null),olderBusy=useRef(false);
   const first=new Date().getHours()<12?"무엇부터 시작할까요?":"어떤 작업을 이어갈까요?";
   const accounts=catalog?.accounts||data.snapshot?.accounts||[];
-  const chat=history?.thread||selected;
+  const chat=selected&&history?{
+    ...history.thread,
+    model: history.thread.model || selected.model,
+    reasoningEffort: history.thread.reasoningEffort || selected.reasoningEffort,
+  }:selected;
+  const composerKey = `${selected?.id}:${account}`;
   const isArchived=history?.thread.archived??selected?.archived??false;
+  const modelState = useChatModels(access.ready && ((!!selected && !isArchived) || dialog?.kind === "settings"), account);
   const displayChats=section==="pinned"?(catalog?.pinned||[]).filter(c=>`${chatTitle(c)} ${c.cwd}`.toLowerCase().includes(query.toLowerCase())):catalog?.threads||[];
 
-  useEffect(()=>{if(!access.ready){setSelected(null);setDialog(null);setQuery("");setSidebar(false);}},[access.ready]);
+  useEffect(()=>{if(!access.ready){setSelected(null);setDialog(null);setQuery("");setSidebar(false);setTurnSelections({});}},[access.ready]);
   useEffect(()=>{stick.current=true;anchor.current=null;olderBusy.current=false;setMenu(false);},[selected?.id,account]);
   useLayoutEffect(()=>{
     const node=scroll.current;if(!node)return;
@@ -101,7 +110,7 @@ export function App() {
         {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
         {section!=="pinned"&&catalog?.nextCursor&&<button className="load-more" disabled={catalogState.loading} onClick={()=>void catalogState.refresh(catalog.nextCursor)}>채팅 더 보기</button>}
       </div>
-      <div className="sidebar-footer"><button onClick={()=>openDialog({kind:"accounts"})}>계정 관리</button><button onClick={()=>void logout().catch(e=>setError(e.message))}>로그아웃</button></div>
+      <div className="sidebar-footer"><button onClick={()=>openDialog({kind:"accounts"})}>계정 관리</button><button onClick={()=>{setSidebar(false);openDialog({kind:"settings"});}}>설정</button><button onClick={()=>void logout().catch(e=>setError(e.message))}>로그아웃</button></div>
     </aside>
     <main className="conversation" data-thread-id={selected?.id||""}>
       <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
@@ -119,11 +128,33 @@ export function App() {
           {history?.pending.map(p=><Approval key={p.request_id} request={p} thread={selected.id} account={account} onDone={()=>void chatState.refresh()}/>)}
         </div>:<div className="welcome"><span className="welcome-mark">C</span><p className="eyebrow">CODEXM · LOCAL WORKSPACE</p><h2>{first}</h2><p>최근 채팅을 이어가거나,<br/>프로젝트에서 새 작업을 시작하세요.</p><button className="primary" disabled={!catalog} onClick={()=>openDialog({kind:"new"})}>＋ 새 채팅 시작</button></div>}
       </div>
-      {selected&&!isArchived&&<Composer key={`${selected.id}:${account}`} thread={selected.id} account={account} history={history} onSent={()=>{stick.current=true;void chatState.refresh();void catalogState.refresh();}}/>}
+      {chat&&!isArchived&&<Composer
+        key={composerKey}
+        chat={chat}
+        account={account}
+        history={history}
+        models={modelState.models}
+        modelsLoading={modelState.loading}
+        modelError={modelState.error}
+        retryModels={modelState.retry}
+        selection={turnSelections[composerKey] ?? inheritTurnSelection}
+        onSelectionChange={selection=>setTurnSelections(current=>({...current,[composerKey]:selection}))}
+        shortcuts={shortcuts}
+        shortcutsEnabled={!dialog&&!sidebar}
+        onSent={()=>{stick.current=true;void chatState.refresh();void catalogState.refresh();}}
+      />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
     </main>
-    {dialog&&<Modal title={dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
-      {dialog.kind==="accounts"?<Accounts accounts={accounts}/>:<form className="dialog-form" onSubmit={e=>void submitDialog(e)}>
+    {dialog&&<Modal title={dialog.kind==="settings"?"단축키 설정":dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
+      {dialog.kind==="accounts"?<Accounts accounts={accounts}/>:dialog.kind==="settings"?<ShortcutSettings
+        bindings={shortcuts}
+        models={modelState.models}
+        modelsLoading={modelState.loading}
+        modelError={modelState.error}
+        retryModels={modelState.retry}
+        onSave={bindings=>{setShortcuts(bindings);setDialog(null);}}
+        onClose={()=>setDialog(null)}
+      />:<form className="dialog-form" onSubmit={e=>void submitDialog(e)}>
         {"chat"in dialog&&<p className="dialog-chat-title">{chatTitle(dialog.chat)}</p>}
         {(dialog.kind==="new"||dialog.kind==="move")&&<label>프로젝트<select aria-label="프로젝트" value={formProject} onChange={e=>{setFormProject(e.target.value);const chosen=projects.find(p=>p.id===e.target.value);if(chosen?.roots[0])setFormPath(chosen.roots[0].path);}}><option value="">프로젝트 없음</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
         {dialog.kind==="project"&&<label>프로젝트 이름<input value={formName} onChange={e=>setFormName(e.target.value)} placeholder="폴더 이름 사용" maxLength={200}/></label>}

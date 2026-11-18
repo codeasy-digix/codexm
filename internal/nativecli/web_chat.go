@@ -24,6 +24,7 @@ import (
 
 var WebMethods = []Method{
 	{"web.catalog", false, false}, {"web.history", false, false}, {"web.items", false, false}, {"web.item", false, false},
+	{"web.models", false, false},
 	{"web.create", true, false}, {"web.send", true, true}, {"web.interrupt", true, false},
 	{"web.pin", true, false}, {"web.move", true, false}, {"web.archive", true, false},
 	{"web.delete", true, false}, {"web.projectCreate", true, false},
@@ -52,6 +53,8 @@ type webParams struct {
 	Item     string          `json:"item_id"`
 	Text     string          `json:"text"`
 	Mode     string          `json:"mode"`
+	Model    string          `json:"model"`
+	Effort   string          `json:"effort"`
 	Cwd      string          `json:"cwd"`
 	Project  string          `json:"project_id"`
 	Name     string          `json:"name"`
@@ -70,6 +73,8 @@ type webConnection struct {
 	revision string
 	mu       sync.Mutex
 	pending  map[string]cr.Message
+	models   []webModel
+	modelsAt time.Time
 }
 
 type WebChat struct {
@@ -276,7 +281,7 @@ func (w *WebChat) Dispatch(ctx context.Context, r Request) (any, error) {
 	if p.Thread != "" && !threadID.MatchString(p.Thread) {
 		return nil, errors.New("complete local thread UUID required")
 	}
-	if len(p.Cursor) > 4096 || len(p.Text) > 128*1024 || len(p.Name) > 200 || len(p.Search) > 500 || len(p.Turn) > 256 || len(p.Item) > 256 || len(p.Project) > 256 || len(p.Cwd) > 4096 || len(p.Request) > 256 || len(p.Response) > 128*1024 {
+	if len(p.Cursor) > 4096 || len(p.Text) > 128*1024 || len(p.Name) > 200 || len(p.Search) > 500 || len(p.Turn) > 256 || len(p.Item) > 256 || len(p.Project) > 256 || len(p.Cwd) > 4096 || len(p.Request) > 256 || len(p.Response) > 128*1024 || len(p.Model) > 200 || len(p.Effort) > 64 {
 		return nil, errors.New("web chat input is too large")
 	}
 	call := func() (any, error) { return w.dispatch(ctx, r, p) }
@@ -295,8 +300,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return nil, err
 	}
 	switch r.Method {
-	case "web.catalog":
-		return w.catalog(ctx, connection, p)
+	case "web.models":
+		return connection.availableModels(ctx)
 	case "web.history":
 		return w.history(ctx, connection, p)
 	case "web.items":

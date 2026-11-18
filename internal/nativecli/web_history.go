@@ -53,6 +53,12 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	read.Thread.Archived = entry.Archived
 	read.Thread.Pinned = desktop.IsPinned(entry)
 	read.Thread.Project = desktop.ProjectFor(entry)
+	if read.Thread.Model == "" {
+		read.Thread.Model = entry.Model
+	}
+	if read.Thread.Effort == "" {
+		read.Thread.Effort = entry.Effort
+	}
 	owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err

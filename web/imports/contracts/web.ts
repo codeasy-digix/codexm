@@ -8,6 +8,7 @@ export const bridgeContract = {
     { name: "web.history", mutation: false, model: false },
     { name: "web.items", mutation: false, model: false },
     { name: "web.item", mutation: false, model: false },
+    { name: "web.models", mutation: false, model: false },
     { name: "web.create", mutation: true, model: false },
     { name: "web.send", mutation: true, model: true },
     { name: "web.interrupt", mutation: true, model: false },
@@ -29,9 +30,48 @@ export type Catalog = { threads: ChatThread[]; projects: Project[]; otherProject
 export type PendingRequest = { request_id: string; method: string; params: Record<string, any> };
 export type ChatHistory = { thread: ChatThread; turns: ChatTurn[]; nextCursor?: string | null; queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>; pending: PendingRequest[] };
 
+export type ChatModel = {
+  model: string;
+  displayName: string;
+  isDefault: boolean;
+  defaultEffort: string;
+  efforts: string[];
+};
+
+export type TurnSelection = { model: string; effort: string };
+export const inheritTurnSelection: TurnSelection = { model: "", effort: "" };
+export const shortcutDigits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+type ShortcutDigit = typeof shortcutDigits[number];
+export type ShortcutAction = { kind: "model" | "effort"; value: string };
+export type ChatShortcuts = Partial<Record<ShortcutDigit, ShortcutAction>>;
+export const defaultChatShortcuts: ChatShortcuts = {
+  "1": { kind: "model", value: "gpt-6.2-sol" },
+  "2": { kind: "model", value: "gpt-6.2-astra" },
+  "4": { kind: "effort", value: "max" },
+  "5": { kind: "effort", value: "xhigh" },
+  "6": { kind: "effort", value: "high" },
+};
+
+export function chatSettingsShortcut(event: Pick<KeyboardEvent,
+  "key" | "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey" | "repeat" | "isComposing" | "keyCode"
+>, shortcuts: ChatShortcuts): ShortcutAction | undefined {
+  if (event.isComposing || event.keyCode === 229 || event.altKey || event.repeat) return;
+  const command = event.metaKey && !event.ctrlKey && !event.shiftKey;
+  // Some browsers consume Command+number for tab navigation before dispatch.
+  const fallback = event.ctrlKey && event.shiftKey && !event.metaKey;
+  if (!command && !fallback) return;
+  const key = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1] ?? event.key;
+  if (!/^[1-9]$/.test(key)) return;
+  return shortcuts[key as ShortcutDigit];
+}
+
+export function effortLabel(effort: string): string {
+  return effort === "xhigh" ? "Extra High" : effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
 export function composerAction(e: { key: string; shiftKey: boolean; isComposing?: boolean; keyCode?: number; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean }): "immediate" | "queue" | null {
-  if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.altKey || e.metaKey) return null;
-  return e.shiftKey ? "queue" : "immediate";
+  if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.altKey || e.shiftKey) return null;
+  return e.metaKey ? "queue" : "immediate";
 }
 
 export function mergeTurns(existing: ChatTurn[],incoming: ChatTurn[],older = false): ChatTurn[] {

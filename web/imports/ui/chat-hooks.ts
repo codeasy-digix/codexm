@@ -1,6 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "../../client/data";
-import { mergeTurns, type ChatHistory, type Catalog } from "../contracts/web";
+import { mergeTurns, type ChatHistory, type Catalog, type ChatModel } from "../contracts/web";
+
+export function useChatModels(enabled: boolean, account: string) {
+  const [result, setResult] = useState<{ account: string; models: ChatModel[]; error?: string }>();
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    setResult(undefined);
+    void call<ChatModel[]>("web.models", { account }).then(models => {
+      if (active) setResult({ account, models });
+    }).catch(error => {
+      if (active) setResult({ account, models: [], error: (error as Error).message });
+    });
+    return () => { active = false; };
+  }, [enabled, account, attempt]);
+  const current = result?.account === account ? result : undefined;
+  return {
+    models: current?.models ?? [],
+    error: current?.error,
+    loading: enabled && !current,
+    retry: () => setAttempt(previous => previous + 1),
+  };
+}
 
 export function useCatalog(ready:boolean,account:string,search:string,project:string,archived:boolean) {
   const [catalog,setCatalog]=useState<Catalog>(),[error,setError]=useState(""),[loading,setLoading]=useState(false);
