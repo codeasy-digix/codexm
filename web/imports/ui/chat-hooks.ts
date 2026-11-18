@@ -53,21 +53,21 @@ export function useChatActivity(enabled: boolean, thread: string, account: strin
   };
 }
 
-export function useChatModels(enabled: boolean, account: string) {
-  const [result, setResult] = useState<{ account: string; models: ChatModel[]; error?: string }>();
+export function useChatModels(enabled: boolean, account: string, generation?: number) {
+  const [result, setResult] = useState<{ account: string; generation?: number; models: ChatModel[]; error?: string }>();
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!enabled) return;
     let active = true;
     setResult(undefined);
     void call<ChatModel[]>("web.models", { account }).then(models => {
-      if (active) setResult({ account, models });
+      if (active) setResult({ account, generation, models });
     }).catch(error => {
-      if (active) setResult({ account, models: [], error: (error as Error).message });
+      if (active) setResult({ account, generation, models: [], error: (error as Error).message });
     });
     return () => { active = false; };
-  }, [enabled, account, attempt]);
-  const current = result?.account === account ? result : undefined;
+  }, [enabled, account, generation, attempt]);
+  const current = result?.account === account && result.generation === generation ? result : undefined;
   return {
     models: current?.models ?? [],
     error: current?.error,

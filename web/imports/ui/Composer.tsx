@@ -22,20 +22,37 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   const [notice, setNotice] = useState("");
   const [uncertain, setUncertain] = useState(false);
   const inFlight = useRef(false);
-  const active = liveTurn ? liveTurn.status === "inProgress" : history?.thread.status.type === "active";
   const external = history?.thread.externalOwner;
-  const turn = active ? liveTurn?.id ?? history?.turns.slice().reverse().find(t => t.status === "inProgress")?.id : undefined;
+  const delivery = history?.delivery;
+  const active = external ? delivery?.state === "ready" || delivery?.state === "waiting"
+    : liveTurn ? liveTurn.status === "inProgress" : history?.thread.status.type === "active";
+  const turn = external ? delivery?.turnId : active
+    ? liveTurn?.id ?? history?.turns.slice().reverse().find(t => t.status === "inProgress")?.id : undefined;
+  const waiting = external ? delivery?.state === "waiting" : !!history?.pending.length;
+  const draining = !!history?.loginDraining;
+  const queueDraining = draining && !external && !active;
+  let directError = "";
+  if (waiting) directError = external ? "다른 창에서 승인 또는 입력을 기다리고 있습니다." : "현재 턴의 승인 또는 입력에 먼저 응답해 주세요.";
+  else if (external && !turn) directError = delivery?.state === "idle"
+    ? "다른 창에서 열려 있는 채팅입니다. 다음 입력을 큐에 추가할 수 있습니다."
+    : "다른 창의 현재 턴에 연결할 수 없습니다. 큐에 추가할 수 있습니다.";
+  else if (active && !turn) directError = "현재 턴을 확인하는 중입니다.";
+  else if (draining && !active) directError = "기존 작업이 끝나면 변경된 웹 계정이 적용됩니다.";
   const queue = history?.queue || [];
   const { selectedModel, efforts, inheritedEffort } = resolveTurnSelection(chat, models, selection);
   const hasOverride = !!(selection.model || selection.effort);
 
   async function send(mode: "immediate" | "queue") {
     if (!text.trim() || inFlight.current || uncertain) return;
-    if (mode === "immediate" && external) {
-      setError("이 채팅은 다른 GUI/CLI가 소유하고 있습니다. 원래 창에서 해제하거나 큐에 추가하세요.");
+    if (mode === "immediate" && directError) {
+      setError(directError);
       return;
     }
-    const override = mode === "immediate" && !active && hasOverride;
+    if (mode === "queue" && queueDraining) {
+      setError("기존 작업이 끝나면 변경된 웹 계정이 적용됩니다.");
+      return;
+    }
+    const override = mode === "immediate" && !active && !external && hasOverride;
     if (override && (!selectedModel || (selection.effort && !efforts.includes(selection.effort)))) {
       setError("현재 계정에서 사용할 모델과 effort를 다시 선택해 주세요.");
       return;
@@ -53,12 +70,12 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
     setNotice("");
     const sent = text;
     try {
-      await call("web.send", parameters, crypto.randomUUID());
+      const result = await call<{ mode: "start" | "steer" | "queue" }>("web.send", parameters, crypto.randomUUID());
       setText(current => current === sent ? "" : current);
       if (mode === "queue") {
         setNotice(hasOverride ? "큐에 추가했습니다. 이 입력은 채팅의 실행 설정으로 처리됩니다." : "큐에 추가했습니다.");
       } else {
-        setNotice(active ? "현재 작업에 전달했습니다." : "작업을 시작했습니다.");
+        setNotice(result.mode === "steer" ? "현재 작업에 전달했습니다." : "작업을 시작했습니다.");
       }
       onSent();
     } catch (e) {
@@ -92,7 +109,8 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       <summary>대기 중인 입력 {queue.length}개</summary>
       {queue.map(q => <p key={q.id}>{q.input.map(x => x.text || "").join("\n")}</p>)}
     </details>}
-    {external && <p className="owner-note">다른 GUI/CLI에서 사용 중 · 큐 입력은 원래 실행 계정에서 처리됩니다.</p>}
+    {external && <p className="owner-note">{directError || "다른 창의 현재 턴에 개입할 수 있습니다. 해당 창의 계정으로 전달됩니다."}</p>}
+    {draining && <p className="owner-note" role="status">기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.</p>}
     {error && <p role="alert" className="inline-error">{error}</p>}
     {uncertain && <p className="inline-error">전송 결과가 불확실하여 재전송을 막았습니다. 대화와 큐에서 원래 입력을 확인하세요.</p>}
     <div className="composer">
@@ -109,8 +127,8 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
         <small>Enter 전송·개입 · ⌘Enter 큐 · Shift+Enter 줄바꿈</small>
         <div className="composer-actions">
           {active && !external && <button className="stop-button" onClick={() => void stop()} disabled={busy} aria-label="현재 턴 중지">■</button>}
-          <button aria-keyshortcuts="Meta+Enter" onClick={() => void send("queue")} disabled={busy || uncertain || !text.trim()}>큐에 추가</button>
-          <button className="primary" onClick={() => void send("immediate")} disabled={busy || uncertain || !text.trim() || external}>
+          <button aria-keyshortcuts="Meta+Enter" onClick={() => void send("queue")} disabled={busy || uncertain || !text.trim() || queueDraining}>큐에 추가</button>
+          <button className="primary" onClick={() => void send("immediate")} disabled={busy || uncertain || !text.trim() || !!directError}>
             {busy ? "전달 중…" : active ? "즉시 개입" : "보내기"}
           </button>
         </div>

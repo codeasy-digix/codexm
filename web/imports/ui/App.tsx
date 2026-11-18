@@ -39,7 +39,11 @@ export function App() {
   const chatState=useChatHistory(ready,selected?.id||"",account);
   const history=chatState.history?.thread.id===selected?.id?chatState.history:undefined;
   const activity = useChatActivity(ready, selected?.id || "", account);
-  const openActivity: ChatActivity | undefined = (selected && activity.threads?.[selected.id]) ||
+  const externalDelivery = history?.thread.externalOwner ? history.delivery : undefined;
+  const externalState = externalDelivery?.state === "ready" ? "running" :
+    externalDelivery?.state === "idle" || externalDelivery?.state === "waiting" ? externalDelivery.state : undefined;
+  const openActivity: ChatActivity | undefined = externalState ? { source: "external", state: externalState, turnId: externalDelivery?.turnId } :
+    (selected && activity.threads?.[selected.id]) ||
     (history?.thread.externalOwner ? { source: "external", state: "unknown" } :
       history?.thread.status.type === "active" ? {
         source: "web", state: history.pending.length ? "waiting" : "running",
@@ -62,7 +66,7 @@ export function App() {
   const composerKey = `${selected?.id}:${account}`;
   const selection = turnSelections[composerKey] ?? inheritTurnSelection;
   const isArchived=history?.thread.archived??selected?.archived??false;
-  const modelState = useChatModels(ready && ((!!selected && !isArchived) || dialog?.kind === "settings"), account);
+  const modelState = useChatModels(ready && ((!!selected && !isArchived) || dialog?.kind === "settings"), account, history?.loginGeneration);
   const displayChats=section==="pinned"?(catalog?.pinned||[]).filter(c=>`${chatTitle(c)} ${c.cwd}`.toLowerCase().includes(query.toLowerCase())):catalog?.threads||[];
 
   useEffect(()=>{
@@ -193,7 +197,7 @@ export function App() {
       }}>
         <strong>{chatTitle(t)}</strong>
         <span className="chat-row-meta"><small>{t.cwd.split("/").filter(Boolean).pop()||t.cwd}</small>
-          {!t.archived && <ChatActivityLabel activity={activity.threads?.[t.id]} known={activity.writersKnown}/>}
+          {!t.archived && <ChatActivityLabel activity={t.id === selected?.id ? openActivity : activity.threads?.[t.id]} known={activity.writersKnown}/>}
         </span>
       </a>)}
         {!displayChats.length&&catalog&&!catalogState.loading&&<p className="muted empty-list">표시할 채팅이 없습니다.</p>}

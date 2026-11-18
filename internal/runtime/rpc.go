@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -17,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/gorilla/websocket"
 )
 
 type Message struct {
@@ -208,8 +209,37 @@ func StartStdio(ctx context.Context, cmd *exec.Cmd) (*Client, error) {
 	return c, nil
 }
 func DialUnix(ctx context.Context, socket string) (*Client, error) {
+	return dialUnix(ctx, socket, 0)
+}
+
+// DialUnixWriter verifies the kernel's peer credentials before sending the
+// initialization handshake. An accessible socket path alone proves no ownership.
+func DialUnixWriter(ctx context.Context, socket string, pid int) (*Client, error) {
+	if pid <= 1 {
+		return nil, errors.New("invalid app-server writer PID")
+	}
+	return dialUnix(ctx, socket, pid)
+}
+
+func dialUnix(ctx context.Context, socket string, writerPID int) (*Client, error) {
 	d := websocket.Dialer{HandshakeTimeout: 10 * time.Second, NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		if err != nil || writerPID == 0 {
+			return conn, err
+		}
+		raw, err := conn.(*net.UnixConn).SyscallConn()
+		var pid, uid int
+		if err == nil {
+			controlErr := raw.Control(func(fd uintptr) { pid, uid, err = unixPeerIdentity(int(fd)) })
+			if controlErr != nil {
+				err = controlErr
+			}
+		}
+		if err != nil || pid != writerPID || uid != os.Geteuid() {
+			conn.Close()
+			return nil, errors.New("app-server socket peer does not match the chat writer")
+		}
+		return conn, nil
 	}}
 	conn, resp, e := d.DialContext(ctx, "ws://localhost/", http.Header{})
 	if resp != nil && resp.Body != nil {

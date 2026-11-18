@@ -56,7 +56,7 @@ test("recent-only history, anchored upward pagination, safe Markdown and lazy de
   await page.screenshot({path:join(fixtureRoot!,"desktop-history.png")});
 });
 
-test("project picker and live status from a separate native writer", async ({page}) => {
+test("project picker, Enter intervention and Command+Enter for a separate native writer", async ({page}) => {
   const row = page.getByRole("link",{name:/진행 중 개입 테스트/});
   try {
     await authenticate(page);
@@ -71,11 +71,23 @@ test("project picker and live status from a separate native writer", async ({pag
     await row.click();
     await expect(page.getByRole("status",{name:"현재 작업 상태",exact:true})).toHaveText("다른 창 · 작업 중");
     await expect(page.getByText("외부 작업이 기록한 진행 안내",{exact:true})).toBeVisible();
-    await expect(page.getByRole("button",{name:"보내기",exact:true})).toBeDisabled();
+    const input = page.getByLabel("메시지", {exact: true});
+    await input.fill("외부에서 진행 중인 턴을 수정합니다");
+    await expect(page.getByRole("button", {name: "즉시 개입", exact: true})).toBeEnabled();
+    await input.press("Enter");
+    await expect(page.getByText("현재 작업에 전달했습니다.", {exact: true})).toBeVisible();
+    await expect(page.locator(".queue-preview")).toHaveCount(0);
+    await input.fill("외부 작업이 끝난 뒤 실행합니다");
+    await input.press("Meta+Enter");
+    await expect(page.getByText("큐에 추가했습니다.", {exact: true})).toBeVisible();
+    await expect(page.locator(".queue-preview summary")).toContainText("1개");
+    await page.locator(".composer-wrap").screenshot({path: join(fixtureRoot!, "external-delivery.png")});
   } finally {
     writeFileSync(join(fixtureRoot!,"release-foreign"),"release isolated external writer");
   }
   await expect(row).toContainText("다른 창에서 열림",{timeout:12000});
+  await expect(page.getByText("외부에서 진행 중인 턴을 수정합니다", {exact: true})).toBeVisible();
+  await expect(page.getByText("외부 작업이 끝난 뒤 실행합니다", {exact: true})).toBeVisible();
 });
 
 test("chat URLs restore the same chat after session check and browser navigation", async ({ page }) => {
@@ -118,7 +130,7 @@ test("chat URLs restore the same chat after session check and browser navigation
   await expect(page.getByLabel("메시지", { exact: true })).toHaveCount(0);
 });
 
-test("streamed answer, Enter intervention, Command+Enter queue and browser reconnect",async({page,context})=>{
+test("streamed answer, intervention, queue, browser reconnect and default login renewal",async({page,context})=>{
   await authenticate(page);
   await page.getByRole("button",{name:"새 채팅",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"새 채팅",exact:true});
@@ -145,15 +157,22 @@ test("streamed answer, Enter intervention, Command+Enter queue and browser recon
   await input.press("Meta+Enter");
   await expect(page.getByText("큐에 추가했습니다.",{exact:true})).toBeVisible();
   await expect(page.locator(".queue-preview summary")).toContainText("1개");
+  const renewal = "기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.";
+  // This file exists only in the browser fixture home. The real credential
+  // transition and the live identity check are covered in the Go integration.
+  writeFileSync(join(fixture().home, "shared", "auth.json"), JSON.stringify({fixture: "new login revision"}), {mode: 0o600});
+  await expect(page.getByText(renewal, {exact: true})).toBeVisible();
   await page.close();
   const next=await context.newPage();await next.goto(url);
   await next.getByRole("link",{name:/GUI_FIXTURE_ACTIVE_BROWSER/}).click();
   await expect(next.locator("main.conversation")).toHaveAttribute("data-thread-id",id!);
   const nextStatus=next.getByRole("status",{name:"현재 작업 상태",exact:true});
   await expect(nextStatus).toHaveText(/작업 중|응답 생성 중/);
+  await expect(next.getByText(renewal, {exact: true})).toBeVisible();
   writeFileSync(join(fixtureRoot!,"release-model"),"release fixture only");
   await expect(nextStatus).toHaveText("작업 완료",{timeout:20000});
   await expect(next.getByText("다음 단계는 큐로 진행합니다",{exact:true})).toBeVisible();
+  await expect(next.getByText(renewal, {exact: true})).toHaveCount(0, {timeout: 10000});
   await next.screenshot({path:join(fixtureRoot!,"desktop-conversation.png")});
 });
 

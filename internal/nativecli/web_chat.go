@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -68,15 +67,20 @@ type webParams struct {
 }
 
 type webConnection struct {
-	client   *cr.Client
-	process  processIdentity
-	account  string
-	revision string
-	mu       sync.Mutex
-	pending  map[string]cr.Message
-	models   []webModel
-	modelsAt time.Time
-	live     map[string]*webLiveEntry
+	client     *cr.Client
+	process    processIdentity
+	account    string
+	login      accounts.LoginIdentity
+	generation uint64
+	// The connection pool lock guards usage and retirement.
+	inUse      int
+	retiring   bool
+	checkAfter time.Time
+	mu         sync.Mutex
+	pending    map[string]cr.Message
+	models     []webModel
+	modelsAt   time.Time
+	live       map[string]*webLiveEntry
 }
 
 type WebChat struct {
@@ -85,6 +89,7 @@ type WebChat struct {
 	c           config.Config
 	mu          sync.Mutex
 	connections map[string]*webConnection
+	generation  uint64
 	writers     webWriterMonitor
 	usageCache  webUsageCache
 }
@@ -109,65 +114,6 @@ func (w *WebChat) Close() {
 			}
 		}
 	}
-}
-
-func (w *WebChat) connection(ctx context.Context, account string) (*webConnection, error) {
-	if account == "" {
-		account = "default"
-	}
-	if account != "default" {
-		if err := accounts.ValidateNativeAccount(w.c, account); err != nil {
-			return nil, err
-		}
-		for _, removed := range w.c.AccountRegistry.Removed {
-			if account == removed {
-				return nil, errors.New("selected account was removed")
-			}
-		}
-		if err := cr.EnsureAccountHome(w.c, account); err != nil {
-			return nil, err
-		}
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	identity := accounts.InspectIdentity(w.c, account)
-	if connection := w.connections[account]; connection != nil {
-		select {
-		case <-connection.client.Done:
-			return nil, errors.New("official server disconnected; inspect unfinished work before restarting the web service")
-		default:
-		}
-		if connection.revision != identity.Revision {
-			return nil, errors.New("saved login changed; the running web server keeps its original authentication; finish its work before restarting")
-		}
-		return connection, nil
-	}
-	r, err := Resolver(w.c)
-	if err != nil {
-		return nil, err
-	}
-	shared, _ := json.Marshal(config.Expand(w.c.Runtime.SharedCodexHome))
-	cmd := exec.Command(r.Binary, "--no-daemon", "-c", "sqlite_home="+string(shared), "-c", `cli_auth_credentials_store="file"`, "app-server", "--listen", "stdio://")
-	cmd.Env = environment(w.c, account)
-	cmd.Dir = config.Expand(w.c.Runtime.SharedCodexHome)
-	if err := os.MkdirAll(cmd.Dir, 0700); err != nil {
-		return nil, err
-	}
-	initCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	client, err := cr.StartStdio(initCtx, cmd)
-	if err != nil {
-		return nil, err
-	}
-	process, err := inspectProcess(ctx, cmd.Process.Pid)
-	if err != nil {
-		client.Close()
-		return nil, err
-	}
-	connection := &webConnection{client: client, process: process, account: account, revision: identity.Revision, pending: map[string]cr.Message{}}
-	w.connections[account] = connection
-	go connection.events(w.ctx)
-	return connection, nil
 }
 
 func (c *webConnection) events(ctx context.Context) {
@@ -223,10 +169,14 @@ func (c *webConnection) events(ctx context.Context) {
 // Compare the server's live user/workspace before model input. A nickname or
 // default symlink is not proof of the authentication cached in a running server.
 func (w *WebChat) verifyLogin(ctx context.Context, c *webConnection) error {
-	identity := accounts.InspectIdentity(w.c, c.account)
-	if identity.Revision != c.revision {
-		return errors.New("saved login changed; finish existing web work before restarting with that account")
+	if w.loginChanged(c) {
+		return errWebLoginDraining
 	}
+	return c.verifyExecutionLogin(ctx)
+}
+
+func (c *webConnection) verifyExecutionLogin(ctx context.Context) error {
+	identity := c.login
 	if identity.Key == "" {
 		return nil
 	} // API-key/custom providers have no ChatGPT claims.
@@ -311,6 +261,7 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 	if err != nil {
 		return nil, err
 	}
+	defer w.releaseConnection(connection)
 	switch r.Method {
 	case "web.models":
 		return connection.availableModels(ctx)
@@ -354,31 +305,12 @@ func (w *WebChat) prepare(ctx context.Context, c *webConnection, id string) erro
 	}
 	// A new native thread has no rollout until its first turn. Loading it again
 	// would fail and is unnecessary: the creating server already owns it.
-	cursor := ""
-	for {
-		var loaded struct {
-			Data       []string `json:"data"`
-			NextCursor *string  `json:"nextCursor"`
-		}
-		args := map[string]any{"limit": 100}
-		if cursor != "" {
-			args["cursor"] = cursor
-		}
-		if err := c.client.Call(ctx, "thread/loaded/list", args, &loaded); err != nil {
-			return err
-		}
-		for _, thread := range loaded.Data {
-			if thread == id {
-				return nil
-			}
-		}
-		if loaded.NextCursor == nil || *loaded.NextCursor == "" {
-			break
-		}
-		if *loaded.NextCursor == cursor {
-			return errors.New("official loaded-thread cursor did not advance")
-		}
-		cursor = *loaded.NextCursor
+	loaded, err := webLoadedThreads(ctx, c.client)
+	if err != nil {
+		return err
+	}
+	if _, found := loaded[id]; found {
+		return nil
 	}
 	var resumed struct{ Thread struct{ ID string } }
 	if err := c.client.Call(ctx, "thread/resume", map[string]any{"threadId": id, "excludeTurns": true}, &resumed); err != nil {

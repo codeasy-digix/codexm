@@ -238,3 +238,10 @@ func managedNativeLink(dest, root string) (string, error) {
 	}
 	return name, nil
 }
+
+// LinkedNativeDefault returns the named home selected by a managed native auth
+// link. Resolve only an actual link, never infer a home from matching logins.
+func LinkedNativeDefault(c config.Config) string {
+	name, _ := managedNativeLink(filepath.Join(config.Expand(c.Runtime.SharedCodexHome), "auth.json"), config.Expand(c.Runtime.AccountsDir))
+	return name
+}

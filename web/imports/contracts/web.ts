@@ -31,7 +31,16 @@ export type ChatThread = { id: string; name?: string; preview?: string; cwd: str
 export type Project = { id: string; name: string; roots: Array<{ path: string }>; nativeId?:string };
 export type Catalog = { threads: ChatThread[]; projects: Project[]; otherProjects?:Project[]; pinned: ChatThread[]; nextCursor?: string | null; accounts: Array<{ name: string; default?: boolean }>; defaultCwd: string; total?:number };
 export type PendingRequest = { request_id: string; method: string; params: Record<string, any> };
-export type ChatHistory = { thread: ChatThread; turns: ChatTurn[]; nextCursor?: string | null; queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>; pending: PendingRequest[] };
+export type ChatHistory = {
+  thread: ChatThread;
+  turns: ChatTurn[];
+  nextCursor?: string | null;
+  queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>;
+  pending: PendingRequest[];
+  delivery?: { state: "ready" | "waiting" | "idle" | "unavailable"; turnId?: string } | null;
+  loginDraining?: boolean;
+  loginGeneration?: number;
+};
 export type AccountLimits = { fiveHour: number | null; week: number | null; loading: boolean };
 
 export function chatIdFromPath(path: string): string {

@@ -16,7 +16,7 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if !filepath.IsAbs(output) {
 		t.Skip("requires an isolated browser fixture output directory")
 	}
-	f := newGUIControlFixtureDuration(t, "stdio", 45*time.Minute)
+	f := newGUIControlFixtureDuration(t, "unix", 45*time.Minute)
 	f.mu.Lock()
 	f.responseText = "## 작업을 확인했습니다\n\n브라우저에서 표시하는 **구조화된 응답**입니다.\n\n" +
 		"- 최근 대화부터 불러옵니다.\n- 명령 실행 과정은 접어서 표시합니다.\n\n" +

@@ -146,6 +146,7 @@ func (w *WebChat) thread(ctx context.Context, id string) (*WebThread, error) {
 		if err != nil {
 			return nil, err
 		}
+		defer w.releaseConnection(connection)
 		var draft struct{ Thread WebThread }
 		if err := connection.client.Call(ctx, "thread/read", map[string]any{"threadId": id, "includeTurns": false}, &draft); err != nil {
 			var rpc *cr.RPCError

@@ -54,6 +54,9 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 		return result, err
 	}
 	if r.Method == "web.create" {
+		if w.loginChanged(c) {
+			return nil, errWebLoginDraining
+		}
 		cwd, err := webDirectory(p.Cwd)
 		if err != nil {
 			return nil, err
@@ -203,6 +206,19 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 			return nil, errors.New("effort를 적용할 모델을 선택해 주세요.")
 		}
 	}
+	owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if len(owners) > 1 {
+		return nil, errors.New("채팅을 실행하는 프로세스를 하나로 확인할 수 없습니다.")
+	}
+	if len(owners) == 1 && (owners[0] != c.process.PID || p.Turn != "" || p.Mode == "queue") {
+		return w.sendToWriter(ctx, c, r, p, owners[0])
+	}
+	if p.Turn != "" {
+		return nil, errors.New("이전 턴이 끝났습니다. 채팅 상태를 확인한 뒤 다시 보내 주세요.")
+	}
 	if err := w.verifyLogin(ctx, c); err != nil {
 		return nil, err
 	}
@@ -211,44 +227,23 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 			return nil, err
 		}
 	}
-	if p.Mode == "queue" {
-		owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
-		if err != nil && !os.IsNotExist(err) {
-			return nil, err
-		}
-		if len(owners) == 0 {
-			if err := w.prepare(ctx, c, p.Thread); err != nil {
-				return nil, err
-			}
-		}
-		var reply struct {
-			Queued struct {
-				ID string `json:"id"`
-			} `json:"queuedSubmission"`
-		}
-		if err := c.client.Call(ctx, "thread/queue/add", map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}, &reply); err != nil {
-			return nil, err
-		}
-		return map[string]any{"thread_id": p.Thread, "mode": "queue", "queued_id": reply.Queued.ID, "status": "accepted"}, nil
-	}
 	if err := w.prepare(ctx, c, p.Thread); err != nil {
 		return nil, err
+	}
+	if w.loginChanged(c) {
+		return nil, errWebLoginDraining
+	}
+	if p.Mode == "queue" {
+		return queueWebInput(ctx, c.client, r, p)
 	}
 	current, err := c.client.Read(ctx, p.Thread, false)
 	if err != nil {
 		return nil, err
 	}
-	method := "turn/start"
-	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
 	if current.Status.Type == "active" {
-		if p.Turn == "" {
-			return nil, errors.New("the chat became active; refresh before intervening")
-		}
-		method = "turn/steer"
-		args["expectedTurnId"] = p.Turn
-	} else if p.Turn != "" {
-		return nil, errors.New("the previous turn finished; refresh before sending a new turn")
+		return nil, errors.New("채팅이 이미 실행 중입니다. 현재 턴을 확인한 뒤 다시 보내 주세요.")
 	}
+	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
 	if p.Model != "" {
 		args["model"] = p.Model
 		if p.Effort != "" {
@@ -259,15 +254,97 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 		Turn struct {
 			ID string `json:"id"`
 		} `json:"turn"`
-		TurnID string `json:"turnId"`
 	}
-	if err := c.client.Call(ctx, method, args, &reply); err != nil {
+	if err := callWebInput(ctx, c.client, "turn/start", args, &reply); err != nil {
 		return nil, err
 	}
-	w.rememberAccount(p.Thread, c.account)
-	id := reply.Turn.ID
-	if id == "" {
-		id = reply.TurnID
+	if reply.Turn.ID == "" {
+		return nil, errWebInputUnconfirmed
 	}
-	return map[string]any{"thread_id": p.Thread, "turn_id": id, "mode": strings.TrimPrefix(method, "turn/"), "status": "accepted", "accepted_at": time.Now().Unix()}, nil
+	w.rememberAccount(p.Thread, c.account)
+	return map[string]any{"thread_id": p.Thread, "turn_id": reply.Turn.ID, "mode": "start", "status": "accepted", "accepted_at": time.Now().Unix()}, nil
+}
+
+func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request, p webParams, pid int) (any, error) {
+	if p.Mode == "immediate" && p.Turn == "" {
+		return nil, errWebForeignInput
+	}
+	probe, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	owner, err := w.openInputOwner(probe, p.Thread, pid)
+	if err != nil {
+		if p.Mode == "queue" && pid != c.process.PID {
+			// The durable native queue can accept input from a different
+			// connection. It does not load or take over the original chat.
+			return queueWebInput(ctx, c.client, r, p)
+		}
+		return nil, errWebForeignInput
+	}
+	defer owner.release()
+	if owner.web != nil {
+		if err := owner.web.verifyExecutionLogin(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if p.Mode == "immediate" || (owner.web != nil && w.loginChanged(owner.web)) {
+		delivery, err := owner.delivery(probe, p.Thread)
+		if err != nil {
+			return nil, errors.New("현재 턴의 상태를 읽을 수 없습니다. 입력은 전송되지 않았습니다.")
+		}
+		if p.Mode == "immediate" {
+			if delivery.State == "waiting" {
+				return nil, errors.New("현재 턴이 승인 또는 사용자 입력을 기다립니다. 원래 창에서 응답해 주세요.")
+			}
+			if delivery.State != "ready" || delivery.TurnID != p.Turn {
+				return nil, errors.New("개입하려던 턴이 바뀌었습니다. 현재 턴을 확인해 주세요.")
+			}
+		} else if delivery.State == "idle" {
+			return nil, errWebLoginDraining
+		}
+	}
+	if err := w.verifyInputOwner(probe, owner, p.Thread); err != nil {
+		return nil, err
+	}
+	if p.Mode == "queue" {
+		return queueWebInput(ctx, owner.client, r, p)
+	}
+	var reply struct{ TurnID string }
+	args := map[string]any{"threadId": p.Thread, "expectedTurnId": p.Turn, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
+	if err := callWebInput(ctx, owner.client, "turn/steer", args, &reply); err != nil {
+		return nil, err
+	}
+	if reply.TurnID != p.Turn {
+		return nil, errWebInputUnconfirmed
+	}
+	return map[string]any{"thread_id": p.Thread, "turn_id": p.Turn, "mode": "steer", "status": "accepted", "accepted_at": time.Now().Unix()}, nil
+}
+
+var errWebInputUnconfirmed = errors.New("전송 결과를 확인하지 못했습니다. 대화와 큐에서 원래 입력을 확인해 주세요.")
+
+func callWebInput(ctx context.Context, client *cr.Client, method string, args, reply any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := client.Call(ctx, method, args, reply); err != nil {
+		var rpc *cr.RPCError
+		if !errors.As(err, &rpc) {
+			return errWebInputUnconfirmed
+		}
+		return rpc
+	}
+	return nil
+}
+
+func queueWebInput(ctx context.Context, client *cr.Client, r Request, p webParams) (any, error) {
+	var reply struct {
+		Queued struct{ ID string } `json:"queuedSubmission"`
+	}
+	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
+	if err := callWebInput(ctx, client, "thread/queue/add", args, &reply); err != nil {
+		return nil, err
+	}
+	if reply.Queued.ID == "" {
+		return nil, errWebInputUnconfirmed
+	}
+	return map[string]any{"thread_id": p.Thread, "mode": "queue", "queued_id": reply.Queued.ID, "status": "accepted"}, nil
 }

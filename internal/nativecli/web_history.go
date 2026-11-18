@@ -81,16 +81,25 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		page.Data = []WebTurn{}
 	}
 	slices.Reverse(page.Data)
+	var delivery *webDelivery
+	var externalTurn string
 	if read.Thread.External && p.Cursor == "" && !read.Thread.Archived {
+		control := w.externalDelivery(ctx, p.Thread, owners)
+		delivery = &control
 		writers, _ := w.writerSnapshot()
 		activity := writers[p.Thread].activity
 		if activity.State == "running" {
-			for i := range page.Data {
-				if page.Data[i].ID == activity.TurnID {
-					addExternalProgress(ctx, c, p.Thread, &page.Data[i])
-					break
-				}
-			}
+			externalTurn = activity.TurnID
+		}
+	}
+	if p.Cursor == "" && !read.Thread.Archived {
+		// The compact summary drops additional user input within a turn.
+		// Include recent in-turn messages even after a queued turn starts.
+		itemsCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		for i := max(0, len(page.Data)-2); i < len(page.Data); i++ {
+			turn := &page.Data[i]
+			addRecentMessages(itemsCtx, c, p.Thread, turn, turn.ID == externalTurn)
 		}
 	}
 	var queue struct {
@@ -105,23 +114,19 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 			return nil, err
 		}
 	}
-	return map[string]any{"thread": read.Thread, "turns": page.Data, "nextCursor": page.NextCursor, "queue": queue.Data, "queueNextCursor": queue.NextCursor, "pending": w.pending(c, p.Thread)}, nil
+	return map[string]any{
+		"thread": read.Thread, "turns": page.Data, "nextCursor": page.NextCursor,
+		"queue": queue.Data, "queueNextCursor": queue.NextCursor, "pending": w.pending(c, p.Thread),
+		"delivery": delivery, "loginDraining": w.loginChanged(c), "loginGeneration": c.generation,
+	}, nil
 }
 
-// The summary projection omits commentary. Read the latest persisted items
-// for an observed running foreign turn without loading it into our server.
-func addExternalProgress(ctx context.Context, c *webConnection, thread string, turn *WebTurn) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
+// Keep the summary bounded and leave tool output deferred. External running
+// commentary can be read from persisted items without claiming the chat.
+func addRecentMessages(ctx context.Context, c *webConnection, thread string, turn *WebTurn, progress bool) {
 	var page struct {
 		Data []struct {
-			Item struct {
-				ID         string
-				Type       string
-				Phase      string
-				Text       string
-				Moderation *struct{ Moderated bool }
-			}
+			Item json.RawMessage
 		}
 	}
 	args := map[string]any{
@@ -140,13 +145,25 @@ func addExternalProgress(ctx context.Context, c *webConnection, thread string, t
 	}
 	slices.Reverse(page.Data)
 	for _, entry := range page.Data {
-		item := entry.Item
-		if item.Type != "agentMessage" || seen[item.ID] || item.ID == "" || item.Text == "" ||
-			(item.Moderation != nil && item.Moderation.Moderated) {
+		var item struct {
+			ID         string
+			Type       string
+			Phase      string
+			Text       string
+			Moderation *struct{ Moderated bool }
+		}
+		if json.Unmarshal(entry.Item, &item) != nil || seen[item.ID] || item.ID == "" {
 			continue
 		}
-		raw, _ := json.Marshal(map[string]string{"id": item.ID, "type": item.Type, "phase": item.Phase, "text": limitLiveText(item.Text)})
-		turn.Items = append(turn.Items, raw)
+		switch item.Type {
+		case "userMessage":
+			turn.Items = append(turn.Items, entry.Item)
+		case "agentMessage":
+			if progress && item.Text != "" && (item.Moderation == nil || !item.Moderation.Moderated) {
+				raw, _ := json.Marshal(map[string]string{"id": item.ID, "type": item.Type, "phase": item.Phase, "text": limitLiveText(item.Text)})
+				turn.Items = append(turn.Items, raw)
+			}
+		}
 	}
 }
 
