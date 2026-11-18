@@ -62,11 +62,43 @@ func TestWebGUIRelayClaimsOnceAndKeepsMessageLiteral(t *testing.T) {
 	if count != 1 {
 		t.Fatal("only one relay claim should succeed", count)
 	}
-	if saved, err := readGUIRelay(c, id); err != nil || saved.State != "claimed" || saved.Text != "" {
-		t.Fatal("a claimed request must retain no message body", err)
+	if saved, err := readGUIRelay(c, id); err != nil || saved.State != "claimed" || saved.Text != "" || saved.Message != input {
+		t.Fatal("a claim should disable dispatch and retain the exact display copy", err)
+	}
+	if len(webRelayedInputs(c, target)) != 0 {
+		t.Fatal("an unconfirmed relay appeared in the transcript")
+	}
+	if err := completeGUIRelay(c, receipt.Relay, id, "accepted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := completeGUIRelay(c, receipt.Relay, id, "accepted"); err == nil {
+		t.Fatal("completion was replayed")
+	}
+	messages := webRelayedInputs(c, target)
+	if len(messages) != 1 || messages[0].ID != id || messages[0].Text != input || messages[0].SentAt > messages[0].AcceptedAt ||
+		len(webRelayedInputs(c, receipt.Relay)) != 0 {
+		t.Fatal("relay receipt did not persist one literal message in only its destination")
 	}
 	if prompt := guiRelayPrompt("/a path/codexm", "/a user's/config.toml", id); strings.Contains(prompt, target) || strings.Contains(prompt, input) {
 		t.Fatal("the native queue entry must not contain the destination or message")
+	}
+}
+
+func TestWebGUIRelayUnconfirmedInputDoesNotBecomeHistory(t *testing.T) {
+	c := config.Defaults()
+	c.Storage.StateDir = t.TempDir()
+	c.Runtime.WebGUIRelay = "00000000-0000-4000-8000-000000000001"
+	const id = "cccccccccccccccccccccccccccccccc"
+	receipt := webGUIRelayReceipt{Relay: c.Runtime.WebGUIRelay,
+		Thread: "00000000-0000-4000-8000-000000000002", Message: "unconfirmed input",
+		State: "claimed", SentAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(-time.Second)}
+	if err := saveGUIRelay(c, id, receipt); err != nil {
+		t.Fatal(err)
+	}
+	expireGUIRelay(c, id)
+	saved, err := readGUIRelay(c, id)
+	if err != nil || saved.State != "unknown" || saved.Message != "" || len(webRelayedInputs(c, receipt.Thread)) != 0 {
+		t.Fatal("an expired claim retained or displayed unconfirmed input", err)
 	}
 }
 

@@ -81,14 +81,15 @@ test("header shows the configured default and confirms GUI quit each time", asyn
   await expect(account).toHaveValue("second-fixture");
 });
 
-test("Enter waits for a GUI relay receipt while Command+Enter still uses the native queue", async ({ page }) => {
+test("Send preserves accepted relay text across reload and keeps the explicit queue shortcut", async ({ page }) => {
   await authenticate(page);
-  const thread = fixture().thread;
+  const thread = fixture().second;
+  const original = "현재 GUI 작업에 전달할 원문\n<문자 그대로> `echo fixture`";
   await page.evaluate(thread => {
     const m = (window as any).Meteor;
     const apply = m.apply;
     const sent: string[] = [];
-    const state = (window as any).__relayFixture = { sent, status: "pending" };
+    const state = (window as any).__relayFixture = { sent, status: "pending", idle: false };
     m.apply = function (method: string, args: any[], options: any, callback: any) {
       if (method !== "codexm.call" || args[1]?.thread_id !== thread) return apply.call(this, method, args, options, callback);
       if (args[0] === "web.history") {
@@ -98,7 +99,7 @@ test("Enter waits for a GUI relay receipt while Command+Enter still uses the nat
       }
       if (args[0] === "web.send") {
         sent.push(args[1].mode);
-        const response = args[1].mode === "queue" ? { mode: "queue" } : { mode: "relay", relay_id: "fake-relay-receipt" };
+        const response = args[1].mode === "queue" || state.idle ? { mode: "queue" } : { mode: "relay", relay_id: "fake-relay-receipt" };
         queueMicrotask(() => callback(null, response));
         return;
       }
@@ -109,22 +110,36 @@ test("Enter waits for a GUI relay receipt while Command+Enter still uses the nat
       return apply.call(this, method, args, options, callback);
     };
   }, thread);
-  await page.getByRole("link", {name:/긴 이력 페이지 테스트/}).click();
+  await page.getByRole("link", {name:/진행 중 개입 테스트/}).click();
   await expect(page.getByText("GUI 채팅에 해당 창의 계정으로 전달합니다.")).toBeVisible();
   const input = page.getByLabel("메시지", {exact:true});
-  await input.fill("현재 GUI 작업에 전달할 입력");
+  await input.fill(original);
   await input.press("Enter");
   await expect(page.getByText("GUI 채팅에 전달하고 있습니다…", {exact:true})).toBeVisible();
-  await expect(input).toHaveValue("현재 GUI 작업에 전달할 입력");
+  await expect(input).toHaveValue(original);
   await input.press("Enter");
   expect(await page.evaluate(() => (window as any).__relayFixture.sent)).toEqual(["immediate"]);
+  const displayed = page.locator(".user-message p").filter({ hasText: "현재 GUI 작업에 전달할 원문" });
+  await expect(displayed).toHaveCount(0);
+  writeFileSync(join(fixtureRoot!, "accept-synthetic-relay"), "accepted fixture");
+  await expect.poll(() => existsSync(join(fixtureRoot!, "synthetic-relay-accepted"))).toBe(true);
   await page.evaluate(() => { (window as any).__relayFixture.status = "accepted"; });
   await expect(page.getByText("GUI 채팅에 전달했습니다.", {exact:true})).toBeVisible();
   await expect(input).toHaveValue("");
+  await expect(displayed).toHaveCount(1);
+  expect(await displayed.textContent()).toBe(original);
   await input.fill("다음 작업에 넣을 입력");
   await input.press("Meta+Enter");
   await expect(page.getByText("큐에 추가했습니다.", {exact:true})).toBeVisible();
   expect(await page.evaluate(() => (window as any).__relayFixture.sent)).toEqual(["immediate", "queue"]);
+  await page.evaluate(() => { (window as any).__relayFixture.idle = true; });
+  await input.fill("쉬고 있는 GUI 채팅의 요청");
+  await page.getByRole("button", {name: "보내기", exact: true}).click();
+  await expect(page.getByText("새 작업 요청을 전달했습니다.", {exact:true})).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__relayFixture.sent)).toEqual(["immediate", "queue", "immediate"]);
+  await page.reload();
+  await expect(displayed).toHaveCount(1);
+  expect(await displayed.textContent()).toBe(original);
 });
 
 test("mobile PWA loads icons and registers completion alerts for this browser", async ({ page }) => {

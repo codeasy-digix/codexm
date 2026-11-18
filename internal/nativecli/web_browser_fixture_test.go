@@ -1,14 +1,17 @@
 package nativecli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/config"
 )
 
 // Opt-in browser fixture kept alive only while the external Playwright job
@@ -86,7 +89,17 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if err := f.client.Call(f.ctx, "thread/resume", map[string]any{"threadId": second, "excludeTurns": true}, nil); err != nil {
 		t.Fatal(err)
 	}
-	f.start(second, "GUI_FIXTURE_ACTIVE_FOREIGN_BROWSER")
+	activeTurn := f.start(second, "GUI_FIXTURE_ACTIVE_FOREIGN_BROWSER")
+	const relayID = "d2e5be419ab34fd0b00e10b11c4caab1"
+	const relayText = "현재 GUI 작업에 전달할 원문\n<문자 그대로> `echo fixture`"
+	relayConfig := f.c
+	relayConfig.Runtime.WebGUIRelay = "00000000-0000-4000-8000-000000000069"
+	if err := saveGUIRelay(relayConfig, relayID, webGUIRelayReceipt{
+		Relay: relayConfig.Runtime.WebGUIRelay, Thread: second, Text: relayText,
+		ObservedTurn: activeTurn, State: "pending", ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	f.c.Path = filepath.Join(f.cmd.Dir, "web-fixture.toml")
 	if err := f.c.Save(); err != nil {
 		t.Fatal(err)
@@ -100,12 +113,27 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	foreignReleased, progressReleased, catchupSaved := false, false, false
+	foreignReleased, progressReleased, catchupSaved, relayAccepted := false, false, false, false
 	for {
 		select {
 		case <-f.ctx.Done():
 			t.Fatal("browser fixture timed out")
 		case <-ticker.C:
+			if _, err := os.Stat(filepath.Join(output, "accept-synthetic-relay")); err == nil && !relayAccepted {
+				// Simulate the GUI tool's successful acknowledgement only.
+				// The persisted receipt and web history are read by the real bridge.
+				check := func(context.Context, config.Config, webGUIRelayReceipt) error { return nil }
+				if err := claimGUIRelay(f.ctx, relayConfig, relayID, check, io.Discard); err != nil {
+					t.Fatal(err)
+				}
+				if err := completeGUIRelay(relayConfig, relayConfig.Runtime.WebGUIRelay, relayID, "accepted"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(output, "synthetic-relay-accepted"), []byte("accepted"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				relayAccepted = true
+			}
 			if _, err := os.Stat(filepath.Join(output, "append-offline-history")); err == nil && !catchupSaved {
 				if err := f.client.Call(f.ctx, "thread/resume", map[string]any{"threadId": catchup, "excludeTurns": true}, nil); err != nil {
 					t.Fatal(err)

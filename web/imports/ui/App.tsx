@@ -250,8 +250,10 @@ export function App() {
           {history?.nextCursor&&<button className="older-button" disabled={chatState.loadingOlder} onClick={()=>void loadOlder()}>{chatState.loadingOlder?"이전 메시지를 불러오는 중…":"이전 메시지 불러오기"}</button>}
           {chatState.loading&&<p className="loading-message" role="status">최근 대화를 불러오는 중…</p>}
           {chatState.error&&<p role="alert" className="inline-error">{chatState.error}</p>}
-          {!!turns.length&&<ChatMessages thread={selected.id} turns={turns} account={account} external={history?.thread.externalOwner} liveTurnId={liveTurnId}/>}
-          {history&&!turns.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
+          {(!!turns.length || !!history?.relayedInputs?.length) && <ChatMessages thread={selected.id} turns={turns} account={account}
+            external={history?.thread.externalOwner} liveTurnId={liveTurnId}
+            relayedInputs={history?.relayedInputs} hasOlder={!!history?.nextCursor}/>}
+          {history&&!turns.length&&!history.relayedInputs?.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
         </div>:path !== "/" ? <div className="message-inner">
           {(openError || !threadId)
             ? <div className="empty-conversation" role="alert">

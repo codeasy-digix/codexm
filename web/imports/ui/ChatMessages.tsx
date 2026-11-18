@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { call } from "../../client/data";
-import type { ChatItem, ChatTurn } from "../contracts/web";
+import type { ChatItem, ChatTurn, RelayedInput } from "../contracts/web";
 
 const markdownComponents: Components = {
   table({ node: _node, ...props }) {
@@ -65,12 +65,42 @@ function TurnDetails({thread,turn,account,external,current}:{thread:string;turn:
   </details>;
 }
 
-export function ChatMessages({thread,turns,account,external,liveTurnId}:{thread:string;turns:ChatTurn[];account:string;external?:boolean;liveTurnId?:string}) {
+function UserMessage({ text }: { text: string }) {
+  return <div className="user-message"><span className="sr-only">나</span><p>{text}</p></div>;
+}
+
+export function ChatMessages({thread,turns,account,external,liveTurnId,relayedInputs,hasOlder}:{
+  thread:string;turns:ChatTurn[];account:string;external?:boolean;liveTurnId?:string;
+  relayedInputs?:RelayedInput[] | null;hasOlder:boolean;
+}) {
+  const relayedByTurn = new Map<string, RelayedInput[]>();
+  const after: RelayedInput[] = [];
+  const newestFirst = [...turns].reverse();
+  for (const input of relayedInputs ?? []) {
+    const sent = Math.floor(input.sentAt / 1000);
+    const accepted = Math.floor(input.acceptedAt / 1000);
+    const observed = turns.find(turn => turn.id === input.observedTurnId);
+    if (!observed && hasOlder && turns[0]?.startedAt != null && sent < turns[0].startedAt) continue;
+    // The GUI acknowledgement identifies the chat. If the turn changed
+    // during delivery, use its native time range to place the message.
+    const turn = observed && (observed.completedAt == null || observed.completedAt >= accepted) ? observed :
+      newestFirst.find(turn => turn.startedAt != null && turn.startedAt <= accepted &&
+        (turn.completedAt == null || turn.completedAt >= sent)) ?? observed ??
+        turns.find(turn => turn.startedAt != null && turn.startedAt > accepted);
+    if (turn) {
+      const messages = relayedByTurn.get(turn.id) ?? [];
+      messages.push(input);
+      relayedByTurn.set(turn.id, messages);
+    } else {
+      after.push(input);
+    }
+  }
   return <div className="turns">{turns.map(turn => {
     const messages = turn.items.filter(item => item.type === "agentMessage" && item.text);
     const ordered = [...messages.filter(item => item.phase === "commentary"), ...messages.filter(item => item.phase !== "commentary")];
     return <article className="turn" key={turn.id} data-turn-id={turn.id}>
-      {turn.items.filter(item=>item.type==="userMessage").map(item=><div className="user-message" key={item.id}><span className="sr-only">나</span><p>{inputText(item.content)}</p></div>)}
+      {turn.items.filter(item=>item.type==="userMessage").map(item=><UserMessage key={item.id} text={inputText(item.content)}/>)}
+      {relayedByTurn.get(turn.id)?.map(input=><UserMessage key={input.id} text={input.text}/>)}
       <div className="assistant-message">
         {ordered.map(item => {
           const classes = `${item.streaming ? "live-message" : "markdown"}${item.phase === "commentary" ? " commentary-message" : ""}`;
@@ -82,5 +112,5 @@ export function ChatMessages({thread,turns,account,external,liveTurnId}:{thread:
         <TurnDetails thread={thread} turn={turn} account={account} external={external} current={turn.id === liveTurnId}/>
       </div>
     </article>;
-  })}</div>;
+  })}{after.map(input=><UserMessage key={input.id} text={input.text}/>)}</div>;
 }

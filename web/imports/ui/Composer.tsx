@@ -100,6 +100,8 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       setText(current => current === sent ? "" : current);
       if (mode === "queue") {
         setNotice(hasOverride ? "큐에 추가했습니다. 이 입력은 채팅의 실행 설정으로 처리됩니다." : "큐에 추가했습니다.");
+      } else if (result.mode === "queue") {
+        setNotice("새 작업 요청을 전달했습니다.");
       } else {
         setNotice(result.mode === "steer" ? "현재 작업에 전달했습니다." : "작업을 시작했습니다.");
       }

@@ -283,7 +283,13 @@ func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request,
 	owner, err := w.openInputOwner(probe, p.Thread, pid)
 	if err != nil {
 		if automatic && pid != c.process.PID {
-			return w.submitGUIRelay(ctx, c, r, p, pid)
+			verify, stop := context.WithTimeout(ctx, 8*time.Second)
+			gui, err := webRelayOwner(verify, w.c, p.Thread, pid)
+			stop()
+			if err != nil {
+				return nil, err
+			}
+			return w.sendToGUIWriter(ctx, c, r, p, gui)
 		}
 		return nil, errWebForeignInput
 	}

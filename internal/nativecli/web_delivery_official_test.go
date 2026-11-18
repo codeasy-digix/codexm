@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,115 @@ import (
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
+
+func TestWebChatOfficialIdleGUIQueuePreservesNativeUserInput(t *testing.T) {
+	f := newGUIControlFixture(t, "stdio")
+	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-web")
+	id, other := f.thread(), f.thread()
+	first := f.start(id, "IDLE_GUI_FIRST_TURN")
+	f.completed(id, 1)
+	f.start(other, "IDLE_GUI_NEIGHBOR")
+	f.completed(other, 1)
+	pid := f.cmd.Process.Pid
+	key, err := cr.NativeProcessIdentity(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The test owns a real stdio writer. Supply its verified identity here;
+	// normal calls require a signed Codex GUI before entering this branch.
+	writer, err := inspectProcess(f.ctx, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	connection, err := w.connection(f.ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.releaseConnection(connection)
+	const input = "GUI가 작업을 마친 뒤의 원본 입력\n`echo exact`"
+	const operation = "10000000-0000-4000-8000-000000000055"
+	response, err := w.sendToGUIWriter(f.ctx, connection, Request{Operation: operation},
+		webParams{Thread: id, Mode: "immediate", Text: input}, guiOwner{Writer: writer})
+	if result, _ := response.(map[string]any); err != nil || result["mode"] != "queue" || result["queued_id"] == "" {
+		t.Fatal("idle GUI did not use the official queue", response, err)
+	}
+	thread := f.completed(id, 2)
+	if thread.Turns[0].ID != first || thread.Turns[1].ID == first {
+		t.Fatal("idle submission did not start a new turn in the same chat")
+	}
+	messages, err := webTurnMessages(f.ctx, connection, id, thread.Turns[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, raw := range messages {
+		var item struct {
+			Type    string
+			Content []struct{ Type, Text string }
+		}
+		if err := json.Unmarshal(raw, &item); err != nil {
+			t.Fatal(err)
+		}
+		if item.Type == "userMessage" && len(item.Content) == 1 && item.Content[0].Type == "text" && item.Content[0].Text == input {
+			count++
+		}
+	}
+	if count != 1 || f.requests() != 3 || len(webRelayedInputs(f.c, id)) != 0 {
+		t.Fatal("official queue did not produce exactly one literal user message without a relay")
+	}
+	f.assertOwner(key, id, other)
+}
+
+func TestWebChatOfficialActiveGUIUsesDedicatedRelay(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("desktop relay is macOS only")
+	}
+	f := newGUIControlFixture(t, "stdio")
+	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-web")
+	target, relay := f.thread(), f.thread()
+	f.start(relay, "RELAY_READY")
+	f.completed(relay, 1)
+	turn := f.start(target, "GUI_FIXTURE_ACTIVE_FOREIGN_BROWSER")
+	select {
+	case <-f.active:
+	case <-f.ctx.Done():
+		t.Fatal("target did not start")
+	}
+	f.c.Runtime.WebGUIRelay = relay
+	f.c.Path = filepath.Join(f.cmd.Dir, "fixture.toml")
+	writer, err := inspectProcess(f.ctx, f.cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	c, err := w.connection(f.ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.releaseConnection(c)
+	const input = "Only the relay tool may submit this exact synthetic input"
+	response, err := w.sendToGUIWriter(f.ctx, c, Request{Owner: "fixture-browser"},
+		webParams{Thread: target, Mode: "immediate", Text: input}, guiOwner{Writer: writer})
+	result, ok := response.(map[string]string)
+	if err != nil || !ok || result["mode"] != "relay" || !webRelayID.MatchString(result["relay_id"]) {
+		t.Fatal("active GUI did not use the dedicated relay", err)
+	}
+	saved, err := readGUIRelay(f.c, result["relay_id"])
+	if err != nil || saved.Thread != target || saved.Relay != relay || saved.State != "pending" ||
+		saved.ObservedTurn != turn || len(webRelayedInputs(f.c, target)) != 0 {
+		t.Fatal("relay was not bound to the active target or appeared before acknowledgement", err)
+	}
+	relayed := f.completed(relay, 2)
+	b, _ := json.Marshal(relayed.Turns[1].Items)
+	if !strings.Contains(string(b), result["relay_id"]) || strings.Contains(string(b), input) {
+		t.Fatal("only the one-time relay command should reach the dedicated queue")
+	}
+	close(f.releaseForeign)
+	f.completed(target, 1)
+}
 
 func TestWebChatOfficialUnixWriterDelivery(t *testing.T) {
 	f := newGUIControlFixture(t, "unix")

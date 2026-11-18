@@ -284,6 +284,9 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		"thread": read.Thread, "queue": queue.Data, "queueNextCursor": queue.NextCursor, "pending": w.writerPending(c, p.Thread, owners),
 		"delivery": delivery, "loginDraining": w.loginChanged(c), "loginGeneration": c.generation,
 	}
+	if p.Cursor == "" {
+		result["relayedInputs"] = webRelayedInputs(w.c, p.Thread)
+	}
 	revision, _ := webHistoryEntryRevision(ctx, home, entry)
 	// The live reply and queue above are always read from the official server.
 	// Keep unfinished turns out of the persistent cache.

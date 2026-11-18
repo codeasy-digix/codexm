@@ -48,10 +48,12 @@ export type ChatHistoryPage = {
   turns: ChatTurn[];
   nextCursor?: string | null;
 };
+export type RelayedInput = { id: string; text: string; observedTurnId?: string; sentAt: number; acceptedAt: number };
 export type ChatHistory = ChatHistoryPage & {
   thread: ChatThread;
   queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>;
   pending: PendingRequest[];
+  relayedInputs?: RelayedInput[] | null;
   delivery?: { state: "ready" | "waiting" | "idle" | "unavailable" | "relay"; turnId?: string } | null;
   loginDraining?: boolean;
   loginGeneration?: number;
