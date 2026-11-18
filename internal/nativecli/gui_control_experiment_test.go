@@ -32,6 +32,7 @@ type guiControlFixture struct {
 	active         chan struct{}
 	release        chan struct{}
 	releaseForeign chan struct{}
+	foreignUpdate  chan struct{}
 	once           sync.Once
 	mu             sync.Mutex
 	bodies         []string
@@ -61,6 +62,9 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
 	f := &guiControlFixture{t: t, ctx: ctx, binary: binary, active: make(chan struct{}), release: make(chan struct{}), releaseForeign: make(chan struct{})}
+	if filepath.IsAbs(os.Getenv("CODEXM_WEB_BROWSER_FIXTURE")) {
+		f.foreignUpdate = make(chan struct{})
+	}
 	var activeOnce sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/responses") {
@@ -130,6 +134,20 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 			release := f.release
 			if foreignProgress {
 				release = f.releaseForeign
+				if f.foreignUpdate != nil {
+					select {
+					case <-f.foreignUpdate:
+						writeFixtureStreamEvent(w, map[string]any{"type": "response.output_item.done", "output_index": outputIndex, "item": map[string]any{
+							"id": "fixture-progress-update", "type": "message", "role": "assistant", "phase": "commentary",
+							"content": []map[string]string{{"type": "output_text", "text": "작업 도중 새로 저장된 진행 안내"}},
+						}})
+						outputIndex++
+						w.(http.Flusher).Flush()
+					case <-f.releaseForeign:
+					case <-r.Context().Done():
+						return
+					}
+				}
 			}
 			select {
 			case <-release:
@@ -152,6 +170,7 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 		t.Fatal(err)
 	}
 	settings := fmt.Sprintf("model='fixture'\nmodel_provider='fixture'\ncli_auth_credentials_store='file'\ncheck_for_update_on_startup=false\napproval_policy='never'\n[model_providers.fixture]\nname='fixture'\nbase_url=%q\nwire_api='responses'\nenv_key='CODEXM_GUI_FIXTURE_KEY'\nrequires_openai_auth=false\n[projects.%q]\ntrust_level='trusted'\n", server.URL, home)
+	settings += "\n[features]\nplugins=false\napps=false\nhooks=false\nskip_host_skill_discovery=true\n"
 	if err := os.WriteFile(filepath.Join(f.c.Runtime.SharedCodexHome, "config.toml"), []byte(settings), 0600); err != nil {
 		t.Fatal(err)
 	}

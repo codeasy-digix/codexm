@@ -50,7 +50,7 @@ func TestWebChatOfficialUnixWriterDelivery(t *testing.T) {
 	if _, err := send("STALE_MUST_NOT_EXECUTE", "stale-fixture-turn", "immediate"); err == nil {
 		t.Fatal("stale direct input was accepted")
 	}
-	steer, err := send("WEB_SAME_ACTIVE_TURN", turn, "immediate")
+	steer, err := send("WEB_SAME_ACTIVE_TURN", "", "steer")
 	if err != nil || steer["mode"] != "steer" || steer["turn_id"] != turn {
 		t.Fatal("same-turn intervention not acknowledged", steer, err)
 	}
@@ -75,7 +75,7 @@ func TestWebChatOfficialUnixWriterDelivery(t *testing.T) {
 		t.Fatal("steered input missing in the web transcript")
 	}
 	f.assertOwner(key, id, unrelated)
-	if _, err := send("FINISHED_MUST_NOT_EXECUTE", turn, "immediate"); err == nil {
+	if _, err := send("FINISHED_MUST_NOT_EXECUTE", "", "steer"); err == nil {
 		t.Fatal("intervention after completion was accepted")
 	}
 	f.mu.Lock()
@@ -109,8 +109,7 @@ func setupWebFixtureLogins(t *testing.T, f *guiControlFixture, names ...string) 
 		t.Fatal(err)
 	}
 	settings := fmt.Sprintf("chatgpt_base_url=%q\n", auth.URL) +
-		strings.ReplaceAll(string(config), "requires_openai_auth=false", "requires_openai_auth=true") +
-		"\n[features]\nplugins=false\napps=false\nhooks=false\nskip_host_skill_discovery=true\n"
+		strings.ReplaceAll(string(config), "requires_openai_auth=false", "requires_openai_auth=true")
 	if err := os.WriteFile(p, []byte(settings), 0600); err != nil {
 		t.Fatal(err)
 	}

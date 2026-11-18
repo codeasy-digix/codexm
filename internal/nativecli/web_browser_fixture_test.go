@@ -87,12 +87,16 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	foreignReleased := false
+	foreignReleased, progressReleased := false, false
 	for {
 		select {
 		case <-f.ctx.Done():
 			t.Fatal("browser fixture timed out")
 		case <-ticker.C:
+			if _, err := os.Stat(filepath.Join(output, "show-foreign-progress")); err == nil && !progressReleased {
+				close(f.foreignUpdate)
+				progressReleased = true
+			}
 			if _, err := os.Stat(filepath.Join(output, "release-foreign")); err == nil && !foreignReleased {
 				close(f.releaseForeign)
 				foreignReleased = true

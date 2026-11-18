@@ -17,7 +17,7 @@ export function useChatActivity(enabled: boolean, thread: string, account: strin
       if (!active || sampling || document.visibilityState === "hidden") return;
       clearTimeout(timer);
       sampling = true;
-      let delay = 1200;
+      let delay = 1500;
       try {
         const snapshot = await call<ChatActivitySnapshot>("web.activity", { thread_id: thread, account });
         if (!active) return;
@@ -27,7 +27,7 @@ export function useChatActivity(enabled: boolean, thread: string, account: strin
           setObservation({ thread, account, snapshot });
         }
         const selected = snapshot.threads[thread];
-        if (selected?.source === "web" && workingActivity(selected)) delay = 350;
+        if (workingActivity(selected)) delay = selected?.source === "web" ? 350 : 1000;
       } catch {
         last = "";
         if (active) setObservation(undefined);
@@ -136,7 +136,7 @@ export function useChatHistory(ready:boolean,thread:string,account:string) {
     generation.current++;polling.current=false;older.current=false;setHistory(undefined);setError("");setLoading(!!thread);setLoadingOlder(false);setOlderRevision(0);
     if(!ready||!thread)return;
     void refresh();
-    const timer=setInterval(()=>{if(document.visibilityState!=="hidden")void refresh();},1500);
+    const timer=setInterval(()=>{if(document.visibilityState!=="hidden")void refresh();},2500);
     const visible=()=>{if(document.visibilityState==="visible")void refresh();};document.addEventListener("visibilitychange",visible);
     return()=>{generation.current++;polling.current=false;clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
   },[ready,thread,refresh]);

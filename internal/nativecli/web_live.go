@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/codeasy-digix/codexm/internal/config"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
@@ -186,7 +187,6 @@ func (w *WebChat) activity(selected, account string) webActivityReply {
 		result.Threads[id] = writer.activity
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	for _, c := range w.connections {
 		select {
 		case <-c.client.Done:
@@ -223,6 +223,15 @@ func (w *WebChat) activity(selected, account string) webActivityReply {
 			}
 		}
 		c.mu.Unlock()
+	}
+	w.mu.Unlock()
+	if observed := result.Threads[selected]; result.Turn == nil && observed.Source == "external" &&
+		observed.State == "running" && observed.TurnID != "" {
+		home := config.Expand(w.c.Runtime.SharedCodexHome)
+		notes, err := readWebCommentary(w.ctx, home, selected, []string{observed.TurnID})
+		if err == nil && len(notes[observed.TurnID]) > 0 {
+			result.Turn = &webLiveTurn{ID: observed.TurnID, Status: "inProgress", Items: notes[observed.TurnID]}
+		}
 	}
 	return result
 }

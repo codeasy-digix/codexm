@@ -77,7 +77,7 @@ func newDaemonFixture(t *testing.T, names ...string) *daemonFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := fmt.Sprintf("chatgpt_base_url=%q\nthread_unload_delay_secs=1\n", auth.URL) + strings.ReplaceAll(string(b), "requires_openai_auth=false", "requires_openai_auth=true") + "\n[features]\nplugins=false\napps=false\nhooks=false\nskip_host_skill_discovery=true\n"
+	settings := fmt.Sprintf("chatgpt_base_url=%q\nthread_unload_delay_secs=1\n", auth.URL) + strings.ReplaceAll(string(b), "requires_openai_auth=false", "requires_openai_auth=true")
 	if err := os.WriteFile(p, []byte(settings), 0600); err != nil {
 		t.Fatal(err)
 	}

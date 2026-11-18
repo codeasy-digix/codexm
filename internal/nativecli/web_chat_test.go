@@ -146,7 +146,7 @@ func TestWebChatOfficialForeignOwner(t *testing.T) {
 	f := newGUIControlFixture(t, "stdio")
 	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-web")
 	id := f.thread()
-	turn := f.start(id, "GUI_FIXTURE_ACTIVE_FOREIGN")
+	turn := f.start(id, "GUI_FIXTURE_ACTIVE_FOREIGN_BROWSER")
 	select {
 	case <-f.active:
 	case <-time.After(5 * time.Second):
@@ -165,9 +165,13 @@ func TestWebChatOfficialForeignOwner(t *testing.T) {
 	until := time.Now().Add(6 * time.Second)
 	for {
 		activity := w.activity(id, "default")
-		if state := activity.Threads[id]; state.State == "running" {
-			if state.Source != "external" || activity.Turn != nil {
-				t.Fatal("foreign writer incorrectly exposed as a web stream")
+		if state := activity.Threads[id]; state.State == "running" && activity.Turn != nil {
+			if state.Source != "external" || activity.AccountTurn || activity.Turn.ID != turn {
+				t.Fatal("foreign commentary changed the execution owner")
+			}
+			if len(activity.Turn.Items) != 1 || activity.Turn.Items[0].Phase != "commentary" ||
+				activity.Turn.Items[0].Text != "외부 작업이 기록한 진행 안내" {
+				t.Fatal("foreign active turn did not return its stored progress message")
 			}
 			break
 		}
@@ -185,7 +189,7 @@ func TestWebChatOfficialForeignOwner(t *testing.T) {
 	if _, err = call("web.send", map[string]any{"thread_id": id, "mode": "queue", "text": "FOREIGN_QUEUE_ONLY"}); err != nil {
 		t.Fatal(err)
 	}
-	f.once.Do(func() { close(f.release) })
+	close(f.releaseForeign)
 	completed := f.completed(id, 2)
 	b, _ := json.Marshal(completed)
 	if !strings.Contains(string(b), "FOREIGN_QUEUE_ONLY") || strings.Contains(string(b), "MUST_NOT_EXECUTE") {

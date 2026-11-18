@@ -69,6 +69,12 @@ test("live reply replaces a preview by item ID, then yields to stored completion
   assert.deepEqual(mergeLiveTurn([active], live)[0].items.map(item => item.text), [undefined, "First fragment"]);
   const complete = { ...active, status: "completed", items: [user, { ...reply, text: "Complete" }] };
   assert.deepEqual(mergeLiveTurn([complete], live), [complete]);
+  const note = { id: "progress", phase: "commentary", text: "Checking the queue", streaming: false };
+  const savedNote = { ...note, type: "agentMessage" };
+  const finishing = { ...live, items: [...live.items, note] };
+  assert.deepEqual(mergeLiveTurn([complete], finishing)[0], { ...complete, items: [...complete.items, savedNote] });
+  const stored = { ...complete, items: [...complete.items, savedNote] };
+  assert.deepEqual(mergeLiveTurn([stored], finishing), [stored]);
 });
 
 test("native titles and empty drafts have useful display text",()=>{

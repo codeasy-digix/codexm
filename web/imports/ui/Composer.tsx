@@ -33,10 +33,9 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   const queueDraining = draining && !external && !active;
   let directError = "";
   if (waiting) directError = external ? "다른 창에서 승인 또는 입력을 기다리고 있습니다." : "현재 턴의 승인 또는 입력에 먼저 응답해 주세요.";
-  else if (external && !turn) directError = delivery?.state === "idle"
+  else if (external && !active) directError = delivery?.state === "idle"
     ? "다른 창에서 열려 있는 채팅입니다. 다음 입력을 큐에 추가할 수 있습니다."
     : "다른 창의 현재 턴에 연결할 수 없습니다. 큐에 추가할 수 있습니다.";
-  else if (active && !turn) directError = "현재 턴을 확인하는 중입니다.";
   else if (draining && !active) directError = "기존 작업이 끝나면 변경된 웹 계정이 적용됩니다.";
   const queue = history?.queue || [];
   const { selectedModel, efforts, inheritedEffort } = resolveTurnSelection(chat, models, selection);
@@ -57,8 +56,9 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       setError("현재 계정에서 사용할 모델과 effort를 다시 선택해 주세요.");
       return;
     }
-    const parameters: Record<string, string> = { thread_id: chat.id, account, text, mode };
-    if (mode === "immediate" && turn) parameters.turn_id = turn;
+    const parameters: Record<string, string> = {
+      thread_id: chat.id, account, text, mode: mode === "immediate" && active ? "steer" : mode,
+    };
     if (override && selectedModel) {
       parameters.model = selectedModel.model;
       const effort = selection.effort || inheritedEffort;
@@ -109,7 +109,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       <summary>대기 중인 입력 {queue.length}개</summary>
       {queue.map(q => <p key={q.id}>{q.input.map(x => x.text || "").join("\n")}</p>)}
     </details>}
-    {external && <p className="owner-note">{directError || "다른 창의 현재 턴에 개입할 수 있습니다. 해당 창의 계정으로 전달됩니다."}</p>}
+    {external && <p className="owner-note">{directError || "다른 창에서 진행 중인 작업에 해당 창의 계정으로 전달합니다."}</p>}
     {draining && <p className="owner-note" role="status">기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.</p>}
     {error && <p role="alert" className="inline-error">{error}</p>}
     {uncertain && <p className="inline-error">전송 결과가 불확실하여 재전송을 막았습니다. 대화와 큐에서 원래 입력을 확인하세요.</p>}

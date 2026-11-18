@@ -195,7 +195,7 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 	if strings.TrimSpace(p.Text) == "" {
 		return nil, errors.New("enter a message")
 	}
-	if p.Mode != "immediate" && p.Mode != "queue" {
+	if p.Mode != "immediate" && p.Mode != "steer" && p.Mode != "queue" {
 		return nil, errors.New("choose immediate or queue delivery")
 	}
 	if p.Model != "" || p.Effort != "" {
@@ -213,11 +213,12 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 	if len(owners) > 1 {
 		return nil, errors.New("채팅을 실행하는 프로세스를 하나로 확인할 수 없습니다.")
 	}
-	if len(owners) == 1 && (owners[0] != c.process.PID || p.Turn != "" || p.Mode == "queue") {
+	steering := p.Mode == "steer" || p.Turn != ""
+	if len(owners) == 1 && (owners[0] != c.process.PID || steering || p.Mode == "queue") {
 		return w.sendToWriter(ctx, c, r, p, owners[0])
 	}
-	if p.Turn != "" {
-		return nil, errors.New("이전 턴이 끝났습니다. 채팅 상태를 확인한 뒤 다시 보내 주세요.")
+	if steering {
+		return nil, errors.New("현재 실행 중인 작업이 없습니다. 입력을 확인한 뒤 다시 보내 주세요.")
 	}
 	if err := w.verifyLogin(ctx, c); err != nil {
 		return nil, err
@@ -286,18 +287,20 @@ func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request,
 			return nil, err
 		}
 	}
-	if p.Mode == "immediate" || (owner.web != nil && w.loginChanged(owner.web)) {
+	var activeTurn string
+	if p.Mode != "queue" || (owner.web != nil && w.loginChanged(owner.web)) {
 		delivery, err := owner.delivery(probe, p.Thread)
 		if err != nil {
 			return nil, errors.New("현재 턴의 상태를 읽을 수 없습니다. 입력은 전송되지 않았습니다.")
 		}
-		if p.Mode == "immediate" {
+		if p.Mode != "queue" {
 			if delivery.State == "waiting" {
 				return nil, errors.New("현재 턴이 승인 또는 사용자 입력을 기다립니다. 원래 창에서 응답해 주세요.")
 			}
-			if delivery.State != "ready" || delivery.TurnID != p.Turn {
-				return nil, errors.New("개입하려던 턴이 바뀌었습니다. 현재 턴을 확인해 주세요.")
+			if delivery.State != "ready" || (p.Turn != "" && delivery.TurnID != p.Turn) {
+				return nil, errors.New("현재 개입할 수 있는 작업이 없습니다. 채팅 상태를 확인해 주세요.")
 			}
+			activeTurn = delivery.TurnID
 		} else if delivery.State == "idle" {
 			return nil, errWebLoginDraining
 		}
@@ -309,14 +312,16 @@ func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request,
 		return queueWebInput(ctx, owner.client, r, p)
 	}
 	var reply struct{ TurnID string }
-	args := map[string]any{"threadId": p.Thread, "expectedTurnId": p.Turn, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
+	// Bind the official RPC to the running turn observed now, independently of
+	// the turn that was visible in the browser when the user began typing.
+	args := map[string]any{"threadId": p.Thread, "expectedTurnId": activeTurn, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
 	if err := callWebInput(ctx, owner.client, "turn/steer", args, &reply); err != nil {
 		return nil, err
 	}
-	if reply.TurnID != p.Turn {
+	if reply.TurnID != activeTurn {
 		return nil, errWebInputUnconfirmed
 	}
-	return map[string]any{"thread_id": p.Thread, "turn_id": p.Turn, "mode": "steer", "status": "accepted", "accepted_at": time.Now().Unix()}, nil
+	return map[string]any{"thread_id": p.Thread, "turn_id": activeTurn, "mode": "steer", "status": "accepted", "accepted_at": time.Now().Unix()}, nil
 }
 
 var errWebInputUnconfirmed = errors.New("전송 결과를 확인하지 못했습니다. 대화와 큐에서 원래 입력을 확인해 주세요.")

@@ -73,13 +73,17 @@ export function mergeLiveTurn(turns: ChatTurn[], live?: LiveTurn): ChatTurn[] {
   if (!live || !current?.length) return turns;
   const index = turns.findIndex(turn => turn.id === live.id);
   const saved = turns[index];
-  if (saved?.status === "completed" || saved?.status === "failed") return turns;
+  const finished = saved?.status === "completed" || saved?.status === "failed";
   const items = new Map((saved?.items ?? []).map(item => [item.id, item]));
   for (const item of current) {
-    if (!items.has(item.id) && saved?.items.some(other => other.type === "agentMessage" && other.text === item.text)) continue;
-    items.set(item.id, { ...item, type: "agentMessage" });
+    if (finished && (item.phase !== "commentary" || items.has(item.id))) continue;
+    if (!items.has(item.id) && saved?.items.some(other =>
+      other.type === "agentMessage" && other.phase === item.phase && other.text === item.text
+    )) continue;
+    items.set(item.id, { ...item, type: "agentMessage", streaming: !finished && item.streaming });
   }
-  const updated: ChatTurn = { ...saved, id: live.id, status: live.status, items: [...items.values()] };
+  if (finished && items.size === saved.items.length) return turns;
+  const updated: ChatTurn = { ...saved, id: live.id, status: finished ? saved.status : live.status, items: [...items.values()] };
   return index < 0 ? [...turns, updated] : turns.map((turn, i) => i === index ? updated : turn);
 }
 

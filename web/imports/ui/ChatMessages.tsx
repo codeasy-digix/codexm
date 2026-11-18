@@ -52,7 +52,9 @@ function TurnDetails({thread,turn,account,external,current}:{thread:string;turn:
     try {const page=await call<{data:ItemEntry[];nextCursor?:string|null}>("web.items",{thread_id:thread,turn_id:turn.id,account,...(next?{cursor:next}:{})});setEntries(old=>next?[...old,...page.data]:page.data);setCursor(page.nextCursor);setStarted(true);}
     catch(e){setError((e as Error).message);}finally{setLoading(false);}
   }
-  const details=entries.filter(({item})=>item.type!=="userMessage"&&(item.type!=="agentMessage"||item.phase==="commentary"));
+  const displayed = new Set(turn.items.filter(item => item.type === "agentMessage" && item.text).map(item => item.id));
+  const details = entries.filter(({item}) => item.type !== "userMessage" &&
+    (item.type !== "agentMessage" || (item.phase === "commentary" && !displayed.has(item.id))));
   return <details className="turn-details" onToggle={e=>{if(e.currentTarget.open&&!started&&!loading)void load();}}>
     <summary>작업 과정 <span>{current||turn.status==="inProgress"?"진행 중":turn.status==="interrupted"?(external?"원래 창에서 상태 확인":"중단됨"):"보기"}</span></summary>
     {error&&<p role="alert">{error}</p>}
@@ -64,19 +66,23 @@ function TurnDetails({thread,turn,account,external,current}:{thread:string;turn:
 }
 
 export function ChatMessages({thread,turns,account,external,liveTurnId}:{thread:string;turns:ChatTurn[];account:string;external?:boolean;liveTurnId?:string}) {
-  return <div className="turns">{turns.map(turn=><article className="turn" key={turn.id} data-turn-id={turn.id}>
-    {turn.items.filter(item=>item.type==="userMessage").map(item=><div className="user-message" key={item.id}><span className="sr-only">나</span><p>{inputText(item.content)}</p></div>)}
-    <div className="assistant-message">
-      {turn.items.filter(item => item.type === "agentMessage" && (item.phase !== "commentary" || turn.id === liveTurnId) && item.text).map(item =>
-        item.streaming || item.phase === "commentary"
-          ? <div className={`live-message${item.phase === "commentary" ? " commentary-message" : ""}`} key={item.id}>{item.text}</div>
-          : <div className="markdown" key={item.id}>
-            <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{item.text || ""}</Markdown>
-          </div>)}
-      {turn.error&&<p role="alert" className="inline-error">{turn.error.message}</p>}
-      <TurnDetails thread={thread} turn={turn} account={account} external={external} current={turn.id === liveTurnId}/>
-    </div>
-  </article>)}</div>;
+  return <div className="turns">{turns.map(turn => {
+    const messages = turn.items.filter(item => item.type === "agentMessage" && item.text);
+    const ordered = [...messages.filter(item => item.phase === "commentary"), ...messages.filter(item => item.phase !== "commentary")];
+    return <article className="turn" key={turn.id} data-turn-id={turn.id}>
+      {turn.items.filter(item=>item.type==="userMessage").map(item=><div className="user-message" key={item.id}><span className="sr-only">나</span><p>{inputText(item.content)}</p></div>)}
+      <div className="assistant-message">
+        {ordered.map(item => {
+          const classes = `${item.streaming ? "live-message" : "markdown"}${item.phase === "commentary" ? " commentary-message" : ""}`;
+          return <div className={classes} key={item.id}>
+            {item.streaming ? item.text : <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{item.text || ""}</Markdown>}
+          </div>;
+        })}
+        {turn.error&&<p role="alert" className="inline-error">{turn.error.message}</p>}
+        <TurnDetails thread={thread} turn={turn} account={account} external={external} current={turn.id === liveTurnId}/>
+      </div>
+    </article>;
+  })}</div>;
 }
 
 export function Approval({request,thread,account,onDone}:{request:PendingRequest;thread:string;account:string;onDone:()=>void}) {

@@ -40,14 +40,15 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	if err := c.client.Call(ctx, "thread/read", map[string]any{"threadId": p.Thread, "includeTurns": false}, &read); err != nil {
 		return nil, err
 	}
-	entry, err := catalog.Lookup(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	entry, err := catalog.Lookup(ctx, home, p.Thread)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		entry = catalog.Entry{ID: p.Thread, Cwd: read.Thread.Cwd, ProjectID: read.Thread.Project}
 	}
-	desktop, err := catalog.ReadDesktop(ctx, config.Expand(w.c.Runtime.SharedCodexHome))
+	desktop, err := catalog.ReadDesktop(ctx, home)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +61,7 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	if read.Thread.Effort == "" {
 		read.Thread.Effort = entry.Effort
 	}
-	owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
+	owners, err := writerProcesses(ctx, home, p.Thread)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -81,6 +82,15 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		page.Data = []WebTurn{}
 	}
 	slices.Reverse(page.Data)
+	turnIDs := make([]string, len(page.Data))
+	for i, turn := range page.Data {
+		turnIDs[i] = turn.ID
+	}
+	commentary, _ := readWebCommentary(ctx, home, p.Thread, turnIDs)
+	for i := range page.Data {
+		turn := &page.Data[i]
+		appendWebCommentary(turn, commentary[turn.ID])
+	}
 	var delivery *webDelivery
 	var externalTurn string
 	if read.Thread.External && p.Cursor == "" && !read.Thread.Archived {
@@ -159,7 +169,7 @@ func addRecentMessages(ctx context.Context, c *webConnection, thread string, tur
 		case "userMessage":
 			turn.Items = append(turn.Items, entry.Item)
 		case "agentMessage":
-			if progress && item.Text != "" && (item.Moderation == nil || !item.Moderation.Moderated) {
+			if progress && item.Phase == "commentary" && item.Text != "" && (item.Moderation == nil || !item.Moderation.Moderated) {
 				raw, _ := json.Marshal(map[string]string{"id": item.ID, "type": item.Type, "phase": item.Phase, "text": limitLiveText(item.Text)})
 				turn.Items = append(turn.Items, raw)
 			}
