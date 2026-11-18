@@ -42,10 +42,10 @@ type guiControlFixture struct {
 }
 
 func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
-	return newGUIControlFixtureDuration(t, transport, 60*time.Second)
+	return newGUIControlFixtureDuration(t, transport, 60*time.Second, nil)
 }
 
-func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.Duration) *guiControlFixture {
+func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.Duration, configure func(*guiControlFixture)) *guiControlFixture {
 	t.Helper()
 	if os.Getenv("CODEXM_GUI_CONTROL_TEST") != "1" {
 		t.Skip("opt-in GUI ownership protocol experiment")
@@ -173,6 +173,9 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 	settings += "\n[features]\nplugins=false\napps=false\nhooks=false\nskip_host_skill_discovery=true\n"
 	if err := os.WriteFile(filepath.Join(f.c.Runtime.SharedCodexHome, "config.toml"), []byte(settings), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if configure != nil {
+		configure(f)
 	}
 	endpoint := "stdio://"
 	if transport == "unix" {

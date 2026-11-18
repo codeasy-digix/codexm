@@ -270,7 +270,7 @@ func serve(ctx context.Context, c config.Config, self string, in io.Reader, out 
 				accounts, e = Accounts(current)
 				result = map[string]any{"accounts": accounts, "mode": "native-web-chat"}
 			} else if web != nil && strings.HasPrefix(r.Method, "web.") {
-				if current.Runtime.SharedCodexHome != web.c.Runtime.SharedCodexHome || current.Runtime.AccountsDir != web.c.Runtime.AccountsDir || current.Runtime.CodexBinary != web.c.Runtime.CodexBinary || current.StateDir() != web.c.StateDir() {
+				if current.Runtime.SharedCodexHome != web.c.Runtime.SharedCodexHome || current.Runtime.AccountsDir != web.c.Runtime.AccountsDir || current.Runtime.CodexBinary != web.c.Runtime.CodexBinary || current.Runtime.WebGUIRelay != web.c.Runtime.WebGUIRelay || current.StateDir() != web.c.StateDir() {
 					e = errors.New("web runtime paths changed; finish its work before restarting the web service")
 				} else {
 					web.c.AccountRegistry = current.AccountRegistry

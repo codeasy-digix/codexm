@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { call } from "../../client/data";
 import {
   composerAction, resolveTurnSelection,
@@ -22,8 +22,15 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   const [notice, setNotice] = useState("");
   const [uncertain, setUncertain] = useState(false);
   const inFlight = useRef(false);
+  const relayKey = `codexm.guiRelay.${chat.id}`;
+  const [relayID, setRelayID] = useState(() => sessionStorage.getItem(relayKey) || "");
+  const relayText = useRef("");
+  const refresh = useRef(onSent);
+  refresh.current = onSent;
   const external = history?.thread.externalOwner;
   const delivery = history?.delivery;
+  const guiRelay = external && delivery?.state === "relay";
+  const relayingDraft = !!relayID && text === relayText.current;
   const active = external ? delivery?.state === "ready" || delivery?.state === "waiting"
     : liveTurn ? liveTurn.status === "inProgress" : history?.thread.status.type === "active";
   const turn = external ? delivery?.turnId : active
@@ -33,7 +40,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   const queueDraining = draining && !external && !active;
   let directError = "";
   if (waiting) directError = external ? "다른 창에서 승인 또는 입력을 기다리고 있습니다." : "현재 턴의 승인 또는 입력에 먼저 응답해 주세요.";
-  else if (external && !active) directError = delivery?.state === "idle"
+  else if (external && !active && !guiRelay) directError = delivery?.state === "idle"
     ? "다른 창에서 열려 있는 채팅입니다. 다음 입력을 큐에 추가할 수 있습니다."
     : "다른 창의 현재 턴에 연결할 수 없습니다. 큐에 추가할 수 있습니다.";
   else if (draining && !active) directError = "기존 작업이 끝나면 변경된 웹 계정이 적용됩니다.";
@@ -41,8 +48,43 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   const { selectedModel, efforts, inheritedEffort } = resolveTurnSelection(chat, models, selection);
   const hasOverride = !!(selection.model || selection.effort);
 
+  useEffect(() => {
+    if (!relayID) return;
+    let closed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function check() {
+      let status = "unknown";
+      try {
+        const result = await call<{ status: string }>("web.guiRelayStatus", { thread_id: chat.id, request_id: relayID });
+        status = result.status;
+      } catch { /* Retain the original input if the delivery result cannot be verified. */ }
+      if (closed) return;
+      if (status === "pending") {
+        timer = setTimeout(() => void check(), 1500);
+        return;
+      }
+      sessionStorage.removeItem(relayKey);
+      setRelayID("");
+      if (status === "accepted") {
+        setText(current => current === relayText.current ? "" : current);
+        setNotice("GUI 채팅에 전달했습니다.");
+        refresh.current();
+      } else if (status === "expired") {
+        setError("중계 시간이 만료됐습니다. 입력은 작성창에 남아 있습니다.");
+      } else if (status === "rejected") {
+        setError("GUI에서 대상 채팅을 확인하지 못했습니다. 입력은 작성창에 남아 있습니다.");
+      } else {
+        setError("GUI에 전달됐는지 확인하지 못했습니다.");
+        setUncertain(true);
+      }
+    }
+    void check();
+    return () => { closed = true; clearTimeout(timer); };
+  }, [chat.id, relayID, relayKey]);
+
   async function send(mode: "immediate" | "queue") {
     if (!text.trim() || inFlight.current || uncertain) return;
+    if (relayingDraft || (mode === "immediate" && relayID)) return;
     if (mode === "immediate" && directError) {
       setError(directError);
       return;
@@ -57,7 +99,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       return;
     }
     const parameters: Record<string, string> = {
-      thread_id: chat.id, account, text, mode: mode === "immediate" && active ? "steer" : mode,
+      thread_id: chat.id, account, text, mode: mode === "immediate" && active && !external ? "steer" : mode,
     };
     if (override && selectedModel) {
       parameters.model = selectedModel.model;
@@ -70,7 +112,13 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
     setNotice("");
     const sent = text;
     try {
-      const result = await call<{ mode: "start" | "steer" | "queue" }>("web.send", parameters, crypto.randomUUID());
+      const result = await call<{ mode: "start" | "steer" | "queue" | "relay"; relay_id?: string }>("web.send", parameters, crypto.randomUUID());
+      if (result.mode === "relay" && result.relay_id) {
+        relayText.current = sent;
+        sessionStorage.setItem(relayKey, result.relay_id);
+        setRelayID(result.relay_id);
+        return;
+      }
       setText(current => current === sent ? "" : current);
       if (mode === "queue") {
         setNotice(hasOverride ? "큐에 추가했습니다. 이 입력은 채팅의 실행 설정으로 처리됩니다." : "큐에 추가했습니다.");
@@ -109,7 +157,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       <summary>대기 중인 입력 {queue.length}개</summary>
       {queue.map(q => <p key={q.id}>{q.input.map(x => x.text || "").join("\n")}</p>)}
     </details>}
-    {external && <p className="owner-note">{directError || "다른 창에서 진행 중인 작업에 해당 창의 계정으로 전달합니다."}</p>}
+    {external && <p className="owner-note">{directError || (guiRelay ? "GUI 채팅에 해당 창의 계정으로 전달합니다." : "다른 창에서 진행 중인 작업에 해당 창의 계정으로 전달합니다.")}</p>}
     {draining && <p className="owner-note" role="status">기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.</p>}
     {error && <p role="alert" className="inline-error">{error}</p>}
     {uncertain && <p className="inline-error">전송 결과가 불확실하여 재전송을 막았습니다. 대화와 큐에서 원래 입력을 확인하세요.</p>}
@@ -127,13 +175,13 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
         <small>Enter 전송·개입 · ⌘Enter 큐 · Shift+Enter 줄바꿈</small>
         <div className="composer-actions">
           {active && !external && <button className="stop-button" onClick={() => void stop()} disabled={busy} aria-label="현재 턴 중지">■</button>}
-          <button aria-keyshortcuts="Meta+Enter" onClick={() => void send("queue")} disabled={busy || uncertain || !text.trim() || queueDraining}>큐에 추가</button>
-          <button className="primary" onClick={() => void send("immediate")} disabled={busy || uncertain || !text.trim() || !!directError}>
-            {busy ? "전달 중…" : active ? "즉시 개입" : "보내기"}
+          <button aria-keyshortcuts="Meta+Enter" onClick={() => void send("queue")} disabled={busy || uncertain || !text.trim() || queueDraining || relayingDraft}>큐에 추가</button>
+          <button className="primary" onClick={() => void send("immediate")} disabled={busy || !!relayID || uncertain || !text.trim() || !!directError}>
+            {busy || relayID ? "전달 중…" : active ? "즉시 개입" : "보내기"}
           </button>
         </div>
       </div>
     </div>
-    {notice && <p role="status" className="delivery-notice">{notice}</p>}
+    {(relayID || notice) && <p role="status" className="delivery-notice">{relayID ? "GUI 채팅에 전달하고 있습니다…" : notice}</p>}
   </div>;
 }

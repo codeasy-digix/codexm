@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/codeasy-digix/codexm/internal/accounts"
 )
 
 // Opt-in browser fixture kept alive only while the external Playwright job
@@ -16,7 +18,12 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if !filepath.IsAbs(output) {
 		t.Skip("requires an isolated browser fixture output directory")
 	}
-	f := newGUIControlFixtureDuration(t, "unix", 45*time.Minute)
+	f := newGUIControlFixtureDuration(t, "unix", 45*time.Minute, func(f *guiControlFixture) {
+		setupWebFixtureLogins(t, f, "first-browser-login", "second-browser-login")
+		if _, err := accounts.SetNativeDefault(f.c, "first-browser-login"); err != nil {
+			t.Fatal(err)
+		}
+	})
 	f.mu.Lock()
 	f.responseText = "## 작업을 확인했습니다\n\n브라우저에서 표시하는 **구조화된 응답**입니다.\n\n" +
 		"- 최근 대화부터 불러옵니다.\n- 명령 실행 과정은 접어서 표시합니다.\n\n" +

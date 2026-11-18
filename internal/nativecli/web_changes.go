@@ -192,6 +192,9 @@ func (w *WebChat) verifyTree(ctx context.Context, c *webConnection, id string) e
 }
 
 func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webParams) (any, error) {
+	if w.c.Runtime.WebGUIRelay != "" && strings.EqualFold(p.Thread, w.c.Runtime.WebGUIRelay) {
+		return nil, errors.New("이 채팅은 GUI 메시지 중계 전용입니다.")
+	}
 	if strings.TrimSpace(p.Text) == "" {
 		return nil, errors.New("enter a message")
 	}
@@ -267,17 +270,20 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 }
 
 func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request, p webParams, pid int) (any, error) {
-	if p.Mode == "immediate" && p.Turn == "" {
-		return nil, errWebForeignInput
-	}
 	probe, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
+	if p.Mode == "immediate" && p.Turn == "" && p.Model != "" {
+		return nil, errors.New("다른 창에서 열어 둔 채팅은 그 창의 모델과 계정을 사용합니다. 상태를 다시 확인해 주세요.")
+	}
 	owner, err := w.openInputOwner(probe, p.Thread, pid)
 	if err != nil {
 		if p.Mode == "queue" && pid != c.process.PID {
 			// The durable native queue can accept input from a different
 			// connection. It does not load or take over the original chat.
 			return queueWebInput(ctx, c.client, r, p)
+		}
+		if p.Mode == "immediate" && p.Turn == "" {
+			return w.submitGUIRelay(ctx, c, r, p, pid)
 		}
 		return nil, errWebForeignInput
 	}
@@ -296,6 +302,9 @@ func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request,
 		if p.Mode != "queue" {
 			if delivery.State == "waiting" {
 				return nil, errors.New("현재 턴이 승인 또는 사용자 입력을 기다립니다. 원래 창에서 응답해 주세요.")
+			}
+			if delivery.State == "idle" && p.Mode == "immediate" && p.Turn == "" && owner.web == nil && w.guiRelayThread(p.Thread) != "" {
+				return w.submitGUIRelay(ctx, c, r, p, pid)
 			}
 			if delivery.State != "ready" || (p.Turn != "" && delivery.TurnID != p.Turn) {
 				return nil, errors.New("현재 개입할 수 있는 작업이 없습니다. 채팅 상태를 확인해 주세요.")

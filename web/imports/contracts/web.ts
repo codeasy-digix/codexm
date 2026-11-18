@@ -24,6 +24,7 @@ export const bridgeContract = {
     { name: "web.respond", mutation: true, model: false },
     { name: "web.guiQuitPreview", mutation: false, model: false },
     { name: "web.guiQuit", mutation: true, model: false },
+    { name: "web.guiRelayStatus", mutation: false, model: false },
   ],
 };
 
@@ -39,7 +40,7 @@ export type ChatHistory = {
   nextCursor?: string | null;
   queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>;
   pending: PendingRequest[];
-  delivery?: { state: "ready" | "waiting" | "idle" | "unavailable"; turnId?: string } | null;
+  delivery?: { state: "ready" | "waiting" | "idle" | "unavailable" | "relay"; turnId?: string } | null;
   loginDraining?: boolean;
   loginGeneration?: number;
 };

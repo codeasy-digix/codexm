@@ -195,12 +195,15 @@ func (w *WebChat) externalDelivery(ctx context.Context, id string, pids []int) w
 	defer cancel()
 	o, err := w.openInputOwner(ctx, id, pids[0])
 	if err != nil {
-		return unavailable
+		return w.guiRelayDelivery(ctx, id, pids[0], unavailable)
 	}
 	defer o.release()
 	result, err := o.delivery(ctx, id)
 	if err != nil {
 		return unavailable
+	}
+	if result.State == "idle" {
+		return w.guiRelayDelivery(ctx, id, pids[0], result)
 	}
 	return result
 }

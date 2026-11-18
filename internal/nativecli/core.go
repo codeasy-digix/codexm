@@ -39,6 +39,7 @@ func Load(filename string) (config.Config, error) {
 			Accounts string `toml:"accounts_dir"`
 			Binary   string `toml:"codex_binary"`
 			Node     string `toml:"web_node_binary"`
+			GUIRelay string `toml:"web_gui_relay"`
 		} `toml:"runtime"`
 		Storage struct {
 			State string `toml:"state_dir"`
@@ -64,6 +65,10 @@ func Load(filename string) (config.Config, error) {
 			*dst = value
 		}
 	}
+	if selected.Runtime.GUIRelay != "" && !threadID.MatchString(selected.Runtime.GUIRelay) {
+		return c, errors.New("web_gui_relay must be a complete local chat UUID")
+	}
+	c.Runtime.WebGUIRelay = strings.ToLower(selected.Runtime.GUIRelay)
 	c.AccountRegistry.Removed = selected.Registry.Removed
 	return c, nil
 }

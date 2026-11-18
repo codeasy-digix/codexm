@@ -30,6 +30,7 @@ var WebMethods = []Method{
 	{"web.delete", true, false}, {"web.projectCreate", true, false},
 	{"web.pending", false, false}, {"web.respond", true, false},
 	{"web.guiQuitPreview", false, false}, {"web.guiQuit", true, false},
+	{"web.guiRelayStatus", false, false},
 }
 
 func webSharedMethod(name string) bool {
@@ -267,6 +268,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 	case "web.guiQuit":
 		err := w.guiQuit.quit(ctx, r.Owner, p.Confirmation, findWebDesktop, stopWebDesktop)
 		return err == nil, err
+	case "web.guiRelayStatus":
+		return webGUIRelayStatus(w.c, r.Owner, p.Thread, p.Request)
 	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {

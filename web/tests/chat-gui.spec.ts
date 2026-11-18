@@ -1,4 +1,4 @@
-import { test,expect,type Page } from "@playwright/test";
+import { test,expect,type BrowserContext,type Page } from "@playwright/test";
 import { readFileSync,writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
@@ -8,8 +8,15 @@ const binary=process.env.CODEXM_CHAT_GUI_BINARY;
 test.skip(!fixtureRoot||!binary,"requires the isolated official-runtime browser fixture");
 const url=process.env.CODEXM_WEB_TEST_URL||"http://127.0.0.1:15431";
 function fixture(){return JSON.parse(readFileSync(join(fixtureRoot!,"fixture.json"),"utf8"));}
+let sessionCookies: Awaited<ReturnType<BrowserContext["cookies"]>> | undefined;
 
-async function authenticate(page:Page){
+async function authenticate(page:Page, fresh = false){
+  if (!fresh && sessionCookies) {
+    await page.context().addCookies(sessionCookies);
+    await page.goto(url);
+    await expect(page.getByRole("button",{name:"새 채팅",exact:true})).toBeAttached();
+    return;
+  }
   const f=fixture();
   execFileSync(binary!,["--config",f.config,"web","--no-open"],{stdio:"pipe",env:{...process.env,HOME:f.home}});
   await page.goto(url);
@@ -17,6 +24,7 @@ async function authenticate(page:Page){
   await page.getByLabel("로컬 접속 코드",{exact:true}).fill(readFileSync(join(f.state,"access"),"utf8").trim());
   await page.getByRole("button",{name:"연결",exact:true}).click();
   await expect(page.getByRole("button",{name:"새 채팅",exact:true})).toBeAttached();
+  if (!fresh) sessionCookies = await page.context().cookies(url);
 }
 
 async function menu(page:Page){if(await page.getByRole("button",{name:"메뉴 열기",exact:true}).isVisible())await page.getByRole("button",{name:"메뉴 열기",exact:true}).click();}
@@ -68,6 +76,52 @@ test("header shows the configured default and confirms GUI quit each time", asyn
   await expect(page.getByRole("status").filter({hasText: "Codex GUI를 종료했습니다"})).toBeVisible();
   expect(await page.evaluate(() => (window as any).__quitConfirmations)).toEqual(["invalid-fixture-ticket"]);
   await expect(account).toHaveValue("second-fixture");
+});
+
+test("Enter waits for a GUI relay receipt while Command+Enter still uses the native queue", async ({ page }) => {
+  await authenticate(page);
+  const thread = fixture().thread;
+  await page.evaluate(thread => {
+    const m = (window as any).Meteor;
+    const apply = m.apply;
+    const sent: string[] = [];
+    const state = (window as any).__relayFixture = { sent, status: "pending" };
+    m.apply = function (method: string, args: any[], options: any, callback: any) {
+      if (method !== "codexm.call" || args[1]?.thread_id !== thread) return apply.call(this, method, args, options, callback);
+      if (args[0] === "web.history") {
+        return apply.call(this, method, args, options, (error: any, result: any) => callback(error, error ? result : {
+          ...result, thread: { ...result.thread, externalOwner: true }, delivery: { state: "relay" },
+        }));
+      }
+      if (args[0] === "web.send") {
+        sent.push(args[1].mode);
+        const response = args[1].mode === "queue" ? { mode: "queue" } : { mode: "relay", relay_id: "fake-relay-receipt" };
+        queueMicrotask(() => callback(null, response));
+        return;
+      }
+      if (args[0] === "web.guiRelayStatus") {
+        queueMicrotask(() => callback(null, { status: state.status }));
+        return;
+      }
+      return apply.call(this, method, args, options, callback);
+    };
+  }, thread);
+  await page.getByRole("link", {name:/긴 이력 페이지 테스트/}).click();
+  await expect(page.getByText("GUI 채팅에 해당 창의 계정으로 전달합니다.")).toBeVisible();
+  const input = page.getByLabel("메시지", {exact:true});
+  await input.fill("현재 GUI 작업에 전달할 입력");
+  await input.press("Enter");
+  await expect(page.getByText("GUI 채팅에 전달하고 있습니다…", {exact:true})).toBeVisible();
+  await expect(input).toHaveValue("현재 GUI 작업에 전달할 입력");
+  await input.press("Enter");
+  expect(await page.evaluate(() => (window as any).__relayFixture.sent)).toEqual(["immediate"]);
+  await page.evaluate(() => { (window as any).__relayFixture.status = "accepted"; });
+  await expect(page.getByText("GUI 채팅에 전달했습니다.", {exact:true})).toBeVisible();
+  await expect(input).toHaveValue("");
+  await input.fill("다음 작업에 넣을 입력");
+  await input.press("Meta+Enter");
+  await expect(page.getByText("큐에 추가했습니다.", {exact:true})).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__relayFixture.sent)).toEqual(["immediate", "queue"]);
 });
 
 test("recent-only history, anchored upward pagination, safe Markdown and lazy details",async({page})=>{
@@ -220,9 +274,14 @@ test("streamed answer, intervention, queue, browser reconnect and default login 
   await expect(page.getByText("큐에 추가했습니다.",{exact:true})).toBeVisible();
   await expect(page.locator(".queue-preview summary")).toContainText("1개");
   const renewal = "기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.";
-  // This file exists only in the browser fixture home. The real credential
-  // transition and the live identity check are covered in the Go integration.
-  writeFileSync(join(fixture().home, "shared", "auth.json"), JSON.stringify({fixture: "new login revision"}), {mode: 0o600});
+  // Switch the default link between valid synthetic logins. Replacing the
+  // owner's credentials with an invalid file revokes its native permissions.
+  const config = fixture();
+  const reply = execFileSync(binary!, ["--config", config.config, "bridge", "--stdio"], {
+    env: { ...process.env, HOME: config.home }, encoding: "utf8",
+    input: JSON.stringify({ protocolVersion: 1, id: 1, owner: "browser-fixture", operation_id: "change-fixture-default", method: "accounts.setDefault", params: { account: "second-browser-login" } }) + "\n",
+  });
+  expect(JSON.parse(reply).error).toBeUndefined();
   await expect(page.getByText(renewal, {exact: true})).toBeVisible();
   await page.close();
   const next=await context.newPage();await next.goto(url);
@@ -352,7 +411,7 @@ test("pin, project move, archive, restore and confirmed permanent delete",async(
 });
 
 test("project creation, filtered new chat, search and logout gate",async({page})=>{
-  await authenticate(page);
+  await authenticate(page, true);
   await page.getByRole("button",{name:"프로젝트 추가",exact:true}).click();
   let dialog=page.getByRole("dialog",{name:"프로젝트 추가",exact:true});
   await dialog.getByLabel("프로젝트 이름",{exact:true}).fill("새 프로젝트 검증");

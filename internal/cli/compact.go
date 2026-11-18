@@ -109,7 +109,7 @@ func Main(args []string) error {
 		fmt.Print(compactHelp + guiExperimentHelp)
 		return nil
 	}
-	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "migrate-toolbar": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}
+	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "migrate-toolbar": true, "terminal": true, "web": true, "__web": true, "__web-gui-relay": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}
 	if !allowed[command] {
 		return fmt.Errorf("%q is excluded from compact codexm; use list, resume, account or web (existing work is preserved)", command)
 	}
@@ -218,6 +218,8 @@ func Main(args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(r)
 	case "web":
 		return webhost.Command(ctx, c, self, args, os.Stdout)
+	case "__web-gui-relay":
+		return nativecli.RunWebGUIRelay(ctx, c, args, os.Stdout)
 	case "__web":
 		if len(args) != 1 {
 			return errors.New("missing web launch spec")
