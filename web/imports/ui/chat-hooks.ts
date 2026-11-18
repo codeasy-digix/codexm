@@ -1,6 +1,57 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "../../client/data";
-import { mergeTurns, type ChatHistory, type Catalog, type ChatModel } from "../contracts/web";
+import { mergeTurns, workingActivity, type ChatActivitySnapshot, type ChatHistory, type Catalog, type ChatModel } from "../contracts/web";
+
+export function useChatActivity(enabled: boolean, thread: string, account: string) {
+  const [observation, setObservation] = useState<{ thread: string; account: string; snapshot: ChatActivitySnapshot }>();
+  useEffect(() => {
+    if (!enabled) {
+      setObservation(undefined);
+      return;
+    }
+    let active = true;
+    let sampling = false;
+    let last = "";
+    let timer: ReturnType<typeof setTimeout>;
+    const sample = async () => {
+      if (!active || sampling || document.visibilityState === "hidden") return;
+      clearTimeout(timer);
+      sampling = true;
+      let delay = 1200;
+      try {
+        const snapshot = await call<ChatActivitySnapshot>("web.activity", { thread_id: thread, account });
+        if (!active) return;
+        const fingerprint = JSON.stringify(snapshot);
+        if (fingerprint !== last) {
+          last = fingerprint;
+          setObservation({ thread, account, snapshot });
+        }
+        const selected = snapshot.threads[thread];
+        if (selected?.source === "web" && workingActivity(selected)) delay = 350;
+      } catch {
+        last = "";
+        if (active) setObservation(undefined);
+      } finally {
+        sampling = false;
+        if (active) timer = setTimeout(sample, delay);
+      }
+    };
+    document.addEventListener("visibilitychange", sample);
+    void sample();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", sample);
+    };
+  }, [enabled, thread, account]);
+  const selected = enabled && observation?.thread === thread && observation.account === account ? observation.snapshot : undefined;
+  return {
+    threads: enabled ? observation?.snapshot.threads : undefined,
+    writersKnown: enabled && !!observation?.snapshot.writersKnown,
+    turn: selected?.turn,
+    accountTurn: selected?.accountTurn ? selected.turn : undefined,
+  };
+}
 
 export function useChatModels(enabled: boolean, account: string) {
   const [result, setResult] = useState<{ account: string; models: ChatModel[]; error?: string }>();
@@ -53,7 +104,9 @@ export function useCatalog(ready:boolean,account:string,search:string,project:st
     }catch(e){if(epoch===generation.current)setError((e as Error).message);}finally{if(epoch===generation.current){busy.current=false;setLoading(false);}}
   },[ready,account,search,project,archived]);
   useEffect(()=>{
-    generation.current++;busy.current=false;visibleCount.current=50;setCatalog(undefined);setError("");
+    generation.current++;busy.current=false;visibleCount.current=50;
+    setCatalog(previous=>ready&&previous?{...previous,threads:[],nextCursor:undefined}:undefined);
+    setLoading(ready);setError("");
     if(!ready)return;
     const initial=setTimeout(()=>void refresh(),search?250:0);
     const timer=setInterval(()=>{if(document.visibilityState!=="hidden")void refresh();},7000);

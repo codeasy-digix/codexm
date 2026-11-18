@@ -227,8 +227,8 @@ func ReadDesktop(ctx context.Context, home string) (Desktop, error) {
 			d.AdditionalProjects = append(d.AdditionalProjects, p)
 		} else {
 			d.Projects = append(d.Projects, p)
-			d.aliases[p.ID] = p.ID
 		}
+		d.aliases[p.ID] = p.ID
 	}
 	return d, nil
 }

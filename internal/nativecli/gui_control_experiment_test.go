@@ -31,6 +31,7 @@ type guiControlFixture struct {
 	socket         string
 	active         chan struct{}
 	release        chan struct{}
+	releaseForeign chan struct{}
 	once           sync.Once
 	mu             sync.Mutex
 	bodies         []string
@@ -59,7 +60,7 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 	t.Setenv("HOME", home)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
-	f := &guiControlFixture{t: t, ctx: ctx, binary: binary, active: make(chan struct{}), release: make(chan struct{})}
+	f := &guiControlFixture{t: t, ctx: ctx, binary: binary, active: make(chan struct{}), release: make(chan struct{}), releaseForeign: make(chan struct{})}
 	var activeOnce sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/responses") {
@@ -101,10 +102,37 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 			fmt.Fprintf(w, "data: %s\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n", item)
 			return
 		}
+		streaming := strings.Contains(string(body), "GUI_FIXTURE_ACTIVE_BROWSER")
+		foreignProgress := strings.Contains(string(body), "GUI_FIXTURE_ACTIVE_FOREIGN_BROWSER")
+		outputIndex := 0
+		if streaming || foreignProgress {
+			messageID := "fixture-message"
+			phase, text := "final_answer", "완료 전에도 보이는 답변"
+			if foreignProgress {
+				messageID, phase, text = "fixture-progress", "commentary", "외부 작업이 기록한 진행 안내"
+			}
+			writeFixtureStreamEvent(w, map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{
+				"id": messageID, "type": "message", "role": "assistant", "phase": phase, "content": []any{},
+			}})
+			writeFixtureStreamEvent(w, map[string]any{"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "item_id": messageID, "delta": text})
+			if foreignProgress {
+				writeFixtureStreamEvent(w, map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{
+					"id": messageID, "type": "message", "role": "assistant", "phase": phase, "content": []map[string]string{{"type": "output_text", "text": text}},
+				}})
+				outputIndex = 1
+			} else {
+				responseText = text + "\n\n" + responseText
+			}
+			w.(http.Flusher).Flush()
+		}
 		if strings.Contains(string(body), "GUI_FIXTURE_ACTIVE") {
 			activeOnce.Do(func() { close(f.active) })
+			release := f.release
+			if foreignProgress {
+				release = f.releaseForeign
+			}
 			select {
-			case <-f.release:
+			case <-release:
 			case <-r.Context().Done():
 				return
 			}
@@ -112,8 +140,7 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 		if responseText == "" {
 			responseText = "fixture complete"
 		}
-		response, _ := json.Marshal(map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{"id": "fixture-message", "type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": responseText}}}})
-		fmt.Fprintf(w, "data: %s\n\n", response)
+		writeFixtureStreamEvent(w, map[string]any{"type": "response.output_item.done", "output_index": outputIndex, "item": map[string]any{"id": "fixture-message", "type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": responseText}}}})
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"fixture-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n")
 	}))
 	f.c = config.Defaults()
@@ -180,6 +207,11 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 		t.Fatal(err)
 	}
 	return f
+}
+
+func writeFixtureStreamEvent(w http.ResponseWriter, event map[string]any) {
+	data, _ := json.Marshal(event)
+	fmt.Fprintf(w, "data: %s\n\n", data)
 }
 
 func (f *guiControlFixture) thread() string {

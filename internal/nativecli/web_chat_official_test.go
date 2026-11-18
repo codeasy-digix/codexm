@@ -140,3 +140,36 @@ func TestWebChatOfficialModelSelection(t *testing.T) {
 	}
 	t.Fatal("the isolated model provider did not receive the requested turn")
 }
+
+func TestWebChatOfficialLiveStream(t *testing.T) {
+	f := newGUIControlFixture(t, "stdio")
+	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-web-live")
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	if _, err := call("web.send", map[string]any{"thread_id": id, "mode": "immediate", "text": "GUI_FIXTURE_ACTIVE_BROWSER"}); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(8 * time.Second)
+	for {
+		activity := w.activity(id, "default")
+		if activity.Turn != nil && activity.Threads[id].State == "responding" &&
+			slices.ContainsFunc(activity.Turn.Items, func(item webLiveItem) bool {
+				return item.Streaming && item.Text == "완료 전에도 보이는 답변"
+			}) {
+			if !activity.AccountTurn || w.activity(id, "different-login").AccountTurn {
+				t.Fatal("observation must preserve the executing account for input")
+			}
+			return
+		}
+		if time.Now().After(until) {
+			t.Fatalf("missing partial response before model completion: state=%+v turn=%+v", activity.Threads[id], activity.Turn)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

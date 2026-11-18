@@ -24,7 +24,7 @@ import (
 
 var WebMethods = []Method{
 	{"web.catalog", false, false}, {"web.history", false, false}, {"web.items", false, false}, {"web.item", false, false},
-	{"web.models", false, false},
+	{"web.models", false, false}, {"web.activity", false, false},
 	{"web.create", true, false}, {"web.send", true, true}, {"web.interrupt", true, false},
 	{"web.pin", true, false}, {"web.move", true, false}, {"web.archive", true, false},
 	{"web.delete", true, false}, {"web.projectCreate", true, false},
@@ -75,6 +75,7 @@ type webConnection struct {
 	pending  map[string]cr.Message
 	models   []webModel
 	modelsAt time.Time
+	live     map[string]*webLiveEntry
 }
 
 type WebChat struct {
@@ -83,6 +84,7 @@ type WebChat struct {
 	c           config.Config
 	mu          sync.Mutex
 	connections map[string]*webConnection
+	writers     webWriterMonitor
 }
 
 func NewWebChat(ctx context.Context, c config.Config) *WebChat {
@@ -170,6 +172,7 @@ func (c *webConnection) events(ctx context.Context) {
 	for {
 		select {
 		case event := <-c.client.Events:
+			c.observeLiveEvent(event)
 			if event.Method == "serverRequest/resolved" {
 				var resolved struct {
 					ID json.RawMessage `json:"requestId"`
@@ -292,8 +295,11 @@ func (w *WebChat) Dispatch(ctx context.Context, r Request) (any, error) {
 }
 
 func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, error) {
-	if r.Method == "web.catalog" {
+	switch r.Method {
+	case "web.catalog":
 		return w.catalog(ctx, nil, p)
+	case "web.activity":
+		return w.activity(p.Thread, p.Account), nil
 	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
@@ -80,6 +81,18 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		page.Data = []WebTurn{}
 	}
 	slices.Reverse(page.Data)
+	if read.Thread.External && p.Cursor == "" && !read.Thread.Archived {
+		writers, _ := w.writerSnapshot()
+		activity := writers[p.Thread].activity
+		if activity.State == "running" {
+			for i := range page.Data {
+				if page.Data[i].ID == activity.TurnID {
+					addExternalProgress(ctx, c, p.Thread, &page.Data[i])
+					break
+				}
+			}
+		}
+	}
 	var queue struct {
 		Data       []json.RawMessage `json:"data"`
 		NextCursor *string           `json:"nextCursor"`
@@ -93,6 +106,48 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		}
 	}
 	return map[string]any{"thread": read.Thread, "turns": page.Data, "nextCursor": page.NextCursor, "queue": queue.Data, "queueNextCursor": queue.NextCursor, "pending": w.pending(c, p.Thread)}, nil
+}
+
+// The summary projection omits commentary. Read the latest persisted items
+// for an observed running foreign turn without loading it into our server.
+func addExternalProgress(ctx context.Context, c *webConnection, thread string, turn *WebTurn) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var page struct {
+		Data []struct {
+			Item struct {
+				ID         string
+				Type       string
+				Phase      string
+				Text       string
+				Moderation *struct{ Moderated bool }
+			}
+		}
+	}
+	args := map[string]any{
+		"threadId": thread, "turnId": turn.ID, "limit": 12, "sortDirection": "desc",
+		"deferOutput": map[string]bool{"commandExecution": true, "mcpToolCall": true},
+	}
+	if err := c.client.Call(ctx, "thread/items/list", args, &page); err != nil {
+		return
+	}
+	seen := make(map[string]bool)
+	for _, raw := range turn.Items {
+		var existing struct{ ID string }
+		if json.Unmarshal(raw, &existing) == nil {
+			seen[existing.ID] = true
+		}
+	}
+	slices.Reverse(page.Data)
+	for _, entry := range page.Data {
+		item := entry.Item
+		if item.Type != "agentMessage" || seen[item.ID] || item.ID == "" || item.Text == "" ||
+			(item.Moderation != nil && item.Moderation.Moderated) {
+			continue
+		}
+		raw, _ := json.Marshal(map[string]string{"id": item.ID, "type": item.Type, "phase": item.Phase, "text": limitLiveText(item.Text)})
+		turn.Items = append(turn.Items, raw)
+	}
 }
 
 func (w *WebChat) items(ctx context.Context, c *webConnection, p webParams) (any, error) {

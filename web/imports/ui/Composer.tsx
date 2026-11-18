@@ -2,28 +2,29 @@ import React, { useRef, useState } from "react";
 import { call } from "../../client/data";
 import {
   composerAction, resolveTurnSelection,
-  type ChatHistory, type ChatModel, type ChatThread, type TurnSelection,
+  type ChatHistory, type ChatModel, type ChatThread, type LiveTurn, type TurnSelection,
 } from "../contracts/web";
 
 type Props = {
   chat: ChatThread;
   account: string;
   history?: ChatHistory;
+  liveTurn?: Pick<LiveTurn, "id" | "status">;
   models: ChatModel[];
   selection: TurnSelection;
   onSent: () => void;
 };
 
-export function Composer({ chat, account, history, models, selection, onSent }: Props) {
+export function Composer({ chat, account, history, liveTurn, models, selection, onSent }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [uncertain, setUncertain] = useState(false);
   const inFlight = useRef(false);
-  const active = history?.thread.status.type === "active";
+  const active = liveTurn ? liveTurn.status === "inProgress" : history?.thread.status.type === "active";
   const external = history?.thread.externalOwner;
-  const turn = active ? history.turns.slice().reverse().find(t => t.status === "inProgress")?.id : undefined;
+  const turn = active ? liveTurn?.id ?? history?.turns.slice().reverse().find(t => t.status === "inProgress")?.id : undefined;
   const queue = history?.queue || [];
   const { selectedModel, efforts, inheritedEffort } = resolveTurnSelection(chat, models, selection);
   const hasOverride = !!(selection.model || selection.effort);

@@ -33,7 +33,7 @@ function ToolItem({entry,thread,turn,account}:{entry:ItemEntry;thread:string;tur
   </details>;
 }
 
-function TurnDetails({thread,turn,account,external}:{thread:string;turn:ChatTurn;account:string;external?:boolean}) {
+function TurnDetails({thread,turn,account,external,current}:{thread:string;turn:ChatTurn;account:string;external?:boolean;current:boolean}) {
   const [entries,setEntries]=useState<ItemEntry[]>([]),[cursor,setCursor]=useState<string|null>(),[started,setStarted]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState("");
   async function load(next?:string|null) {
     if (loading) return;setLoading(true);setError("");
@@ -42,7 +42,7 @@ function TurnDetails({thread,turn,account,external}:{thread:string;turn:ChatTurn
   }
   const details=entries.filter(({item})=>item.type!=="userMessage"&&(item.type!=="agentMessage"||item.phase==="commentary"));
   return <details className="turn-details" onToggle={e=>{if(e.currentTarget.open&&!started&&!loading)void load();}}>
-    <summary>작업 과정 <span>{turn.status==="inProgress"?"진행 중":turn.status==="interrupted"?(external?"원래 창에서 상태 확인":"중단됨"):"보기"}</span></summary>
+    <summary>작업 과정 <span>{current||turn.status==="inProgress"?"진행 중":turn.status==="interrupted"?(external?"원래 창에서 상태 확인":"중단됨"):"보기"}</span></summary>
     {error&&<p role="alert">{error}</p>}
     {details.map((entry,i)=><ToolItem key={`${entry.item.id}-${i}`} entry={entry} thread={thread} turn={turn.id} account={account}/>)}
     {started&&!details.length&&!loading&&<p className="muted">별도 작업 과정이 없습니다.</p>}
@@ -51,14 +51,16 @@ function TurnDetails({thread,turn,account,external}:{thread:string;turn:ChatTurn
   </details>;
 }
 
-export function ChatMessages({thread,turns,account,external}:{thread:string;turns:ChatTurn[];account:string;external?:boolean}) {
+export function ChatMessages({thread,turns,account,external,liveTurnId}:{thread:string;turns:ChatTurn[];account:string;external?:boolean;liveTurnId?:string}) {
   return <div className="turns">{turns.map(turn=><article className="turn" key={turn.id} data-turn-id={turn.id}>
     {turn.items.filter(item=>item.type==="userMessage").map(item=><div className="user-message" key={item.id}><span className="sr-only">나</span><p>{inputText(item.content)}</p></div>)}
     <div className="assistant-message">
-      {turn.items.filter(item=>item.type==="agentMessage"&&item.phase!=="commentary").map(item=><div className="markdown" key={item.id}><Markdown>{item.text||""}</Markdown></div>)}
-      {turn.status==="inProgress"&&<p className="working" role="status"><span/>작업 중</p>}
+      {turn.items.filter(item => item.type === "agentMessage" && (item.phase !== "commentary" || turn.id === liveTurnId) && item.text).map(item =>
+        item.streaming || item.phase === "commentary"
+          ? <div className={`live-message${item.phase === "commentary" ? " commentary-message" : ""}`} key={item.id}>{item.text}</div>
+          : <div className="markdown" key={item.id}><Markdown>{item.text || ""}</Markdown></div>)}
       {turn.error&&<p role="alert" className="inline-error">{turn.error.message}</p>}
-      <TurnDetails thread={thread} turn={turn} account={account} external={external}/>
+      <TurnDetails thread={thread} turn={turn} account={account} external={external} current={turn.id === liveTurnId}/>
     </div>
   </article>)}</div>;
 }

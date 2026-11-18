@@ -35,6 +35,7 @@ func webTestCall(t *testing.T, w *WebChat, ctx context.Context) func(string, any
 func TestWebRejectsInvalidRequestsBeforeStartingRuntime(t *testing.T) {
 	c := config.Defaults()
 	c.Storage.StateDir = t.TempDir()
+	c.Runtime.SharedCodexHome = filepath.Join(t.TempDir(), "no-native-home")
 	c.Runtime.CodexBinary = "/not-a-runtime"
 	w := NewWebChat(context.Background(), c)
 	defer w.Close()
@@ -50,6 +51,9 @@ func TestWebRejectsInvalidRequestsBeforeStartingRuntime(t *testing.T) {
 	}
 	if len(w.connections) != 0 {
 		t.Fatal("invalid request started a runtime")
+	}
+	if _, err := w.Dispatch(context.Background(), Request{Version: 1, Method: "web.activity", Params: json.RawMessage(`{}`)}); err != nil || len(w.connections) != 0 {
+		t.Fatal("passive activity started a runtime", err)
 	}
 	if _, err := Dispatch(context.Background(), c, "", Request{Version: 1, Method: "web.catalog"}); err == nil {
 		t.Fatal("normal TUI bridge exposed web control")
@@ -157,6 +161,20 @@ func TestWebChatOfficialForeignOwner(t *testing.T) {
 	}
 	if history["thread"].(map[string]any)["externalOwner"] != true {
 		t.Fatal("foreign writer not identified")
+	}
+	until := time.Now().Add(6 * time.Second)
+	for {
+		activity := w.activity(id, "default")
+		if state := activity.Threads[id]; state.State == "running" {
+			if state.Source != "external" || activity.Turn != nil {
+				t.Fatal("foreign writer incorrectly exposed as a web stream")
+			}
+			break
+		}
+		if time.Now().After(until) {
+			t.Fatalf("foreign writer activity unavailable: known=%v activity=%+v", activity.WritersKnown, activity.Threads[id])
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	for _, method := range []string{"web.send", "web.archive", "web.delete", "web.interrupt"} {
 		_, err = call(method, map[string]any{"thread_id": id, "mode": "immediate", "text": "MUST_NOT_EXECUTE", "turn_id": turn, "archived": true})

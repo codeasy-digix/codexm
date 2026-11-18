@@ -29,8 +29,8 @@ func desktopCatalogFixture(t *testing.T) (*WebChat, string) {
 	defer db.Close()
 	_, err = db.Exec(`CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,title TEXT,cwd TEXT,source TEXT,updated_at INTEGER,created_at INTEGER,archived INTEGER,project_id TEXT,thread_section_id TEXT,section_position INTEGER,attached_thread_parent_id TEXT);
  CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT,position INTEGER);CREATE TABLE project_roots(project_id TEXT,path TEXT,position INTEGER);CREATE TABLE thread_sections(id TEXT PRIMARY KEY,name TEXT);
- INSERT INTO projects VALUES('native-a','Main',0),('native-b','Nested',1);
- INSERT INTO project_roots VALUES('native-a','/workspace/main',0),('native-b','/workspace/main/nested',0);
+ INSERT INTO projects VALUES('native-a','Main',0),('native-b','Nested',1),('native-c','Native only',2);
+ INSERT INTO project_roots VALUES('native-a','/workspace/main',0),('native-b','/workspace/main/nested',0),('native-c','/workspace/native',0);
  INSERT INTO thread_sections VALUES('01984de2-8f74-7c91-a3b2-5c5e937cf318','Pinned');`)
 	if err != nil {
 		t.Fatal(err)
@@ -52,6 +52,9 @@ func desktopCatalogFixture(t *testing.T) (*WebChat, string) {
 		project, section, parent := "", "", ""
 		if i == 2 {
 			project = "native-a"
+		}
+		if i == 5 {
+			project = "native-c"
 		}
 		if i < 3 {
 			section = "01984de2-8f74-7c91-a3b2-5c5e937cf318"
@@ -89,6 +92,10 @@ func TestWebDesktopCatalogParityAndCompletePagination(t *testing.T) {
 	if len(projects) != 2 || projects[0].ID != "gui-b" || projects[0].NativeID != "native-b" {
 		t.Fatal("GUI project aliases/order lost", projects)
 	}
+	additional := page["otherProjects"].([]WebProject)
+	if len(additional) != 1 || additional[0].ID != "native-c" {
+		t.Fatal("native-only project missing", additional)
+	}
 	pins := page["pinned"].([]WebThread)
 	if len(pins) != 3 || pins[0].ID != "10000000-0000-4000-8000-000000000002" {
 		t.Fatal("native exec pin/order lost", pins)
@@ -121,6 +128,10 @@ func TestWebDesktopCatalogParityAndCompletePagination(t *testing.T) {
 	filtered := parityPage(t, w, webParams{Project: "gui-b"})
 	if len(filtered["threads"].([]WebThread)) != 2 {
 		t.Fatal("legacy GUI membership did not filter")
+	}
+	native := parityPage(t, w, webParams{Project: "native-c"})["threads"].([]WebThread)
+	if len(native) != 1 || native[0].Project != "native-c" {
+		t.Fatal("native-only project membership not preserved", native)
 	}
 	archived := parityPage(t, w, webParams{Archived: true})
 	if len(archived["threads"].([]WebThread)) != 8 {

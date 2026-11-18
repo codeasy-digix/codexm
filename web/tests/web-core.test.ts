@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composerAction,mergeTurns,chatTitle,type ChatTurn } from "../imports/contracts/web.ts";
+import { composerAction,mergeTurns,mergeLiveTurn,chatTitle,type ChatTurn } from "../imports/contracts/web.ts";
 import { chatShortcutStorageKey, defaultChatShortcuts, readChatShortcuts, shortcutFromEvent, shortcutLabel } from "../imports/ui/chat-shortcuts.ts";
 
 test("composer distinguishes intervention, queue, IME and explicit newlines",()=>{
@@ -53,6 +53,16 @@ test("older pages preserve current turns while live refresh replaces their conte
   const next=mergeTurns(earlier,[turn("three"),turn("four")]);
   assert.deepEqual(next.map(t=>t.id),["one","two","three","four"]);
   assert.equal(next[2].status,"completed");
+});
+
+test("live reply replaces a preview by item ID, then yields to stored completion", () => {
+  const user = { id: "user", type: "userMessage" };
+  const reply = { id: "agent", type: "agentMessage", text: "First" };
+  const active = { id: "turn", status: "inProgress", items: [user, reply] };
+  const live = { id: "turn", status: "inProgress", items: [{ id: "agent", text: "First fragment", streaming: true }] };
+  assert.deepEqual(mergeLiveTurn([active], live)[0].items.map(item => item.text), [undefined, "First fragment"]);
+  const complete = { ...active, status: "completed", items: [user, { ...reply, text: "Complete" }] };
+  assert.deepEqual(mergeLiveTurn([complete], live), [complete]);
 });
 
 test("native titles and empty drafts have useful display text",()=>{

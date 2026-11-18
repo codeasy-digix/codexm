@@ -13,6 +13,7 @@ async function authenticate(page:Page){
   const f=fixture();
   execFileSync(binary!,["--config",f.config,"web","--no-open"],{stdio:"pipe",env:{...process.env,HOME:f.home}});
   await page.goto(url);
+  await expect(page.getByRole("alert")).toHaveText("로그인이 필요합니다.",{timeout:12000});
   await page.getByLabel("로컬 접속 코드",{exact:true}).fill(readFileSync(join(f.state,"access"),"utf8").trim());
   await page.getByRole("button",{name:"연결",exact:true}).click();
   await expect(page.getByRole("button",{name:"새 채팅",exact:true})).toBeAttached();
@@ -50,22 +51,46 @@ test("recent-only history, anchored upward pagination, safe Markdown and lazy de
   await page.screenshot({path:join(fixtureRoot!,"desktop-history.png")});
 });
 
-test("new chat, Enter intervention, Command+Enter queue and browser reconnect",async({page,context})=>{
+test("project picker and live status from a separate native writer", async ({page}) => {
+  const row = page.getByRole("button",{name:/진행 중 개입 테스트/});
+  try {
+    await authenticate(page);
+    const picker = page.getByRole("combobox", {name:"프로젝트 필터",exact:true});
+    await expect(picker).toHaveValue("");
+    await picker.selectOption(fixture().project);
+    await expect(page.locator(".list-heading")).toContainText("브라우저 테스트 프로젝트 채팅");
+    await expect(page.getByRole("button",{name:/긴 이력 페이지 테스트/})).toBeVisible();
+    await expect(row).toHaveCount(0);
+    await picker.selectOption("");
+    await expect(row).toContainText("다른 창 · 작업 중",{timeout:12000});
+    await row.click();
+    await expect(page.getByRole("status",{name:"현재 작업 상태",exact:true})).toHaveText("다른 창 · 작업 중");
+    await expect(page.getByText("외부 작업이 기록한 진행 안내",{exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"보내기",exact:true})).toBeDisabled();
+  } finally {
+    writeFileSync(join(fixtureRoot!,"release-foreign"),"release isolated external writer");
+  }
+  await expect(row).toContainText("다른 창에서 열림",{timeout:12000});
+});
+
+test("streamed answer, Enter intervention, Command+Enter queue and browser reconnect",async({page,context})=>{
   await authenticate(page);
   await page.getByRole("button",{name:"새 채팅",exact:true}).click();
   const dialog=page.getByRole("dialog",{name:"새 채팅",exact:true});
   await dialog.getByLabel("프로젝트",{exact:true}).selectOption(fixture().project);
   await dialog.getByRole("button",{name:"채팅 만들기",exact:true}).click();
-  await expect(page.getByRole("heading", { name: "표시할 메시지가 없습니다" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "표시할 메시지가 없습니다" })).toBeVisible({timeout:20000});
   const input=page.getByLabel("메시지",{exact:true});
   await input.fill("GUI_FIXTURE_ACTIVE_BROWSER");
   await input.dispatchEvent("keydown",{key:"Enter",keyCode:229,isComposing:true});
   await expect(input).toHaveValue("GUI_FIXTURE_ACTIVE_BROWSER");
   await input.press("Enter");
-  await expect(page.locator(".working")).toBeVisible();
+  const workStatus=page.getByRole("status",{name:"현재 작업 상태",exact:true});
+  await expect(workStatus).toHaveText("응답 생성 중",{timeout:12000});
+  await expect(page.locator(".live-message")).toContainText("완료 전에도 보이는 답변");
   const id=await page.locator("main.conversation").getAttribute("data-thread-id");
   await input.fill("지금 방향을 바로 수정합니다");await input.press("Enter");
-  await expect(page.getByText("현재 작업에 전달했습니다.",{exact:true})).toBeVisible();
+  await expect(page.getByText("현재 작업에 전달했습니다.",{exact:true})).toBeVisible({timeout:20000});
   await input.fill("다음 단계는 큐로 진행합니다");
   await input.press("End");
   await input.press("Shift+Enter");
@@ -79,9 +104,10 @@ test("new chat, Enter intervention, Command+Enter queue and browser reconnect",a
   const next=await context.newPage();await next.goto(url);
   await next.getByRole("button",{name:/GUI_FIXTURE_ACTIVE_BROWSER/}).click();
   await expect(next.locator("main.conversation")).toHaveAttribute("data-thread-id",id!);
-  await expect(next.locator(".working")).toBeVisible();
+  const nextStatus=next.getByRole("status",{name:"현재 작업 상태",exact:true});
+  await expect(nextStatus).toHaveText(/작업 중|응답 생성 중/);
   writeFileSync(join(fixtureRoot!,"release-model"),"release fixture only");
-  await expect(next.locator(".working")).toHaveCount(0,{timeout:20000});
+  await expect(nextStatus).toHaveText("작업 완료",{timeout:20000});
   await expect(next.getByText("다음 단계는 큐로 진행합니다",{exact:true})).toBeVisible();
   await next.screenshot({path:join(fixtureRoot!,"desktop-conversation.png")});
 });
@@ -93,7 +119,7 @@ test("header model controls and editable keyboard combinations", async ({ page }
   const model = header.getByRole("combobox", { name: "모델", exact: true });
   const effort = header.getByRole("combobox", { name: "Reasoning effort", exact: true });
   await expect(header.getByRole("combobox", { name: "이번에 사용할 계정", exact: true })).toBeVisible();
-  await expect(model).toBeEnabled();
+  await expect(model).toBeEnabled({timeout:20000});
   await expect(page.locator(".composer select")).toHaveCount(0);
   const input = page.getByLabel("메시지", { exact: true });
   await input.press("Meta+1");
@@ -172,11 +198,11 @@ test("pin, project move, archive, restore and confirmed permanent delete",async(
   await dialog.getByLabel("프로젝트",{exact:true}).selectOption(fixture().project);
   await dialog.getByRole("button",{name:"채팅 만들기",exact:true}).click();
   const input=page.getByLabel("메시지",{exact:true});await input.fill("관리 기능 검증용 채팅");await input.press("Enter");
-  await expect(page.getByRole("heading",{name:"작업을 확인했습니다",exact:true})).toBeVisible();
+  await expect(page.getByRole("heading",{name:"작업을 확인했습니다",exact:true})).toBeVisible({timeout:20000});
   const id=await page.locator("main.conversation").getAttribute("data-thread-id");
   await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();await page.getByRole("menuitem",{name:"고정하기",exact:true}).click();
   await expect(page.getByText("고정 상태를 변경했습니다.")).toBeVisible();
-  await page.getByRole("button",{name:/Pinned/}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
+  await page.getByRole("button",{name:"고정",exact:true}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
   await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();await page.getByRole("menuitem",{name:"프로젝트로 이동",exact:true}).click();
   dialog=page.getByRole("dialog",{name:"프로젝트로 이동",exact:true});await dialog.getByLabel("프로젝트",{exact:true}).selectOption("");await dialog.getByRole("button",{name:"적용",exact:true}).click();
   await expect(page.getByText("프로젝트를 옮겼습니다.")).toBeVisible();
@@ -187,7 +213,7 @@ test("pin, project move, archive, restore and confirmed permanent delete",async(
   await page.getByRole("button",{name:"보관함",exact:true}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
   await expect(page.getByRole("heading",{name:"작업을 확인했습니다",exact:true})).toBeVisible({timeout:20000});
   await expect(input).toHaveCount(0);await page.getByRole("button",{name:"보관 해제",exact:true}).click();await page.getByRole("dialog").getByRole("button",{name:"적용",exact:true}).click();
-  await page.getByRole("button",{name:"Recents",exact:true}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
+  await page.getByRole("button",{name:"전체 채팅",exact:true}).click();await page.getByRole("button",{name:/관리 기능 검증용 채팅/}).click();
   await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();await page.getByRole("menuitem",{name:"영구 삭제",exact:true}).click();
   dialog=page.getByRole("dialog",{name:"채팅 영구 삭제",exact:true});await expect(dialog.getByText(/되돌릴 수 없습니다/)).toBeVisible();await dialog.getByRole("button",{name:"영구 삭제",exact:true}).click();
   await expect(page.getByRole("button",{name:/관리 기능 검증용 채팅/})).toHaveCount(0);

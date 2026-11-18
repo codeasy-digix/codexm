@@ -1,22 +1,23 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
-import { chatTitle, inheritTurnSelection, type ChatThread, type TurnSelection } from "../contracts/web";
+import { chatTitle, inheritTurnSelection, mergeLiveTurn, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
 import { Accounts } from "./Accounts";
+import { ChatActivityLabel } from "./ChatActivity";
 import { Approval, ChatMessages } from "./ChatMessages";
 import { Composer } from "./Composer";
 import { Modal } from "./Modal";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { TurnSettings } from "./TurnSettings";
 import { readChatShortcuts } from "./chat-shortcuts";
-import { useCatalog, useChatHistory, useChatModels } from "./chat-hooks";
+import { useCatalog, useChatActivity, useChatHistory, useChatModels } from "./chat-hooks";
 import "./styles/native.css";
 
 type Dialog = {kind:"new"|"project"|"accounts"|"settings"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
-type Section = "recents"|"projects"|"pinned"|"archived";
+type Section = "chats"|"pinned"|"archived";
 
 export function App() {
   const access=useAccess(),data=useStateData();
-  const [account,setAccount]=useState("default"),[section,setSection]=useState<Section>("recents"),[project,setProject]=useState("");
+  const [account,setAccount]=useState("default"),[section,setSection]=useState<Section>("chats"),[project,setProject]=useState("");
   const [query,setQuery]=useState(""),[selected,setSelected]=useState<ChatThread|null>(null),[sidebar,setSidebar]=useState(false);
   const [turnSelections, setTurnSelections] = useState<Record<string, TurnSelection>>({});
   const [shortcuts, setShortcuts] = useState(readChatShortcuts);
@@ -25,8 +26,21 @@ export function App() {
   const catalogState=useCatalog(access.ready,account,query,project,section==="archived");
   const {catalog}=catalogState;
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
+  const selectedProject = projects.find(p => p.id === project);
+  const newChatReady = !!catalog && (!project || !!selectedProject);
   const chatState=useChatHistory(access.ready,selected?.id||"",account);
   const history=chatState.history?.thread.id===selected?.id?chatState.history:undefined;
+  const activity = useChatActivity(access.ready, selected?.id || "", account);
+  const openActivity: ChatActivity | undefined = (selected && activity.threads?.[selected.id]) ||
+    (history?.thread.externalOwner ? { source: "external", state: "unknown" } :
+      history?.thread.status.type === "active" ? {
+        source: "web", state: history.pending.length ? "waiting" : "running",
+        turnId: history.turns.at(-1)?.id,
+      } : undefined);
+  const turns = useMemo(() => mergeLiveTurn(history?.turns ?? [], activity.turn), [history?.turns, activity.turn]);
+  const liveTurnId = openActivity && openActivity.state !== "idle" && openActivity.state !== "unknown" ? openActivity.turnId : undefined;
+  const projectNames = new Map<string, number>();
+  for (const p of projects) projectNames.set(p.name, (projectNames.get(p.name) ?? 0) + 1);
   const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null),olderBusy=useRef(false);
   const first=new Date().getHours()<12?"무엇부터 시작할까요?":"어떤 작업을 이어갈까요?";
   const accounts=catalog?.accounts||data.snapshot?.accounts||[];
@@ -47,14 +61,14 @@ export function App() {
     const node=scroll.current;if(!node)return;
     if(anchor.current&&anchor.current.thread===selected?.id&&anchor.current.revision===chatState.olderRevision){node.scrollTop=node.scrollHeight-anchor.current.height+anchor.current.top;anchor.current=null;}
     else if(stick.current&&!anchor.current)node.scrollTop=node.scrollHeight;
-  },[history?.turns,selected?.id,chatState.olderRevision]);
+  },[turns,selected?.id,chatState.olderRevision]);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==="Escape"){setSidebar(false);setMenu(false);}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[]);
 
   function choose(next:ChatThread) {setSelected(next);setAccount(next.account&&accounts.some((a:any)=>a.name===next.account)?next.account:"default");setSidebar(false);setError("");setNotice("");}
   function filter(next:Section,id="") {setSection(next);setProject(id);}
   function openDialog(next:Dialog) {
     setError("");setMenu(false);setFormName("");
-    const target=next.kind==="new"?projects.find(p=>p.id===project):undefined;
+    const target=next.kind==="new"?selectedProject:undefined;
     setFormPath(target?.roots[0]?.path||catalog?.defaultCwd||"");
     setFormProject("chat"in next?next.chat.projectId||"":target?.id||"");setDialog(next);
   }
@@ -68,7 +82,7 @@ export function App() {
       if(dialog.kind==="new") {
         const result=await mutate("web.create",{cwd:formPath,project_id:formProject});choose(result.thread);
       } else if(dialog.kind==="project") {
-        const result=await mutate("web.projectCreate",{name:formName,cwd:formPath});filter("projects",result.project.id);setNotice("프로젝트를 추가했습니다.");
+        const result=await mutate("web.projectCreate",{name:formName,cwd:formPath});filter("chats",result.project.id);setNotice("프로젝트를 추가했습니다.");
       } else if(dialog.kind==="move") {
         await mutate("web.move",{thread_id:dialog.chat.id,project_id:formProject});setNotice("프로젝트를 옮겼습니다.");void chatState.refresh();
       } else if(dialog.kind==="archive") {
@@ -95,20 +109,30 @@ export function App() {
     {sidebar&&<button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/>}
     <aside className={`sidebar ${sidebar?"is-open":""}`} aria-label="탐색">
       <div className="brand"><span className="brand-icon">C</span><strong>CodexM</strong><span>이 머신</span><button className="mobile-close" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}>×</button></div>
-      <button className="new-chat" aria-label="새 채팅" disabled={!catalog} onClick={()=>openDialog({kind:"new"})}><span aria-hidden="true">＋</span>새 채팅</button>
+      <button className="new-chat" aria-label="새 채팅" disabled={!newChatReady} onClick={()=>openDialog({kind:"new"})}><span aria-hidden="true">＋</span>새 채팅</button>
       <label className="sidebar-search"><span className="sr-only">채팅 검색</span><input placeholder="채팅 검색" value={query} onChange={e=>setQuery(e.target.value)}/></label>
       <nav className="sections" aria-label="채팅 분류">
-        <button aria-pressed={section==="recents"} onClick={()=>filter("recents")}><span aria-hidden="true">◷</span>Recents</button>
-        <button aria-label="Pinned" aria-pressed={section==="pinned"} onClick={()=>filter("pinned")}><span aria-hidden="true">◇</span>Pinned <small>{catalog?.pinned.length||0}</small></button>
-        <button aria-pressed={section==="projects"} onClick={()=>filter("projects")}><span aria-hidden="true">▱</span>Projects</button>
+        <button aria-pressed={section==="chats"} onClick={()=>filter("chats")}><span aria-hidden="true">◷</span>전체 채팅</button>
+        <button aria-label="고정" aria-pressed={section==="pinned"} onClick={()=>filter("pinned")}><span aria-hidden="true">◇</span>고정 <small>{catalog?.pinned.length||0}</small></button>
         <button aria-pressed={section==="archived"} onClick={()=>filter("archived")}><span aria-hidden="true">▤</span>보관함</button>
       </nav>
-      <div className={`project-group ${section==="projects"?"expanded":""}`}><div className="project-heading"><span>프로젝트</span><button aria-label="프로젝트 추가" onClick={()=>openDialog({kind:"project"})}>＋</button></div>
-      <div className="project-list">{catalog?.projects.map(p=><button className={project===p.id?"selected":""} key={p.id} onClick={()=>filter("projects",p.id)} title={p.roots.map(r=>r.path).join("\n")}><span>▱</span>{p.name}</button>)}{catalog&&!catalog.projects.length&&<p className="muted small">프로젝트를 추가해 작업을 모아보세요.</p>}</div>
-      </div>
-      {!!catalog?.otherProjects?.length&&<details className={`project-group ${section==="projects"?"expanded":""}`}><summary>다른 로컬 프로젝트</summary><div className="project-list">{catalog.otherProjects.map(p=><button className={project===p.id?"selected":""} key={p.id} onClick={()=>filter("projects",p.id)} title={p.roots.map(r=>r.path).join("\n")}><span>▱</span>{p.name}</button>)}</div></details>}
-      <div className="list-heading"><span>{section==="pinned"?"고정한 채팅":section==="archived"?"보관된 채팅":project?projects.find(p=>p.id===project)?.name||"프로젝트 채팅":"최근 채팅"}</span>{catalogState.loading&&<small>갱신 중</small>}</div>
-      <div className="chat-list" aria-label="채팅 목록">{displayChats.map(t=><button key={t.id} className={selected?.id===t.id?"selected":""} onClick={()=>choose(t)} title={chatTitle(t)}><strong>{chatTitle(t)}</strong><small>{t.cwd.split("/").filter(Boolean).pop()||t.cwd}</small></button>)}
+      {section === "chats" && <div className="project-filter">
+        <select aria-label="프로젝트 필터" value={project} disabled={!catalog} onChange={e => setProject(e.target.value)}>
+          <option value="">전체 프로젝트</option>
+          {projects.map(p => <option key={p.id} value={p.id}>
+            {p.name}{(projectNames.get(p.name) ?? 0) > 1 && p.roots[0] ? ` · ${p.roots[0].path}` : ""}
+            {catalog?.otherProjects?.some(other => other.id === p.id) ? " · GUI 목록 외" : ""}
+          </option>)}
+        </select>
+        <button aria-label="프로젝트 추가" onClick={() => openDialog({kind:"project"})}>＋</button>
+      </div>}
+      <div className="list-heading"><span>{section==="pinned"?"고정한 채팅":section==="archived"?"보관된 채팅":project?`${selectedProject?.name || "프로젝트"} 채팅`:"전체 채팅"}</span>{catalogState.loading&&<small>갱신 중</small>}</div>
+      <div className="chat-list" aria-label="채팅 목록">{displayChats.map(t=><button key={t.id} className={selected?.id===t.id?"selected":""} onClick={()=>choose(t)} title={chatTitle(t)}>
+        <strong>{chatTitle(t)}</strong>
+        <span className="chat-row-meta"><small>{t.cwd.split("/").filter(Boolean).pop()||t.cwd}</small>
+          {!t.archived && <ChatActivityLabel activity={activity.threads?.[t.id]} known={activity.writersKnown}/>}
+        </span>
+      </button>)}
         {!displayChats.length&&catalog&&!catalogState.loading&&<p className="muted empty-list">표시할 채팅이 없습니다.</p>}
         {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
         {section!=="pinned"&&catalog?.nextCursor&&<button className="load-more" disabled={catalogState.loading} onClick={()=>void catalogState.refresh(catalog.nextCursor)}>채팅 더 보기</button>}
@@ -132,7 +156,7 @@ export function App() {
             onSelectionChange={value => setTurnSelections(current => ({ ...current, [composerKey]: value }))}
             shortcuts={shortcuts}
             shortcutsEnabled={!dialog && !sidebar && !menu}
-            deferred={!!(history?.thread.status.type === "active" || history?.thread.externalOwner)}
+            deferred={!!(activity.accountTurn?.status === "inProgress" || history?.thread.status.type === "active" || history?.thread.externalOwner)}
           />}
         </div>
         {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>void pin()}>{catalog?.pinned.some(t=>t.id===chat.id)?"고정 해제":"고정하기"}</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" onClick={()=>openDialog({kind:"archive",chat:{...chat,archived:isArchived}})}>{isArchived?"보관 해제":"보관하기"}</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
@@ -143,16 +167,18 @@ export function App() {
           {history?.nextCursor&&<button className="older-button" disabled={chatState.loadingOlder} onClick={()=>void loadOlder()}>{chatState.loadingOlder?"이전 메시지를 불러오는 중…":"이전 메시지 불러오기"}</button>}
           {chatState.loading&&<p className="loading-message" role="status">최근 대화를 불러오는 중…</p>}
           {chatState.error&&<p role="alert" className="inline-error">{chatState.error}</p>}
-          {history&&<ChatMessages thread={selected.id} turns={history.turns} account={account} external={history.thread.externalOwner}/>}
-          {history&&!history.turns.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
+          {!!turns.length&&<ChatMessages thread={selected.id} turns={turns} account={account} external={history?.thread.externalOwner} liveTurnId={liveTurnId}/>}
+          {history&&!turns.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
           {history?.pending.map(p=><Approval key={p.request_id} request={p} thread={selected.id} account={account} onDone={()=>void chatState.refresh()}/>)}
-        </div>:<div className="welcome"><span className="welcome-mark">C</span><p className="eyebrow">CODEXM · LOCAL WORKSPACE</p><h2>{first}</h2><p>최근 채팅을 이어가거나,<br/>프로젝트에서 새 작업을 시작하세요.</p><button className="primary" disabled={!catalog} onClick={()=>openDialog({kind:"new"})}>＋ 새 채팅 시작</button></div>}
+        </div>:<div className="welcome"><span className="welcome-mark">C</span><p className="eyebrow">CODEXM · LOCAL WORKSPACE</p><h2>{first}</h2><p>최근 채팅을 이어가거나,<br/>프로젝트에서 새 작업을 시작하세요.</p><button className="primary" disabled={!newChatReady} onClick={()=>openDialog({kind:"new"})}>＋ 새 채팅 시작</button></div>}
       </div>
+      {chat && !isArchived && <ChatActivityLabel activity={openActivity} known={activity.writersKnown} lastTurn={turns.at(-1)} footer />}
       {chat&&!isArchived&&<Composer
         key={composerKey}
         chat={chat}
         account={account}
         history={history}
+        liveTurn={activity.accountTurn}
         models={modelState.models}
         selection={selection}
         onSent={()=>{stick.current=true;void chatState.refresh();void catalogState.refresh();}}

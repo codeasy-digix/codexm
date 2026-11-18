@@ -9,6 +9,7 @@ export const bridgeContract = {
     { name: "web.items", mutation: false, model: false },
     { name: "web.item", mutation: false, model: false },
     { name: "web.models", mutation: false, model: false },
+    { name: "web.activity", mutation: false, model: false },
     { name: "web.create", mutation: true, model: false },
     { name: "web.send", mutation: true, model: true },
     { name: "web.interrupt", mutation: true, model: false },
@@ -29,6 +30,37 @@ export type Project = { id: string; name: string; roots: Array<{ path: string }>
 export type Catalog = { threads: ChatThread[]; projects: Project[]; otherProjects?:Project[]; pinned: ChatThread[]; nextCursor?: string | null; accounts: Array<{ name: string; default?: boolean }>; defaultCwd: string; total?:number };
 export type PendingRequest = { request_id: string; method: string; params: Record<string, any> };
 export type ChatHistory = { thread: ChatThread; turns: ChatTurn[]; nextCursor?: string | null; queue: Array<{ id: string; input: Array<{ type: string; text?: string }> }>; pending: PendingRequest[] };
+
+export type ChatActivity = {
+  state: "running" | "responding" | "waiting" | "idle" | "unknown";
+  source: "web" | "external";
+  turnId?: string;
+};
+export type LiveTurn = {
+  id: string;
+  status: string;
+  items: Array<{ id: string; phase?: string; text: string; streaming: boolean }>;
+};
+export type ChatActivitySnapshot = { writersKnown: boolean; threads: Record<string, ChatActivity>; turn?: LiveTurn; accountTurn?: boolean };
+
+export function workingActivity(activity?: ChatActivity) {
+  return activity?.state === "running" || activity?.state === "responding";
+}
+
+export function mergeLiveTurn(turns: ChatTurn[], live?: LiveTurn): ChatTurn[] {
+  const current = live?.items?.filter(item => item.text);
+  if (!live || !current?.length) return turns;
+  const index = turns.findIndex(turn => turn.id === live.id);
+  const saved = turns[index];
+  if (saved?.status === "completed" || saved?.status === "failed") return turns;
+  const items = new Map((saved?.items ?? []).map(item => [item.id, item]));
+  for (const item of current) {
+    if (!items.has(item.id) && saved?.items.some(other => other.type === "agentMessage" && other.text === item.text)) continue;
+    items.set(item.id, { ...item, type: "agentMessage" });
+  }
+  const updated: ChatTurn = { ...saved, id: live.id, status: live.status, items: [...items.values()] };
+  return index < 0 ? [...turns, updated] : turns.map((turn, i) => i === index ? updated : turn);
+}
 
 export type ChatModel = {
   model: string;

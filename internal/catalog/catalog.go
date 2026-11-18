@@ -130,6 +130,26 @@ func Read(ctx context.Context, home string) (List, error) {
 	return read(ctx, home, "")
 }
 
+// RolloutPath locates the current active log for a known native writer.
+// Callers constrain subsequent file reads to the native sessions directory.
+func RolloutPath(ctx context.Context, home, id string) (string, error) {
+	filename, err := database(home)
+	if err != nil {
+		return "", err
+	}
+	if filename == "" {
+		return "", sql.ErrNoRows
+	}
+	db, err := OpenReadOnly(filename)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var path string
+	err = db.QueryRowContext(ctx, `SELECT rollout_path FROM threads WHERE id=? AND archived=0`, id).Scan(&path)
+	return path, err
+}
+
 func Lookup(ctx context.Context, home, id string) (Entry, error) {
 	l, err := read(ctx, home, id)
 	if err != nil {
