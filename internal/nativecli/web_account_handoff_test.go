@@ -1,6 +1,7 @@
 package nativecli
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -205,6 +206,9 @@ func TestWebOnlyExplicitHandoffFromTrackedCLI(t *testing.T) {
 	product := os.Getenv("CODEXM_HANDOFF_TEST_BINARY")
 	if !filepath.IsAbs(product) {
 		t.Skip("requires an isolated CodexM binary and tmux")
+	}
+	if _, err := tmux(context.Background(), CodexTmuxServer, "has-session", "-t", "="+WorkspaceSession); err != nil {
+		t.Skip("run the tracked CLI fixture from the default codexm workspace")
 	}
 	f := webOnlyFixture(t)
 	id := f.thread()
