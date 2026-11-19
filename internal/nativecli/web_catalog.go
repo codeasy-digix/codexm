@@ -239,7 +239,7 @@ func (w *WebChat) readCatalog(ctx context.Context) (*webCatalogExport, error) {
 	}
 	meta := webCatalogMetadata{Projects: desktop.Projects, OtherProjects: desktop.AdditionalProjects,
 		Accounts: accountList, DefaultAccount: webDefaultAccount(w.c, accountList),
-		GUIQuitAvailable: !w.webOnly && runtime.GOOS == "darwin", DefaultCwd: webDefaultCwd()}
+		GUIQuitAvailable: runtime.GOOS == "darwin", DefaultCwd: webDefaultCwd()}
 	return &webCatalogExport{revision: strconv.FormatInt(time.Now().UnixNano(), 36), rows: rows, meta: meta}, nil
 }
 

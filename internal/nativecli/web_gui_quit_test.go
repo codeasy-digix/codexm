@@ -2,6 +2,8 @@ package nativecli
 
 import (
 	"context"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,12 +67,19 @@ func TestWebChatOfficialQuitAndResumeWithAnotherAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-web-continue")
+	t.Setenv("CODEXM_WEB_ONLY", "true")
 	w := NewWebChat(gui.ctx, gui.c)
 	defer w.Close()
 	call := webTestCall(t, w, gui.ctx)
 	catalog, err := call("web.catalog", map[string]any{})
 	if err != nil || catalog["defaultAccount"] != "primary" {
 		t.Fatal("default account label did not report the saved identity", err)
+	}
+	if catalog["guiQuitAvailable"] != (runtime.GOOS == "darwin") {
+		t.Fatal("web-only mode did not report its platform's GUI quit capability")
+	}
+	if _, err := call("web.guiQuit", map[string]any{"confirmation": "no-preview"}); err == nil || !strings.Contains(err.Error(), "종료 확인이 만료") {
+		t.Fatal("web-only quit must still require a fresh confirmation", err)
 	}
 
 	id := gui.thread()

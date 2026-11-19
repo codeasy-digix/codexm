@@ -132,7 +132,7 @@
   never expose the native listener or retain plaintext passwords. Its bridge methods
   are an explicit allowlist. Render user/native output as text. No shell evaluation
   of thread IDs, account names, input, directory names or terminal keys.
-- The web header's manual GUI quit requires fresh browser confirmation for each
+- The web sidebar's manual GUI quit requires fresh browser confirmation for each
   request. Default to cancel and explain that all GUI jobs stop. Bind confirmation
   to the authenticated browser and verified signed app process. Send one SIGTERM
   to that app only. A later web resume uses the existing writer checks.

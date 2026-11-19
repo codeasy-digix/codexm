@@ -313,14 +313,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 	case "web.artifacts", "web.artifactRegister", "web.artifact":
 		return w.artifacts(ctx, r.Method, p)
 	case "web.guiQuitPreview":
-		if w.webOnly {
-			return nil, errors.New("GUI control is disabled in web-only mode")
-		}
 		return w.guiQuit.preview(ctx, r.Owner, findWebDesktop)
 	case "web.guiQuit":
-		if w.webOnly {
-			return nil, errors.New("GUI control is disabled in web-only mode")
-		}
 		err := w.guiQuit.quit(ctx, r.Owner, p.Confirmation, findWebDesktop, stopWebDesktop)
 		return err == nil, err
 	case "web.guiRelayStatus":

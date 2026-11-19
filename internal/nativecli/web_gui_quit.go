@@ -112,7 +112,11 @@ func findWebDesktop(ctx context.Context) (webDesktop, error) {
 		}
 		app := prefix + ".app"
 		key, err := cr.NativeProcessIdentity(pid)
-		if err != nil || verifyGUIApp(ctx, app) != nil {
+		if err != nil {
+			continue
+		}
+		// Check the running code's signature directly, including the publisher.
+		if err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "-R", guiSigningRequirement, strconv.Itoa(pid)).Run(); err != nil {
 			continue
 		}
 		if desktop.main.pid != 0 {

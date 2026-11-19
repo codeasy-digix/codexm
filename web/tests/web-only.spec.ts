@@ -38,7 +38,8 @@ test("an account change only takes effect when a chat input is submitted", async
   await page.getByRole("button", { name: "연결", exact: true }).click();
   const account = page.getByRole("combobox", { name: "이번에 사용할 계정" });
   await expect(account).toHaveValue("default");
-  await expect(page.getByRole("button", { name: "GUI 종료", exact: true })).toHaveCount(0);
+  const quit = page.locator(".sidebar .brand").getByRole("button", { name: "GUI 종료", exact: true });
+  await expect(quit).toHaveCount(process.platform === "darwin" ? 1 : 0);
   await page.getByRole("button", { name: "새 채팅", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("이 머신의 작업 폴더").fill(config.home);

@@ -50,7 +50,40 @@ button:hover { background: var(--hover); }
 :root[data-theme="dark"] :is(.sections button > span, .chat-list small) { color: var(--muted); }
 :root[data-theme="dark"] .sidebar-backdrop,
 :root[data-theme="dark"] .modal::backdrop { background: #101114a6; }
-.sidebar-search input { border-color: var(--field-line); }
+.sidebar-search { position: relative; }
+.sidebar-search input { border-color: var(--field-line); padding-inline-end: 42px; }
+.search-clear {
+  position: absolute;
+  inset-inline-end: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  background: var(--tint);
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.brand .gui-quit-button {
+  flex: none;
+  min-height: 28px;
+  padding: 4px 7px;
+  border-color: #b23b45;
+  border-radius: 7px;
+  background: #b23b45;
+  color: #fff;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.brand .gui-quit-button:hover:not(:disabled) { background: #92313a; border-color: #92313a; }
+@media (max-width: 979px) {
+  .brand .gui-quit-button + span { display: none; }
+}
 .sidebar-footer { border-color: var(--line); }
 .sections button[aria-pressed="true"], .sidebar button.selected { background: var(--row-current); color: var(--accent); }
 .chat-header-controls select { color: inherit; }
@@ -130,14 +163,11 @@ button:hover { background: var(--hover); }
   .chat-header-controls.has-turn-settings {
     grid-template-columns: minmax(245px, 290px) minmax(0, 178px) minmax(0, 122px);
   }
-  .chat-header-controls.has-gui-quit.has-turn-settings { grid-template-columns: minmax(290px, 340px) minmax(0, 178px) minmax(0, 122px); }
 }
 @media (max-width: 740px) {
   .chat-header-controls { order: 1; flex: 0 0 100%; }
   .chat-header-controls.has-turn-settings { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
   .has-turn-settings .account-header { grid-column: 1 / -1; }
-  .has-gui-quit.has-turn-settings .account-actions-row { flex-wrap: nowrap; }
-  .has-gui-quit.has-turn-settings .account-select { flex-basis: 112px; }
 }
 
 .workspace-settings { width: min(620px, 100% - 28px); }

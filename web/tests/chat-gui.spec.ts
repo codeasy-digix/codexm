@@ -32,7 +32,7 @@ async function authenticate(page:Page, fresh = false){
 
 async function menu(page:Page){if(await page.getByRole("button",{name:"메뉴 열기",exact:true}).isVisible())await page.getByRole("button",{name:"메뉴 열기",exact:true}).click();}
 
-test("header shows the configured default and confirms GUI quit each time", async ({ page }) => {
+test("the sidebar confirms GUI quit each time and the header shows the configured default", async ({ page }) => {
   await authenticate(page);
   // Use a synthetic preview with an invalid native ticket. This fixture never
   // requests a real GUI shutdown, even if the client shim fails.
@@ -65,12 +65,15 @@ test("header shows the configured default and confirms GUI quit each time", asyn
   await expect(account).toHaveAttribute("title", "기본 계정 · first-fixture");
   await account.selectOption("second-fixture");
   await expect(page.locator(".default-account-name")).toHaveText("기본 계정 · first-fixture");
-  const quit = page.getByRole("button", {name: "GUI 종료", exact: true});
+  const quit = page.locator(".sidebar .brand").getByRole("button", {name: "GUI 종료", exact: true});
+  await expect(page.locator(".chat-header").getByRole("button", {name: "GUI 종료", exact: true})).toHaveCount(0);
   await quit.click();
   const dialog = page.getByRole("dialog", {name: "Codex GUI 전체 종료"});
   await expect(dialog).toContainText("모든 작업이 중단됩니다");
   await expect(dialog).toContainText("Isolated Desktop Fixture");
-  await dialog.getByRole("button", {name: "취소", exact: true}).click();
+  const cancel = dialog.getByRole("button", {name: "취소", exact: true});
+  await expect(cancel).toBeFocused();
+  await cancel.click();
   expect(await page.evaluate(() => (window as any).__quitConfirmations)).toEqual([]);
   await quit.click();
   await expect(dialog).toContainText("Isolated Desktop Fixture");
@@ -697,6 +700,12 @@ test("project creation, filtered new chat, search and logout gate",async({page})
   const search=page.getByLabel("채팅 검색",{exact:true});await search.fill("프로젝트 검색 검증");
   await expect(page.getByRole("link",{name:/프로젝트 검색 검증 메시지/})).toBeVisible();
   await search.fill("a-nonexistent-fixture-only-title");await expect(page.getByText("표시할 채팅이 없습니다.",{exact:true})).toBeVisible();
+  const clearSearch = page.getByRole("button", {name: "검색어 지우기", exact: true});
+  await clearSearch.click();
+  await expect(search).toHaveValue("");
+  await expect(search).toBeFocused();
+  await expect(clearSearch).toHaveCount(0);
+  await expect(page.getByRole("link", {name: /프로젝트 검색 검증 메시지/})).toBeVisible();
   await page.getByRole("button",{name:"설정",exact:true}).click();
   const settings = page.getByRole("dialog", { name: "설정", exact: true });
   await settings.getByRole("button",{name:"계정 관리",exact:true}).click();
@@ -710,6 +719,11 @@ test("project creation, filtered new chat, search and logout gate",async({page})
 for(const viewport of [{width:375,height:667},{width:390,height:844}])test(`mobile navigation, readable transcript and composer at ${viewport.width}`,async({page})=>{
   await page.setViewportSize(viewport);await page.emulateMedia({reducedMotion:"reduce"});await authenticate(page);await menu(page);
   await expect(page.getByLabel("채팅 목록",{exact:true})).toBeVisible();
+  if (process.platform === "darwin") {
+    const brand = page.locator(".sidebar .brand");
+    await expect(brand.getByRole("button", {name: "GUI 종료", exact: true})).toBeVisible();
+    expect(await brand.evaluate(node => node.scrollWidth)).toBeLessThanOrEqual(await brand.evaluate(node => node.clientWidth));
+  }
   await page.getByRole("link",{name:/긴 이력 페이지 테스트/}).click();
   await expect(page.getByLabel("메시지",{exact:true})).toBeVisible();
   const header = page.locator(".chat-header");

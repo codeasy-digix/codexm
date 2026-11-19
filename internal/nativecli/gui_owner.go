@@ -88,6 +88,9 @@ func writerProcesses(ctx context.Context, shared, id string) ([]int, error) {
 	}
 	return out, nil
 }
+
+const guiSigningRequirement = `=anchor apple generic and identifier "com.openai.codex" and certificate leaf[subject.OU] = "2DC432GLL2"`
+
 func verifyGUIApp(ctx context.Context, app string) error {
 	if runtime.GOOS != "darwin" || !filepath.IsAbs(app) || !strings.HasSuffix(app, ".app") {
 		return errors.New("GUI restart is supported only for the signed macOS Codex app")
@@ -95,8 +98,7 @@ func verifyGUIApp(ctx context.Context, app string) error {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	// Validate the installed app's identity, never its private IPC or UI surface.
-	requirement := `=anchor apple generic and identifier "com.openai.codex" and certificate leaf[subject.OU] = "2DC432GLL2"`
-	if err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "-R", requirement, app).Run(); err != nil {
+	if err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "-R", guiSigningRequirement, app).Run(); err != nil {
 		return errors.New("the writer's app is not a verified OpenAI Codex desktop app")
 	}
 	return nil

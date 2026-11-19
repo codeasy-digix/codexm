@@ -36,6 +36,7 @@ export function App() {
   const threadId = chatIdFromPath(path);
   const selected = ready && opened?.id === threadId ? opened : null;
   const [query,setQuery]=useState(""),[sidebar,setSidebar]=useState(false);
+  const searchInput = useRef<HTMLInputElement>(null);
   const [turnSelections, setTurnSelections] = useState<Record<string, TurnSelection>>({});
   const [shortcuts, setShortcuts] = useState(readChatShortcuts);
   const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
@@ -244,9 +245,19 @@ export function App() {
   return <div className="chat-app">
     {sidebar&&<button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/>}
     <aside className={`sidebar ${sidebar?"is-open":""}`} aria-label="탐색">
-      <div className="brand"><span className="brand-icon">C</span><strong>CodexM</strong><span>이 머신</span><button className="mobile-close" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}>×</button></div>
+      <div className="brand">
+        <span className="brand-icon">C</span><strong>CodexM</strong>
+        {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" disabled={!access.online}
+          onClick={() => { setSidebar(false); openDialog({ kind: "gui-quit" }); }}>GUI 종료</button>}
+        <span>이 머신</span>
+        <button className="mobile-close" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}>×</button>
+      </div>
       <button className="new-chat" aria-label="새 채팅" disabled={!newChatReady} onClick={()=>openDialog({kind:"new"})}><span aria-hidden="true">＋</span>새 채팅</button>
-      <label className="sidebar-search"><span className="sr-only">채팅 검색</span><input placeholder="채팅 검색" value={query} onChange={e=>setQuery(e.target.value)}/></label>
+      <div className="sidebar-search">
+        <input ref={searchInput} aria-label="채팅 검색" placeholder="채팅 검색" value={query} onChange={e=>setQuery(e.target.value)}/>
+        {query && <button className="search-clear" type="button" aria-label="검색어 지우기" title="검색어 지우기"
+          onClick={() => { setQuery(""); searchInput.current?.focus(); }}>×</button>}
+      </div>
       <nav className="sections" aria-label="채팅 분류">
         <button aria-pressed={section==="chats"} onClick={()=>filter("chats")}><span aria-hidden="true">◷</span>전체 채팅</button>
         <button aria-label="고정" aria-pressed={section==="pinned"} onClick={()=>filter("pinned")}><span aria-hidden="true">◇</span>고정 <small>{catalog?.pinned.length||0}</small></button>
@@ -279,7 +290,7 @@ export function App() {
     </aside>
     <main className="conversation" data-thread-id={selected?.id||""}>
       <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
-        <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}${catalog?.guiQuitAvailable ? " has-gui-quit" : ""}`}>
+        <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}`}>
           <div className="account-header">
             <div className="account-actions-row">
               {(!threadId || selected) && <AccountLimits key={account} account={account} />}
@@ -290,7 +301,6 @@ export function App() {
                   setAccount(name);
                 }}><option value="default">{defaultLabel}</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
               </label>
-              {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" onClick={() => openDialog({kind: "gui-quit"})}>GUI 종료</button>}
             </div>
             {executionAccount && <small className="default-account-name">현재 실행 {executionAccount === "default" ? "기본 계정" : executionAccount}</small>}
             {account !== "default" && defaultAccount && <small className="default-account-name" title={defaultLabel}>{defaultLabel}</small>}
