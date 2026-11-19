@@ -220,6 +220,25 @@ func setupWebFixtureLogins(t *testing.T, f *guiControlFixture, names ...string) 
 	const workspace = "fixture-workspace"
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/api/codex/usage") && f.quotaWindow != "" {
+			user := fixtureLoginName(r.Header.Get("Authorization"))
+			fiveHour, week := 20, 30
+			if user == f.quotaAccount {
+				if f.quotaWindow == "5h" {
+					fiveHour = 100
+				} else {
+					week = 100
+				}
+			}
+			window := func(used, seconds int) map[string]any {
+				return map[string]any{"used_percent": used, "limit_window_seconds": seconds,
+					"reset_after_seconds": 1800, "reset_at": time.Now().Add(30 * time.Minute).Unix()}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"account_id": workspace, "user_id": user, "plan_type": "team",
+				"rate_limit": map[string]any{"allowed": fiveHour < 100 && week < 100, "limit_reached": fiveHour == 100 || week == 100,
+					"primary_window": window(fiveHour, 300*60), "secondary_window": window(week, 10080*60)}})
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/accounts/check") {
 			_ = json.NewEncoder(w).Encode(map[string]any{"accounts": []any{map[string]any{
 				"id": workspace, "name": "Fixture", "plan_type": "team",

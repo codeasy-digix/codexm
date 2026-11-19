@@ -41,6 +41,7 @@ export function App() {
   const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
   const [formAccount,setFormAccount]=useState("default");
+  const [accountChoice, setAccountChoice] = useState<{ thread: string; name: string }>();
   const catalogState=useCatalog(ready,query,project,section==="archived",threadId,access.online);
   const {catalog}=catalogState;
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
@@ -66,6 +67,9 @@ export function App() {
       } : undefined);
   const turns = useMemo(() => mergeLiveTurn(history?.turns ?? [], activity.turn), [history?.turns, activity.turn]);
   const liveTurnId = openActivity && openActivity.state !== "idle" && openActivity.state !== "unknown" ? openActivity.turnId : undefined;
+  const latest = turns.at(-1);
+  const suggestion = !liveTurnId && !blocking && !history?.thread.externalOwner &&
+    latest?.status === "completed" && activity.prediction?.sourceTurnId === latest.id ? activity.prediction.text : undefined;
   const projectNames = new Map<string, number>();
   for (const p of projects) projectNames.set(p.name, (projectNames.get(p.name) ?? 0) + 1);
   const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null);
@@ -78,6 +82,7 @@ export function App() {
   const defaultLabel = defaultAccount ? `기본 계정 · ${defaultAccount}` : "기본 계정";
   const executionAccount = history?.executionAccount;
   const pendingAccountChange = !!executionAccount && executionAccount !== (account === "default" ? defaultAccount || account : account);
+  const switchAccount = accountChoice?.thread === selected?.id && accountChoice?.name === account;
   const chat=selected&&history?{
     ...history.thread,
     name: history.thread.name || selected.name,
@@ -94,6 +99,7 @@ export function App() {
   useEffect(()=>{
     if (access.status === "anonymous") {
       setOpened(null);setOpenError(null);setDialog(null);setQuery("");setSidebar(false);setTurnSelections({});setAccount("default");
+      setAccountChoice(undefined);
     }
     if (!ready) viewed.current.clear();
   },[access.status, ready]);
@@ -102,6 +108,7 @@ export function App() {
       setPath(location.pathname);
       const previous = viewed.current.get(chatIdFromPath(location.pathname));
       setOpened(previous?.chat ?? null);
+      setAccountChoice(undefined);
       if (previous) setAccount(previous.chat.account || "default");
       setOpenError(null);
       setSidebar(false);
@@ -162,6 +169,7 @@ export function App() {
   function choose(next:ChatThread) {
     navigate(next.id);
     setOpened(next);setAccount(next.account&&accounts.some((a:any)=>a.name===next.account)?next.account:"default");
+    setAccountChoice(undefined);
     setSidebar(false);setError("");setNotice("");
   }
   function filter(next:Section,id="") {setSection(next);setProject(id);}
@@ -276,7 +284,11 @@ export function App() {
             <div className="account-actions-row">
               {(!threadId || selected) && <AccountLimits key={account} account={account} />}
               <label className="account-select">계정
-                <select aria-label="이번에 사용할 계정" title={account === "default" ? defaultLabel : account} value={account} disabled={!!threadId && !selected} onChange={e=>setAccount(e.target.value)}><option value="default">{defaultLabel}</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
+                <select aria-label="이번에 사용할 계정" title={account === "default" ? defaultLabel : account} value={account} disabled={!!threadId && !selected} onChange={e => {
+                  const name = e.target.value;
+                  setAccountChoice(selected ? { thread: selected.id, name } : undefined);
+                  setAccount(name);
+                }}><option value="default">{defaultLabel}</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
               </label>
               {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" onClick={() => openDialog({kind: "gui-quit"})}>GUI 종료</button>}
             </div>
@@ -303,7 +315,9 @@ export function App() {
         {access.message || "서버 연결을 복구하는 중…"}
         <button className="text-button" type="button" onClick={reconnect}>다시 연결</button>
       </div>}
-      {selected && history?.goal && <GoalIndicator key={"goal:" + selected.id} goal={history.goal} />}
+      {selected && history?.goal && <GoalIndicator key={"goal:" + selected.id} goal={history.goal}
+        thread={selected.id} account={account} canControl={!!history.webOnly && !isArchived}
+        online={access.online} switchAccount={switchAccount} onChanged={() => void chatState.refresh()} />}
       {!dialog&&error&&<div role="alert" className="banner error-banner">{error}</div>}{notice&&<div role="status" className="banner notice-banner">{notice}<button aria-label="알림 닫기" onClick={()=>setNotice("")}>×</button></div>}
       <div className="message-scroll" ref={scroll} aria-label="대화 내용" onScroll={e=>scrolled(e.currentTarget)}>
         {selected?<div className="message-inner">
@@ -339,9 +353,12 @@ export function App() {
         history={history}
         liveTurn={history?.webOnly ? activity.turn : activity.accountTurn}
         pendingAccountChange={pendingAccountChange}
+        switchAccount={switchAccount}
+        suggestion={suggestion}
         models={modelState.models}
         selection={selection}
         onSent={id => {
+          setAccountChoice(undefined);
           stick.current = true;
           if (id && id !== chat.id) {
             navigate(id, true);

@@ -3,8 +3,10 @@ package nativecli
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/catalog"
@@ -13,7 +15,8 @@ import (
 )
 
 var errWebAccountBusy = errors.New("이 채팅의 현재 작업이 끝나기를 기다리고 있습니다.")
-var errWebOtherOwner = errors.New("다른 앱이 이 채팅을 열고 있습니다. 원래 창에서 채팅을 닫으면 웹에서 이어갈 수 있습니다.")
+var errWebOtherOwner = errors.New("다른 앱의 채팅 제어 연결을 확인할 수 없습니다. 원래 창에서 이 채팅을 닫거나 보관한 뒤 이어갈 수 있습니다.")
+var errWebWriterStillHeld = errors.New("기존 실행에서 채팅 잠금이 풀리지 않았습니다.")
 
 func sameWebLogin(a, b *webConnection) bool {
 	return a == b || (a.login.Key != "" && a.login.Key == b.login.Key)
@@ -64,11 +67,23 @@ func (w *WebChat) sendWebOnly(ctx context.Context, target *webConnection, r Requ
 	if p.Mode == "queue" {
 		return w.enqueueWebInput(ctx, target, r, p)
 	}
-	owner, err := w.acquireWebChat(ctx, target, p.Thread, automatic, automatic, goalObjective(p.Text, p.Goal))
+	owner, err := w.acquireWebChat(ctx, target, p.Thread, webAcquire{
+		prepare: automatic, interrupt: automatic, external: automatic && p.SwitchAccount,
+		objective: goalObjective(p.Text, p.Goal),
+	})
 	if err != nil {
 		return nil, err
 	}
 	defer owner.release()
+	if p.SwitchAccount {
+		q, err := w.readOwnedQueue(p.Thread)
+		if err != nil {
+			return nil, err
+		}
+		if err := w.pinQueueToAccount(p.Thread, q, owner.web); err != nil {
+			return nil, err
+		}
+	}
 	if p.Goal {
 		return w.deliverGoal(ctx, owner, target, r, p)
 	}
@@ -120,43 +135,91 @@ func (w *WebChat) webDraftAccount(ctx context.Context, target *webConnection, id
 	return target, replacement.ID, err
 }
 
-// The selected thread can be released without stopping a shared app-server.
-// Only a web-owned stdio connection can be used for this operation.
-func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id string, prepare, interrupt bool, objective string) (*webInputOwner, error) {
-	pids, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
+type webAcquire struct {
+	prepare, interrupt, external bool
+	objective                    string
+}
+
+func webHandoffWriters(ctx context.Context, home, id string) ([]int, error) {
+	if !cr.WriterBusy(home, id) {
+		return nil, nil
+	}
+	pids, err := webWriterPIDs(ctx, home, id)
+	if err != nil {
+		return nil, err
+	}
+	// A lock can expire while lsof is running. Conversely, no observable
+	// PID is not permission to resume a still-locked chat.
+	if !cr.WriterBusy(home, id) {
+		return nil, nil
+	}
+	if len(pids) == 0 {
+		return nil, errWebOtherOwner
+	}
+	return pids, nil
+}
+
+func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id string, request webAcquire) (*webInputOwner, error) {
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	pids, err := webHandoffWriters(ctx, home, id)
 	if err != nil {
 		return nil, err
 	}
 	switch len(pids) {
 	case 1:
-		source, err := w.openInputOwner(ctx, id, pids[0])
+		probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+		source, err := w.openInputOwnerFor(probe, id, pids[0], request.external)
+		cancel()
 		if err != nil {
-			return nil, errWebOtherOwner
+			if !request.external || !request.interrupt || !request.prepare {
+				return nil, errWebOtherOwner
+			}
+			if err := w.releaseTrackedCLI(ctx, target, id, pids[0], request.objective); err != nil {
+				return nil, err
+			}
+			break
 		}
-		same := sameWebLogin(source.web, target)
+		same := source.web != nil && sameWebLogin(source.web, target)
 		if same && (source.web == target || !w.loginChanged(source.web)) {
 			return source, nil
 		}
 		defer source.release()
-		if !prepare {
+		if !request.prepare {
 			return nil, errWebNoActiveTurn
 		}
-		if target.login.Key == "" {
-			return nil, errors.New("선택한 계정의 로그인과 워크스페이스를 확인한 뒤 다시 시도해 주세요.")
-		}
-		if err := w.verifyLogin(ctx, target); err != nil {
+		if err := w.verifyWebTransferTarget(ctx, target); err != nil {
 			return nil, err
 		}
-		if objective != "" {
-			if _, err := readGoalForChange(ctx, source.client, id, objective); err != nil {
+		if source.web == nil {
+			probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+			key, _, err := liveWebLogin(probe, source.client)
+			cancel()
+			if err != nil {
+				return nil, errWebOtherOwner
+			}
+			if key != "" && key == target.login.Key {
+				return nil, errors.New("원래 창과 다른 로그인 계정을 선택해 주세요.")
+			}
+		}
+		if request.objective != "" {
+			if _, err := readGoalForChange(ctx, source.client, id, request.objective); err != nil {
 				return nil, err
 			}
 		}
-		if err := w.releaseWebChat(ctx, source, id, interrupt && !same); err != nil {
+		restore, err := w.releaseWebChat(ctx, source, id, request.interrupt && !same)
+		if err != nil {
 			return nil, err
 		}
+		if restore {
+			if cr.WriterBusy(home, id) {
+				return nil, errWebOtherOwner
+			}
+			if err := callWebInput(ctx, source.client, "thread/unarchive", map[string]any{"threadId": id}, nil); err != nil {
+				return nil, err
+			}
+		}
 	case 0:
-		if !prepare {
+		if !request.prepare {
 			return nil, errWebNoActiveTurn
 		}
 	default:
@@ -171,67 +234,212 @@ func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id 
 	return w.openInputOwner(ctx, id, target.process.PID)
 }
 
-func (w *WebChat) releaseWebChat(ctx context.Context, source *webInputOwner, id string, interrupt bool) error {
-	ctx, cancel := context.WithTimeout(ctx, 9*time.Second)
-	defer cancel()
-	if err := source.web.verifyExecutionLogin(ctx); err != nil {
+// The browser can stop a CLI CodexM itself launched only for an explicit
+// account change on its one verified chat. Other processes need owner RPC.
+func (w *WebChat) releaseTrackedCLI(ctx context.Context, target *webConnection, id string, pid int, objective string) error {
+	source, err := readLast(w.c, id)
+	if err != nil || source.Owner.PID != pid || source.AuthKey == "" {
+		return errWebOtherOwner
+	}
+	if err := w.verifyWebTransferTarget(ctx, target); err != nil {
 		return err
 	}
-	thread, err := source.client.Read(ctx, id, false)
-	if err != nil || thread.ID != id {
-		return errors.New("계정을 바꾸기 전에 현재 채팅 상태를 확인할 수 없습니다.")
+	key, err := authKey(w.c, target.loginName)
+	if err != nil || key == source.AuthKey {
+		return errors.New("기존 터미널과 다른 로그인 계정을 선택해 주세요.")
+	}
+	if objective != "" {
+		if _, err := readGoalForChange(ctx, target.client, id, objective); err != nil {
+			return err
+		}
+	}
+	if err := verifyIndependentCaller(ctx, pid); err != nil {
+		return err
+	}
+	if err := verifyOwnedCLI(ctx, w.c, source); err != nil {
+		return errWebOtherOwner
+	}
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		return err
+	}
+	wait, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	owner := execOwner{Process: *source.Owner, Key: source.OwnerKey}
+	return waitExecRelease(wait, config.Expand(w.c.Runtime.SharedCodexHome), id, owner)
+}
+
+func (w *WebChat) verifyWebTransferTarget(ctx context.Context, target *webConnection) error {
+	if target.login.Key == "" {
+		return errors.New("선택한 계정의 로그인과 워크스페이스를 확인해 주세요.")
+	}
+	if err := w.verifyLogin(ctx, target); err != nil {
+		return err
+	}
+	w.usageCache.mu.Lock()
+	usage := w.usageCache.entries[target.login.Revision]
+	w.usageCache.mu.Unlock()
+	if time.Since(usage.checkedAt) < time.Minute &&
+		(usage.limits.FiveHour != nil && *usage.limits.FiveHour == 0 || usage.limits.Week != nil && *usage.limits.Week == 0) {
+		return errors.New("선택한 계정도 사용 한도에 도달했습니다. 잔여 한도가 있는 계정을 선택해 주세요.")
+	}
+	return nil
+}
+
+func (w *WebChat) releaseWebChat(ctx context.Context, source *webInputOwner, id string, interrupt bool) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	archive := source.web == nil
+	if archive {
+		// Unsubscribe only affects the client making the request. A separate
+		// official socket can release this single thread via archive instead.
+		if err := verifyWebReleaseArchive(ctx, source.client, id); err != nil {
+			return false, err
+		}
 	}
 	args := map[string]any{"threadId": id}
-	if thread.Status.Type == "active" {
-		if !interrupt {
+	if err := w.settleWebTurn(ctx, source, id, interrupt); err != nil {
+		return false, err
+	}
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	if !cr.WriterBusy(home, id) {
+		return false, nil
+	}
+	if err := w.verifyInputOwner(ctx, source, id, false); err != nil {
+		return false, err
+	}
+	if !archive {
+		if err := callWebInput(ctx, source.client, "thread/unsubscribe", args, nil); err != nil {
+			return false, err
+		}
+		wait, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := w.waitWebRelease(wait, source, id)
+		cancel()
+		if err == nil || !errors.Is(err, errWebWriterStillHeld) || !interrupt {
+			return false, err
+		}
+	}
+	if err := verifyWebReleaseArchive(ctx, source.client, id); err != nil {
+		return false, err
+	}
+	if err := w.verifyInputOwner(ctx, source, id, false); err != nil {
+		return false, err
+	}
+	if err := callWebInput(ctx, source.client, "thread/archive", args, nil); err != nil {
+		return false, err
+	}
+	return true, w.waitWebRelease(ctx, source, id)
+}
+
+func (w *WebChat) settleWebTurn(ctx context.Context, source *webInputOwner, id string, interrupt bool) error {
+	stopped, ended := "", ""
+	for {
+		thread, err := source.client.Read(ctx, id, false)
+		if err != nil || thread.ID != id {
+			return errors.New("계정을 바꾸기 전에 현재 채팅 상태를 확인할 수 없습니다.")
+		}
+		switch thread.Status.Type {
+		case "idle", "notLoaded", "systemError":
+			return nil
+		case "active":
+			if !interrupt {
+				return errWebAccountBusy
+			}
+		default:
 			return errWebAccountBusy
 		}
 		var page struct{ Data []cr.Turn }
-		if err := source.client.Call(ctx, "thread/turns/list",
-			map[string]any{"threadId": id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded"}, &page); err != nil {
+		args := map[string]any{"threadId": id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded"}
+		if err := source.client.Call(ctx, "thread/turns/list", args, &page); err != nil {
 			return err
 		}
-		if len(page.Data) != 1 || page.Data[0].Status != "inProgress" || page.Data[0].ID == "" {
-			return errors.New("중단할 현재 작업을 확인할 수 없습니다. 채팅 상태를 새로 확인해 주세요.")
-		}
-		if err := w.verifyInputOwner(ctx, source, id, false); err != nil {
-			return err
-		}
-		if err := source.client.Call(ctx, "turn/interrupt", map[string]any{"threadId": id, "turnId": page.Data[0].ID}, nil); err != nil {
-			return err
-		}
-	} else if thread.Status.Type != "idle" {
-		return errors.New("계정을 바꿀 수 있는 채팅 상태를 확인하지 못했습니다.")
-	}
-	if err := w.verifyInputOwner(ctx, source, id, false); err != nil {
-		return err
-	}
-	if err := source.client.Call(ctx, "thread/unsubscribe", args, nil); err != nil {
-		return err
-	}
-	ticker := time.NewTicker(120 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		pids, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
-		if err != nil {
-			return err
-		}
-		if len(pids) > 1 || (len(pids) == 1 && pids[0] != source.pid) {
-			return errWebOtherOwner
-		}
-		if len(pids) == 0 {
-			loaded, err := webLoadedThreads(ctx, source.client)
-			if err != nil {
-				return err
+		if len(page.Data) == 1 && page.Data[0].Status == "inProgress" && page.Data[0].ID != "" {
+			turn := page.Data[0].ID
+			if stopped != "" && stopped != turn {
+				return errors.New("인계 도중 새 턴이 시작됐습니다. 현재 작업 상태를 확인해 주세요.")
 			}
-			if _, found := loaded[id]; !found {
-				return nil
+			if stopped == "" {
+				if err := w.verifyInputOwner(ctx, source, id, false); err != nil {
+					return err
+				}
+				if err := callWebInput(ctx, source.client, "turn/interrupt", map[string]any{"threadId": id, "turnId": turn}, nil); err != nil {
+					return err
+				}
+				stopped = turn
+			}
+			ended = ""
+		} else if len(page.Data) == 1 {
+			switch page.Data[0].Status {
+			case "completed", "failed", "interrupted":
+				// Turn completion and the thread status notification can land
+				// separately, including a quota error. Don't interrupt a
+				// finished turn while waiting for the thread to catch up.
+				if ended != "" && ended == page.Data[0].ID {
+					return nil
+				}
+				ended = page.Data[0].ID
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return errors.New("기존 계정이 채팅을 아직 놓지 않았습니다. 채팅 상태를 다시 확인해 주세요.")
-		case <-ticker.C:
+			return errWebAccountBusy
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+func verifyWebReleaseArchive(ctx context.Context, client *cr.Client, id string) error {
+	for _, archived := range []bool{false, true} {
+		var descendants struct {
+			Data       []json.RawMessage
+			NextCursor *string
+		}
+		args := map[string]any{"ancestorThreadId": id, "archived": archived, "limit": 1,
+			"sourceKinds": []string{}, "useStateDbOnly": true}
+		if err := client.Call(ctx, "thread/list", args, &descendants); err != nil {
+			return err
+		}
+		if len(descendants.Data) != 0 || descendants.NextCursor != nil && *descendants.NextCursor != "" {
+			return errors.New("하위 채팅이 있는 대화는 다른 실행에서 자동으로 보관할 수 없습니다.")
+		}
+	}
+	queue, err := readWebQueue(ctx, client, id)
+	if err != nil {
+		return err
+	}
+	if len(queue.Data) != 0 {
+		return errors.New("기존 창의 Codex 대기 입력을 먼저 확인해 주세요.")
+	}
+	return nil
+}
+
+func (w *WebChat) waitWebRelease(ctx context.Context, source *webInputOwner, id string) error {
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	identity, err := cr.NativeProcessIdentity(source.pid)
+	if err != nil || identity != source.incarnation {
+		if !cr.WriterBusy(home, id) {
+			return nil
+		}
+		return errWebOtherOwner
+	}
+	for cr.WriterBusy(home, id) {
+		if ctx.Err() != nil {
+			return errWebWriterStillHeld
+		}
+		pids, err := webHandoffWriters(ctx, home, id)
+		if err != nil {
+			if ctx.Err() != nil {
+				return errWebWriterStillHeld
+			}
+			return err
+		}
+		if len(pids) != 0 && (len(pids) != 1 || pids[0] != source.pid) {
+			return errWebOtherOwner
+		}
+		select {
+		case <-ctx.Done():
+			return errWebWriterStillHeld
+		case <-time.After(125 * time.Millisecond):
+		}
+	}
+	return nil
 }

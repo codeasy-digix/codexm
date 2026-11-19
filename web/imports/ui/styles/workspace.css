@@ -204,6 +204,8 @@ button:hover { background: var(--hover); }
 .goal-chevron { flex: none; margin-left: auto; font-size: 15px; }
 .goal-indicator[open] .goal-chevron { transform: rotate(180deg); }
 .goal-indicator[open] .goal-preview { visibility: hidden; }
+.goal-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.goal-actions button { font-size: 12px; padding: 5px 10px; }
 .goal-details { position: absolute; top: calc(100% + 4px); left: 0; right: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); box-shadow: 0 6px 26px #17241e20; max-height: 30vh; overflow: auto; }
 .goal-details p { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .goal-details small { color: var(--muted); }

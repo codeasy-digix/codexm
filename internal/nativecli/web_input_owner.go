@@ -41,6 +41,10 @@ func webWriterPIDs(ctx context.Context, home, id string) ([]int, error) {
 // Take a short-lived client lease, not the chat's writer lock. Only the native
 // server already holding that lock can authorize direct input.
 func (w *WebChat) openInputOwner(ctx context.Context, id string, pid int) (*webInputOwner, error) {
+	return w.openInputOwnerFor(ctx, id, pid, !w.webOnly)
+}
+
+func (w *WebChat) openInputOwnerFor(ctx context.Context, id string, pid int, external bool) (*webInputOwner, error) {
 	incarnation, err := cr.NativeProcessIdentity(pid)
 	if err != nil {
 		return nil, err
@@ -48,7 +52,7 @@ func (w *WebChat) openInputOwner(ctx context.Context, id string, pid int) (*webI
 	target := &webInputOwner{pid: pid, incarnation: incarnation}
 	target.client, target.web, target.release = w.leaseWebWriter(ctx, pid)
 	if target.client == nil {
-		if w.webOnly {
+		if !external {
 			return nil, errWebForeignInput
 		}
 		target.client, err = w.dialExternalWriter(ctx, pid)
@@ -192,7 +196,7 @@ func (o *webInputOwner) delivery(ctx context.Context, id string) (webDelivery, e
 }
 
 func (w *WebChat) verifyInputOwner(ctx context.Context, owner *webInputOwner, id string, allowFree bool) error {
-	pids, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
+	pids, err := webHandoffWriters(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
 	if err != nil {
 		return err
 	}

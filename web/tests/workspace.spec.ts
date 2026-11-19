@@ -104,6 +104,36 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(rendered).toBeVisible();
   await expect.poll(() => rendered.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBe(1);
 
+  const composer = page.getByRole("textbox", { name: "메시지", exact: true });
+  const sourceTurnId = await page.locator(".turn").last().getAttribute("data-turn-id");
+  const suggested = "다음 작업으로 검증 결과를 정리해 주세요.";
+  await page.evaluate(args => {
+    const testWindow = window as any;
+    const meteor = testWindow.Meteor, apply = meteor.apply;
+    meteor.apply = function (method: string, params: any[], options: any, callback: any) {
+      if (method !== "codexm.call" || params[0] !== "web.activity" || params[1]?.thread_id !== args.thread) {
+        return apply.call(this, method, params, options, callback);
+      }
+      return apply.call(this, method, params, options, (error: any, result: any) => callback(error, error ? result : {
+        ...result, prediction: { sourceTurnId: args.sourceTurnId, text: args.suggested },
+      }));
+    };
+    testWindow.restorePredictions = () => { meteor.apply = apply; };
+  }, { thread: f.thread, sourceTurnId, suggested });
+  await expect(composer).toHaveAttribute("placeholder", suggested);
+  await expect(composer).toHaveAttribute("aria-keyshortcuts", "Tab");
+  await composer.press("a");
+  await expect(composer).toHaveValue("a");
+  await expect(composer).not.toHaveAttribute("placeholder", suggested);
+  await composer.press("Backspace");
+  await expect(composer).toHaveAttribute("placeholder", suggested);
+  await composer.press("Tab");
+  await expect(composer).toHaveValue(suggested);
+  await expect(page.locator(".message-scroll").getByText(suggested, { exact: true })).toHaveCount(0);
+  await composer.fill("");
+  await expect(composer).toHaveAttribute("placeholder", suggested);
+  await page.evaluate(() => (window as any).restorePredictions());
+
   await other.getByRole("button", { name: "고정하기", exact: true }).click();
   await expect(other.getByLabel("고정됨", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(chatURL);
@@ -241,6 +271,7 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(reopened.getByRole("button", { name: "fixture-proof 스킬 제거" })).toBeVisible();
   await reopened.getByRole("button", { name: "보내기", exact: true }).click();
   const goal = reopened.locator(".goal-indicator");
+  await expect(goal).toHaveCount(1);
   await expect(goal).toHaveAttribute("data-status", "active");
   await goal.locator("summary").click();
   await expect(goal.locator(".goal-details")).toContainText(draft);
@@ -258,4 +289,16 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(queue.locator("summary")).toContainText("다음에 실행할 대기 요청");
   await queue.locator("summary").click();
   await expect(queue.locator(".queue-entry")).toContainText("다음에 실행할 대기 요청");
+  await goal.getByRole("button", { name: "일시 정지", exact: true }).click();
+  await expect(goal).toHaveAttribute("data-status", "paused");
+  await goal.getByRole("button", { name: "목표 재개", exact: true }).click();
+  await expect(goal).toHaveAttribute("data-status", "active");
+  await goal.getByRole("button", { name: "목표 삭제", exact: true }).click();
+  const deleteGoal = reopened.getByRole("dialog", { name: "목표 삭제", exact: true });
+  await deleteGoal.getByRole("button", { name: "취소", exact: true }).click();
+  await expect(goal).toHaveCount(1);
+  await goal.getByRole("button", { name: "목표 삭제", exact: true }).click();
+  await deleteGoal.getByRole("button", { name: "목표 삭제", exact: true }).click();
+  await expect(goal).toHaveCount(0);
+  await expect(reopened.getByText("페이지 이력 26", { exact: true })).toHaveCount(1);
 });

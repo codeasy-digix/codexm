@@ -108,18 +108,58 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 	if err := w.saveOwnedQueue(p.Thread, q); err != nil {
 		return nil, err
 	}
+	result := map[string]any{"thread_id": p.Thread, "mode": "queue", "queued_id": queued.ID, "status": "accepted",
+		"account": queued.Account, "handoffError": ""}
 	// The user's current submit can interrupt an old account. An automatic
 	// dispatch after a browser/service disconnect never interrupts a turn.
-	owner, err := w.acquireWebChat(ctx, target, p.Thread, true, true, goalObjective(p.Text, p.Goal))
+	owner, err := w.acquireWebChat(ctx, target, p.Thread, webAcquire{
+		prepare: true, interrupt: true, external: p.SwitchAccount, objective: goalObjective(p.Text, p.Goal),
+	})
 	if err == nil {
 		defer owner.release()
-		if len(q) == 1 {
+		if p.SwitchAccount {
+			if waitErr := w.pinQueueToAccount(p.Thread, q, owner.web); waitErr != nil {
+				result["handoffError"] = cr.SafeText(waitErr.Error())
+				return result, nil
+			}
+		}
+		if len(q) == 1 || p.SwitchAccount {
 			_ = w.startQueuedInput(ctx, owner, p.Thread, q)
 		}
 	} else {
+		if errors.Is(err, errWebInputUnconfirmed) {
+			q[len(q)-1].State = "blocked"
+		}
 		_ = w.noteQueueWait(p.Thread, q, len(q)-1, err)
+		result["handoffError"] = q[len(q)-1].Detail
 	}
-	return map[string]any{"thread_id": p.Thread, "mode": "queue", "queued_id": queued.ID, "status": "accepted", "account": queued.Account}, nil
+	return result, nil
+}
+
+// An explicit change must not jump back to the depleted login when an earlier
+// queue entry reaches the front. Each entry stays bound to its original login.
+func (w *WebChat) pinQueueToAccount(id string, q []webQueuedInput, target *webConnection) error {
+	key := queueLoginKey(target)
+	changed := false
+	for i := range q {
+		entry := &q[i]
+		switch {
+		case entry.State == "pending" && entry.Identity != key:
+			entry.State, entry.Detail = "held", "다른 계정으로 전환하여 보류했습니다. 큐에서 꺼내 다시 보낼 수 있습니다."
+			changed = true
+		case entry.State == "held" && entry.Identity == key:
+			entry.State, entry.Detail = "pending", ""
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return w.saveOwnedQueue(id, q)
+}
+
+func nextWebQueuedInput(q []webQueuedInput) int {
+	return slices.IndexFunc(q, func(input webQueuedInput) bool { return input.State != "held" })
 }
 
 func (w *WebChat) noteQueueWait(id string, q []webQueuedInput, index int, err error) error {
@@ -174,65 +214,71 @@ func (w *WebChat) advanceOwnedQueue(ctx context.Context, id string) error {
 	}
 	defer unlock()
 	q, err := w.readOwnedQueue(id)
-	if err != nil || len(q) == 0 || q[0].State != "pending" {
+	index := nextWebQueuedInput(q)
+	if err != nil || index < 0 || q[index].State != "pending" {
 		return err
 	}
+	next := q[index]
 	entry, err := catalog.Lookup(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
 	if err == nil && entry.Archived {
-		return w.noteQueueWait(id, q, 0, errors.New("채팅이 보관돼 있습니다. 복원하면 대기 입력을 이어갑니다."))
+		return w.noteQueueWait(id, q, index, errors.New("채팅이 보관돼 있습니다. 복원하면 대기 입력을 이어갑니다."))
 	}
-	target, err := w.connection(ctx, q[0].Account)
+	target, err := w.connection(ctx, next.Account)
 	if err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	defer w.releaseConnection(target)
-	if q[0].Identity != queueLoginKey(target) {
-		return w.noteQueueWait(id, q, 0, errors.New("등록한 로그인과 현재 로그인이 다릅니다. 대기 입력을 다시 지정해 주세요."))
+	if next.Identity != queueLoginKey(target) {
+		return w.noteQueueWait(id, q, index, errors.New("등록한 로그인과 현재 로그인이 다릅니다. 대기 입력을 다시 지정해 주세요."))
 	}
 	if err := w.verifyLogin(ctx, target); err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
-	owner, err := w.acquireWebChat(ctx, target, id, true, false, goalObjective(q[0].Text, q[0].Goal))
+	owner, err := w.acquireWebChat(ctx, target, id, webAcquire{prepare: true, objective: goalObjective(next.Text, next.Goal)})
 	if err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	defer owner.release()
 	return w.startQueuedInput(ctx, owner, id, q)
 }
 
 func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id string, q []webQueuedInput) error {
-	next := &q[0]
+	index := nextWebQueuedInput(q)
+	if index < 0 {
+		return nil
+	}
+	next := &q[index]
 	if next.State != "pending" || next.Identity != queueLoginKey(owner.web) {
 		return nil
 	}
 	delivery, err := owner.delivery(ctx, id)
 	if err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	if delivery.State != "idle" {
-		return w.noteQueueWait(id, q, 0, nil)
+		return w.noteQueueWait(id, q, index, nil)
 	}
 	if err := w.verifyLogin(ctx, owner.web); err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	// Previously queued native items stay in their original queue. If the
 	// interruption left that queue idle, finish its earlier head first.
 	native, err := readWebQueue(ctx, owner.client, id)
 	if err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	if len(native.Data) > 0 {
-		return w.startEarlierNativeInput(ctx, owner, id, q, native.Data[0])
+		return w.startEarlierNativeInput(ctx, owner, id, q, index, native.Data[0])
 	}
 	if err := w.verifyInputOwner(ctx, owner, id, true); err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	p := webParams{Thread: id, Text: next.Text, Goal: next.Goal, Mode: "immediate"}
 	for _, skill := range next.Skills {
 		p.SkillIDs = append(p.SkillIDs, skill.ID)
 	}
 	if err := w.preparePrompt(ctx, owner.web, &p); err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	next.State, next.Detail = "sending", ""
 	if err := w.saveOwnedQueue(id, q); err != nil {
@@ -252,21 +298,21 @@ func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id
 		}
 		return w.saveOwnedQueue(id, q)
 	}
-	return w.saveOwnedQueue(id, q[1:])
+	return w.saveOwnedQueue(id, slices.Delete(q, index, index+1))
 }
 
-func (w *WebChat) startEarlierNativeInput(ctx context.Context, owner *webInputOwner, id string, q []webQueuedInput, first json.RawMessage) error {
+func (w *WebChat) startEarlierNativeInput(ctx context.Context, owner *webInputOwner, id string, q []webQueuedInput, index int, first json.RawMessage) error {
 	var entry struct{ ID string }
 	if json.Unmarshal(first, &entry) != nil || entry.ID == "" {
-		return w.noteQueueWait(id, q, 0, errors.New("기존 대기 입력을 확인할 수 없습니다."))
+		return w.noteQueueWait(id, q, index, errors.New("기존 대기 입력을 확인할 수 없습니다."))
 	}
 	if err := w.verifyInputOwner(ctx, owner, id, true); err != nil {
-		return w.noteQueueWait(id, q, 0, err)
+		return w.noteQueueWait(id, q, index, err)
 	}
 	// Persist the attempt before touching the native queue. A lost result
 	// leaves the native input and the new web input available for inspection.
 	const checking = "기존 대기 입력의 시작 결과를 확인해 주세요."
-	q[0].State, q[0].Detail = "blocked", checking
+	q[index].State, q[index].Detail = "blocked", checking
 	if err := w.saveOwnedQueue(id, q); err != nil {
 		return err
 	}
@@ -275,7 +321,7 @@ func (w *WebChat) startEarlierNativeInput(ctx context.Context, owner *webInputOw
 	if err != nil || reply.Turn.ID == "" {
 		return nil
 	}
-	q[0].State, q[0].Detail = "pending", ""
+	q[index].State, q[index].Detail = "pending", ""
 	return w.saveOwnedQueue(id, q)
 }
 
@@ -320,7 +366,10 @@ func (w *WebChat) changeOwnedQueue(method string, p webParams) (any, error) {
 		if err := normalizeWebPrompt(&p); err != nil {
 			return nil, err
 		}
-		q[index].Text, q[index].State, q[index].Detail, q[index].Goal = p.Text, "pending", "", p.Goal
+		q[index].Text, q[index].Goal = p.Text, p.Goal
+		if q[index].State != "held" {
+			q[index].State, q[index].Detail = "pending", ""
+		}
 		result["updated"] = true
 	}
 	return result, w.saveOwnedQueue(p.Thread, q)

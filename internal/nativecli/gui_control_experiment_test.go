@@ -39,6 +39,9 @@ type guiControlFixture struct {
 	keys           []string // Synthetic local-provider credentials only.
 	responseText   string
 	commandFixture bool
+	quotaFailure   chan struct{}
+	quotaAccount   string
+	quotaWindow    string
 }
 
 func newGUIControlFixture(t *testing.T, transport string) *guiControlFixture {
@@ -77,7 +80,19 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 		f.keys = append(f.keys, r.Header.Get("Authorization"))
 		responseText := f.responseText
 		commandFixture := f.commandFixture
+		quotaFailure := f.quotaFailure
+		quotaAccount := f.quotaAccount
 		f.mu.Unlock()
+		if quotaFailure != nil && strings.Contains(string(body), "WEB_FIXTURE_QUOTA_429") && fixtureLoginName(r.Header.Get("Authorization")) == quotaAccount {
+			select {
+			case <-quotaFailure:
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, "{\"error\":{\"type\":\"usage_limit_reached\",\"message\":\"Fixture account exhausted\",\"resets_in_seconds\":1800}}")
+			case <-r.Context().Done():
+			}
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"fixture-response\"}}\n\n")
 		w.(http.Flusher).Flush()

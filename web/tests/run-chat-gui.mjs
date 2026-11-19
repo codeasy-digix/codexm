@@ -11,7 +11,8 @@ import { MongoClient } from "mongodb";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = dirname(root);
 const mode = process.env.CODEXM_WEB_TEST_MODE;
-const webOnly = mode === "web-only" || mode === "workspace";
+const quota = mode === "quota";
+const webOnly = mode === "web-only" || mode === "workspace" || quota;
 const args = process.argv.slice(2);
 const options = {};
 for (let i = 0; i < args.length; i += 2) {
@@ -68,7 +69,8 @@ const signals = () => { for (const child of children) child.kill("SIGTERM"); };
 process.once("SIGINT", signals);
 process.once("SIGTERM", signals);
 try {
-  const started = run("go", ["test", "./internal/nativecli", "-run", "^TestWebChatBrowserFixture$", "-count=1", "-timeout=47m", "-v"], {
+  const fixtureTest = quota ? "^TestWebQuotaBrowserFixture$" : "^TestWebChatBrowserFixture$";
+  const started = run("go", ["test", "./internal/nativecli", "-run", fixtureTest, "-count=1", "-timeout=47m", "-v"], {
     ...process.env, CODEXM_GUI_CONTROL_TEST: "1", CODEXM_NATIVE_RUNTIME: options.runtime,
     CODEXM_WEB_BROWSER_FIXTURE: fixtureDir,
   });
@@ -100,10 +102,12 @@ try {
       await client.close();
     }
   }
-  const nativeConfig = join(manifest.home, "shared", "config.toml");
-  const settings = await readFile(nativeConfig, "utf8");
-  if (!settings.includes("env_key='CODEXM_GUI_FIXTURE_KEY'")) throw new Error("unrecognized synthetic model configuration");
-  await writeFile(nativeConfig, settings.replace("env_key='CODEXM_GUI_FIXTURE_KEY'", "http_headers={Authorization='Bearer fixture-browser'}"), { mode: 0o600 });
+  if (!quota) {
+    const nativeConfig = join(manifest.home, "shared", "config.toml");
+    const settings = await readFile(nativeConfig, "utf8");
+    if (!settings.includes("env_key='CODEXM_GUI_FIXTURE_KEY'")) throw new Error("unrecognized synthetic model configuration");
+    await writeFile(nativeConfig, settings.replace("env_key='CODEXM_GUI_FIXTURE_KEY'", "http_headers={Authorization='Bearer fixture-browser'}"), { mode: 0o600 });
+  }
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const env = { ...process.env, HOME: manifest.home, PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
@@ -121,7 +125,8 @@ try {
     await new Promise(ok => setTimeout(ok, 500));
   }
   if (!webReady) throw new Error("isolated web service did not become ready");
-  const suite = mode === "workspace" ? "tests/workspace.spec.ts" : webOnly ? "tests/web-only.spec.ts" : "tests/chat-gui.spec.ts";
+  const suite = quota ? "tests/quota.spec.ts" : mode === "workspace" ? "tests/workspace.spec.ts" :
+    webOnly ? "tests/web-only.spec.ts" : "tests/chat-gui.spec.ts";
   await run(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", suite, "--output", join(output, "test-results")], {
     ...process.env, CODEXM_CHAT_GUI_FIXTURE: fixtureDir, CODEXM_CHAT_GUI_BINARY: options.binary,
     CODEXM_WEB_TEST_URL: url, CODEXM_WEB_TEST_MONGO: options.mongod ? "1" : "",

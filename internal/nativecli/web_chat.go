@@ -41,6 +41,7 @@ var WebMethods = []Method{
 	{"web.directories", false, false},
 	{"web.skills", false, false},
 	{"web.artifacts", false, false}, {"web.artifactRegister", true, false}, {"web.artifact", false, false},
+	{"web.goalChange", true, true},
 }
 
 func webSharedMethod(name string) bool {
@@ -83,6 +84,8 @@ type webParams struct {
 	HistoryRevision string          `json:"history_revision"`
 	SkillIDs        []string        `json:"skills"`
 	Goal            bool            `json:"goal"`
+	SwitchAccount   bool            `json:"switch_account"`
+	ExpectedGoal    *webGoalRef     `json:"expected_goal"`
 	FilePath        string          `json:"file_path"`
 	Artifact        string          `json:"artifact_id"`
 	nativeInput     []map[string]any
@@ -97,14 +100,15 @@ type webConnection struct {
 	login      accounts.LoginIdentity
 	generation uint64
 	// The connection pool lock guards usage and retirement.
-	inUse      int
-	retiring   bool
-	checkAfter time.Time
-	mu         sync.Mutex
-	pending    map[string]cr.Message
-	models     []webModel
-	modelsAt   time.Time
-	live       map[string]*webLiveEntry
+	inUse       int
+	retiring    bool
+	checkAfter  time.Time
+	mu          sync.Mutex
+	pending     map[string]cr.Message
+	models      []webModel
+	modelsAt    time.Time
+	live        map[string]*webLiveEntry
+	predictions map[string]webPrediction
 }
 
 type WebChat struct {
@@ -209,6 +213,20 @@ func (c *webConnection) verifyExecutionLogin(ctx context.Context) error {
 	if identity.Key == "" {
 		return nil
 	} // API-key/custom providers have no ChatGPT claims.
+	key, email, err := liveWebLogin(ctx, c.client)
+	if err != nil {
+		return err
+	}
+	if key == "" || !strings.EqualFold(email, identity.Email) {
+		return errors.New("the web server's live ChatGPT user/workspace could not be verified; no account was changed")
+	}
+	if key != identity.Key {
+		return errors.New("the web server's live user/workspace differs from the selected login")
+	}
+	return nil
+}
+
+func liveWebLogin(ctx context.Context, client *cr.Client) (string, string, error) {
 	var live struct {
 		Account *struct {
 			Type  string `json:"type"`
@@ -219,17 +237,14 @@ func (c *webConnection) verifyExecutionLogin(ctx context.Context) error {
 			Workspace string `json:"chatgptAccountId"`
 		} `json:"workspaceRouting"`
 	}
-	if err := c.client.Call(ctx, "account/read", map[string]bool{"refreshToken": false}, &live); err != nil {
-		return err
+	if err := client.Call(ctx, "account/read", map[string]bool{"refreshToken": false}, &live); err != nil {
+		return "", "", err
 	}
-	if live.Account == nil || live.Account.Type != "chatgpt" || !strings.EqualFold(live.Account.Email, identity.Email) || live.User == "" || live.Routing == nil || live.Routing.Workspace == "" {
-		return errors.New("the web server's live ChatGPT user/workspace could not be verified; no account was changed")
+	if live.Account != nil && live.Account.Type == "chatgpt" && live.User != "" && live.Routing != nil && live.Routing.Workspace != "" {
+		key := sha256.Sum256([]byte(live.User + "\x00" + live.Routing.Workspace))
+		return hex.EncodeToString(key[:]), live.Account.Email, nil
 	}
-	key := sha256.Sum256([]byte(live.User + "\x00" + live.Routing.Workspace))
-	if hex.EncodeToString(key[:]) != identity.Key {
-		return errors.New("the web server's live user/workspace differs from the selected login")
-	}
-	return nil
+	return "", "", nil
 }
 
 func webPageLimit(value, maximum, def int) (int, error) {
@@ -349,8 +364,8 @@ func (w *WebChat) verifyOwner(ctx context.Context, c *webConnection, id string, 
 	if !sameProcess(ctx, c.process) {
 		return errors.New("official web server process changed")
 	}
-	owners, err := writerProcesses(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
-	if err != nil && !os.IsNotExist(err) {
+	owners, err := webHandoffWriters(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
+	if err != nil {
 		return err
 	}
 	if len(owners) == 0 && !require {

@@ -91,6 +91,9 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 	if r.Method == "web.send" {
 		return w.send(ctx, c, r, p)
 	}
+	if r.Method == "web.goalChange" {
+		return w.changeGoal(ctx, c, p)
+	}
 	if r.Method == "web.queueUpdate" || r.Method == "web.queueCancel" {
 		return w.changeQueue(ctx, c, r.Method, p)
 	}

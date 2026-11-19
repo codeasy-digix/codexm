@@ -56,6 +56,7 @@ export function useChatActivity(enabled: boolean, thread: string, account: strin
     turn: selected?.turn,
     accountTurn: selected?.accountTurn ? selected.turn : undefined,
     pending: selected?.pending,
+    prediction: selected?.prediction,
   };
 }
 

@@ -36,6 +36,12 @@ type webActivityReply struct {
 	Turn         *webLiveTurn           `json:"turn,omitempty"`
 	AccountTurn  bool                   `json:"accountTurn,omitempty"`
 	Pending      []webPendingRequest    `json:"pending"`
+	Prediction   *webPrediction         `json:"prediction,omitempty"`
+}
+
+type webPrediction struct {
+	SourceTurn string `json:"sourceTurnId"`
+	Text       string `json:"text"`
 }
 
 type webLiveEntry struct {
@@ -50,6 +56,9 @@ const webLiveRetention = 15 * time.Second
 // connection. Tool data, reasoning, account events and raw RPCs stay there.
 func (c *webConnection) observeLiveEvent(event cr.Message) {
 	switch event.Method {
+	case "thread/prediction/updated":
+		c.observePrediction(event.Params)
+		return
 	case "thread/status/changed", "thread/closed", "turn/started", "turn/completed",
 		"item/started", "item/completed", "item/agentMessage/delta":
 	default:
@@ -84,6 +93,9 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 	if event.Method == "thread/closed" || p.Status.Type == "notLoaded" {
 		delete(c.live, p.ThreadID)
 		return
+	}
+	if event.Method == "turn/started" {
+		delete(c.predictions, p.ThreadID)
 	}
 	entry := c.live[p.ThreadID]
 	now := time.Now()
@@ -165,6 +177,44 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 	entry.touched = now
 }
 
+// Keep only results emitted by the official runtime for its own thread.
+// Reading or reopening a transcript never requests a new prediction.
+func (c *webConnection) observePrediction(data json.RawMessage) {
+	var event struct {
+		ThreadID     string
+		SourceTurnID string
+		Result       struct{ Type, Text string }
+	}
+	if json.Unmarshal(data, &event) != nil || !threadID.MatchString(event.ThreadID) ||
+		!threadID.MatchString(event.SourceTurnID) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if live := c.live[event.ThreadID]; live != nil &&
+		(live.turn.ID != "" && (live.turn.ID != event.SourceTurnID || live.turn.Status == "inProgress")) {
+		return
+	}
+	if event.Result.Type != "completed" || strings.TrimSpace(event.Result.Text) == "" || len(event.Result.Text) > 16*1024 {
+		if c.predictions[event.ThreadID].SourceTurn == event.SourceTurnID {
+			delete(c.predictions, event.ThreadID)
+		}
+		return
+	}
+	if c.predictions == nil {
+		c.predictions = make(map[string]webPrediction)
+	}
+	if len(c.predictions) >= 32 {
+		for id := range c.predictions {
+			if id != event.ThreadID {
+				delete(c.predictions, id)
+				break
+			}
+		}
+	}
+	c.predictions[event.ThreadID] = webPrediction{SourceTurn: event.SourceTurnID, Text: event.Result.Text}
+}
+
 const liveTextLimit = 64 << 10
 
 func limitLiveText(text string) string {
@@ -204,6 +254,9 @@ func (w *WebChat) activity(selected, account string) webActivityReply {
 		c.mu.Lock()
 		if writer, observed := writers[selected]; selected != "" && (!observed || writer.pid == c.process.PID) {
 			result.Pending = append(result.Pending, c.pendingForThread(selected)...)
+			if prediction, ok := c.predictions[selected]; ok && c.account == account && !w.loginChanged(c) {
+				result.Prediction = &prediction
+			}
 		}
 		for id, entry := range c.live {
 			if writer, found := writers[id]; found && writer.pid != c.process.PID {

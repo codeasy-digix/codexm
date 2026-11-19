@@ -6,11 +6,12 @@ import { slashRange, type PromptDraft } from "./prompt-draft";
 type Entry = ChatSkill & { goal?: boolean };
 const goalEntry: Entry = { id: "goal", name: "goal", description: "입력한 내용으로 채팅 목표를 시작", goal: true };
 
-export function PromptEditor({ thread, account, draft, placeholder, onChange, onKeyDown }: {
+export function PromptEditor({ thread, account, draft, placeholder, suggestion, onChange, onKeyDown }: {
   thread: string;
   account: string;
   draft: PromptDraft;
   placeholder: string;
+  suggestion?: string;
   onChange: (draft: PromptDraft) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 }) {
@@ -38,6 +39,7 @@ export function PromptEditor({ thread, account, draft, placeholder, onChange, on
     item.name.toLowerCase().includes(range.search) &&
     (item.id === goalEntry.id ? !draft.goal : !draft.skills.some(skill => skill.id === item.id))) : [];
   const position = Math.min(cursor, Math.max(0, entries.length - 1));
+  const predicted = !draft.text && !draft.pending ? suggestion : undefined;
 
   function updateRange(text: string, caret: number) {
     const next = composing.current ? undefined : slashRange(text, caret);
@@ -83,6 +85,11 @@ export function PromptEditor({ thread, account, draft, placeholder, onChange, on
         return;
       }
     }
+    if (predicted && event.key === "Tab" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      if (!event.repeat) onChange({ ...draft, text: predicted });
+      return;
+    }
     onKeyDown(event);
   }
 
@@ -95,7 +102,9 @@ export function PromptEditor({ thread, account, draft, placeholder, onChange, on
         {skill.name} <span aria-hidden="true">×</span>
       </button>)}
     </div>}
-    <textarea ref={field} aria-label="메시지" value={draft.text} placeholder={placeholder}
+    <textarea ref={field} aria-label="메시지" value={draft.text} placeholder={predicted ?? placeholder}
+      aria-keyshortcuts={predicted ? "Tab" : undefined}
+      aria-description={predicted ? "Tab을 눌러 Codex의 다음 입력 제안을 작성창에 넣습니다." : undefined}
       aria-autocomplete="list" aria-controls={range ? menuID : undefined}
       aria-activedescendant={range && entries.length ? `${menuID}-${position}` : undefined}
       rows={3} enterKeyHint="send" onBlur={() => setRange(undefined)}

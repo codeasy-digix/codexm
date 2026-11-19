@@ -38,6 +38,7 @@ export const bridgeContract = {
     { name: "web.artifacts", mutation: false, model: false },
     { name: "web.artifactRegister", mutation: true, model: false },
     { name: "web.artifact", mutation: false, model: false },
+    { name: "web.goalChange", mutation: true, model: true },
   ],
 };
 
@@ -65,7 +66,7 @@ export type QueuedInput = {
   id: string;
   input: Array<{ type: string; text?: string; text_elements?: unknown[] }>;
   account?: string;
-  state?: "pending" | "sending" | "blocked";
+  state?: "pending" | "sending" | "blocked" | "held";
   detail?: string;
   skills?: ChatSkill[];
   goal?: boolean;
@@ -108,6 +109,7 @@ export type ThreadGoal = {
   tokenBudget?: number | null;
   tokensUsed: number;
   timeUsedSeconds: number;
+  createdAt?: number;
 };
 export type AccountLimits = { fiveHour: number | null; week: number | null; loading: boolean };
 
@@ -130,7 +132,10 @@ export type LiveTurn = {
   status: string;
   items: Array<{ id: string; phase?: string; text: string; streaming: boolean }>;
 };
-export type ChatActivitySnapshot = { writersKnown: boolean; threads: Record<string, ChatActivity>; turn?: LiveTurn; accountTurn?: boolean; pending?: PendingRequest[] };
+export type ChatActivitySnapshot = {
+  writersKnown: boolean; threads: Record<string, ChatActivity>; turn?: LiveTurn; accountTurn?: boolean;
+  pending?: PendingRequest[]; prediction?: { sourceTurnId: string; text: string };
+};
 
 export function workingActivity(activity?: ChatActivity) {
   return activity?.state === "running" || activity?.state === "responding";

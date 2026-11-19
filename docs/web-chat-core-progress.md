@@ -79,6 +79,19 @@ Playwright 브라우저가 준비돼 있어야 한다. 설치된 Chrome을 쓸 �
 `CODEXM_BROWSER_CHANNEL=chrome`을 지정한다. 실행기는 합성 계정/이력의 일시적인
 OS 사용자 서비스를 쓰고 검사 후 등록을 제거한다. 결과·스크린샷은 Git 밖에 남는다.
 
+## 한도 0% 인계 재현
+
+같은 실행기에 환경 변수 `CODEXM_WEB_TEST_MODE=quota`와
+`CODEXM_WEB_QUOTA_WINDOW=5h` 또는 `week`를 지정한다. 로컬 응답 서버가 테스트
+계정의 사용량 100%와 429를 제공한다. 공식 Codex 런타임이 한도 오류를 기록하고 기존
+writer 잠금을 유지한 채 웹에서 다른 계정을 선택한다. 계정 전환 전후의 채팅 ID,
+기존 writer, 새 계정으로 전송된 횟수, 같은 서버의 다른 채팅 상태를 검증한다.
+
+`CODEXM_WEB_QUOTA_BASELINE=1`을 지정하고 수정 전의 바이너리와 번들을 전달하면
+기존 잠금에 막히는 동작을 재현한다. `CODEXM_WEB_QUOTA_OWNER=stdio`는 공식 제어
+소켓을 제공하지 않는 외부 실행을 재현한다. 모두 합성 로그인, 임시 대화, loopback
+서버를 사용한다. 스크린샷과 확인 결과는 `--output`으로 지정한 private 경로에 남긴다.
+
 ## 경계
 
 - 외부 GUI/CLI의 진행 중 턴은 writer와 일치하는 공식 Unix app-server 연결에서 제어한다.

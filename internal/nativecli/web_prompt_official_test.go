@@ -9,6 +9,83 @@ import (
 	"time"
 )
 
+func TestWebOnlyGoalControlsKeepScopeAndBudget(t *testing.T) {
+	f := webOnlyFixture(t)
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	source := w.connections["alpha"]
+	const objective, budget = "GUI_FIXTURE_ACTIVE_TEST_GOAL", 30000
+	if err := source.client.Call(f.ctx, "thread/goal/set", map[string]any{
+		"threadId": id, "objective": objective, "status": "active", "origin": "user", "tokenBudget": budget,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, objective, "alpha")
+	goal, err := source.client.Goal(f.ctx, id)
+	if err != nil || goal == nil || goal.CreatedAt == 0 {
+		t.Fatal("native goal reference unavailable", err)
+	}
+	change := func(mode, account string, switchAccount bool, createdAt int64) (map[string]any, error) {
+		return call("web.goalChange", map[string]any{"thread_id": id, "account": account, "mode": mode,
+			"switch_account": switchAccount, "expected_goal": webGoalRef{Objective: objective, CreatedAt: createdAt}})
+	}
+	if _, err := change("clear", "alpha", false, goal.CreatedAt-1); err == nil {
+		t.Fatal("an old goal reference was accepted")
+	}
+	paused, err := change("pause", "alpha", false, goal.CreatedAt)
+	if err != nil || paused["goal"].(map[string]any)["status"] != "paused" {
+		t.Fatal("goal did not pause", paused, err)
+	}
+	resumed, err := change("resume", "beta", true, goal.CreatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := resumed["goal"].(map[string]any)
+	if value["status"] != "active" || value["objective"] != objective || value["tokenBudget"] != float64(budget) {
+		t.Fatal("goal's objective or budget changed", resumed)
+	}
+	target := w.connections["beta"]
+	if err := w.verifyOwner(f.ctx, target, id, true); err != nil {
+		t.Fatal("resumed goal did not use the selected account", err)
+	}
+	if _, err := change("clear", "beta", false, goal.CreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if cleared, err := target.client.Goal(f.ctx, id); err != nil || cleared != nil {
+		t.Fatal("the goal remained after confirmed clear", cleared, err)
+	}
+	if saved, err := target.client.Read(f.ctx, id, false); err != nil || saved.ID != id {
+		t.Fatal("clearing the goal removed the chat", err)
+	}
+}
+
+func TestWebOnlyPredictionReadsOfficialEvents(t *testing.T) {
+	c := &webConnection{}
+	const thread, turn = "00000000-0000-4000-8000-000000000101", "00000000-0000-4000-8000-000000000102"
+	prediction := func(kind, text string) json.RawMessage {
+		body, err := json.Marshal(map[string]any{"threadId": thread, "sourceTurnId": turn,
+			"result": map[string]string{"type": kind, "text": text}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	c.observePrediction(prediction("completed", "Next prompt from the official runtime"))
+	if c.predictions[thread].SourceTurn != turn {
+		t.Fatal("native prediction was not retained")
+	}
+	c.observePrediction(prediction("failed", ""))
+	if _, ok := c.predictions[thread]; ok {
+		t.Fatal("a failed prediction should not be displayed")
+	}
+}
+
 func TestWebOnlyOfficialPromptGoalsAndSkills(t *testing.T) {
 	f := webOnlyFixture(t)
 	skillDir := filepath.Join(f.cmd.Dir, ".agents", "skills", "fixture-proof")
