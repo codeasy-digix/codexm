@@ -67,12 +67,23 @@ func (w *WebChat) sendWebOnly(ctx context.Context, target *webConnection, r Requ
 	if p.Mode == "queue" {
 		return w.enqueueWebInput(ctx, target, r, p)
 	}
-	owner, err := w.acquireWebChat(ctx, target, p.Thread, webAcquire{
-		prepare: automatic, interrupt: automatic, external: automatic && p.SwitchAccount,
-		objective: goalObjective(p.Text, p.Goal),
-	})
-	if err != nil {
-		return nil, err
+	var owner *webInputOwner
+	if !p.SwitchAccount {
+		// Check the selected server first. A loaded chat still gets a fresh
+		// writer check before start, steer, or a goal mutation.
+		probe, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		owner, _ = w.openInputOwnerFor(probe, p.Thread, target.process.PID, false)
+		cancel()
+	}
+	if owner == nil {
+		var err error
+		owner, err = w.acquireWebChat(ctx, target, p.Thread, webAcquire{
+			prepare: automatic, interrupt: automatic, external: automatic && p.SwitchAccount,
+			objective: goalObjective(p.Text, p.Goal),
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer owner.release()
 	if p.SwitchAccount {

@@ -92,7 +92,9 @@ func (w *WebChat) connection(ctx context.Context, account string) (*webConnectio
 	args := []string{"--no-daemon", "-c", "sqlite_home=" + string(shared), "-c", `cli_auth_credentials_store="file"`,
 		"-c", "features.default_mode_request_user_input=true"}
 	if w.webOnly {
-		args = append(args, "-c", "thread_unload_delay_secs=1")
+		// A web-owned thread can unload as soon as its final subscriber leaves.
+		// The handoff still waits for the native writer lock to be released.
+		args = append(args, "-c", "thread_unload_delay_secs=0")
 	}
 	cmd := exec.Command(r.Binary, append(args, "app-server", "--listen", "stdio://")...)
 	cmd.Env, cmd.Dir = environment(w.c, runtimeAccount), home

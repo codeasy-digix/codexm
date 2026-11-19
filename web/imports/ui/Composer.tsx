@@ -37,7 +37,8 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     writePromptDraft(chat.id, next);
     setDraft(next);
   }
-  const [busy, setBusy] = useState(false);
+  const [action, setAction] = useState<"immediate" | "queue" | "stop">();
+  const busy = action !== undefined;
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const inFlight = useRef(false);
@@ -118,7 +119,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
       if (effort) parameters.effort = effort;
     }
     inFlight.current = true;
-    setBusy(true);
+    setAction(mode);
     setError("");
     setNotice("");
     const operation = crypto.randomUUID();
@@ -160,14 +161,14 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
       return "rejected";
     } finally {
       inFlight.current = false;
-      setBusy(false);
+      setAction(undefined);
     }
   }
 
   async function stop() {
     if (!online || !turn || inFlight.current) return;
     inFlight.current = true;
-    setBusy(true);
+    setAction("stop");
     setError("");
     try {
       await call("web.interrupt", { thread_id: chat.id, account: history?.executionAccount || account, turn_id: turn }, crypto.randomUUID());
@@ -176,7 +177,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
       setError((e as Error).message);
     } finally {
       inFlight.current = false;
-      setBusy(false);
+      setAction(undefined);
     }
   }
 
@@ -193,7 +194,8 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     {uncertain && <p className="inline-error">대화나 큐에서 이전 전송 결과를 확인하세요. <button type="button"
       className="text-button" onClick={() => save({ ...draft, pending: undefined })}>초안 계속 편집</button></p>}
     <div className="composer">
-      <PromptEditor thread={chat.id} account={account} draft={draft} onChange={save} suggestion={active || relayID ? undefined : suggestion}
+      <PromptEditor thread={chat.id} account={account} draft={draft} disabled={busy}
+        onChange={next => { if (!inFlight.current) save(next); }} suggestion={active || relayID ? undefined : suggestion}
         placeholder={active ? "현재 작업에 개입하거나 다음 요청을 큐에 추가하세요" : "Codex에게 요청하세요"}
         onKeyDown={event => {
           const mode = composerAction(event.nativeEvent, queueModifier);
@@ -206,9 +208,13 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
         <small>Enter 전송·개입 · {queueShortcut} 큐 · Shift+Enter 줄바꿈</small>
         <div className="composer-actions">
           {active && !external && <button className="stop-button" onClick={() => void stop()} disabled={busy || !online} aria-label="현재 턴 중지">■</button>}
-          <button aria-keyshortcuts={`${queueModifier}+Enter`} title={queueShortcut} onClick={() => void send("queue")} disabled={busy || !online || uncertain || !draft.text.trim() || relayingDraft}>큐에 추가</button>
-          <button className="primary" onClick={() => void send("immediate")} disabled={busy || !online || !!relayID || uncertain || !draft.text.trim()}>
-            {busy || relayID ? "전달 중…" : "보내기"}
+          <button aria-keyshortcuts={`${queueModifier}+Enter`} title={queueShortcut} aria-busy={action === "queue"}
+            onClick={() => void send("queue")} disabled={busy || !online || uncertain || !draft.text.trim() || relayingDraft}>
+            {action === "queue" ? "큐에 추가 중…" : "큐에 추가"}
+          </button>
+          <button className="primary" aria-busy={action === "immediate" || !!relayID}
+            onClick={() => void send("immediate")} disabled={busy || !online || !!relayID || uncertain || !draft.text.trim()}>
+            {action === "immediate" || relayID ? "전달 중…" : "보내기"}
           </button>
         </div>
       </div>

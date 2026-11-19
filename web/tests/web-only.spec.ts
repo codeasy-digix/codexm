@@ -11,6 +11,22 @@ test.skip(!fixture || !binary || !url || process.env.CODEXM_WEB_TEST_MODE !== "w
 
 test("an account change only takes effect when a chat input is submitted", async ({ page }) => {
   const config = JSON.parse(readFileSync(join(fixture!, "fixture.json"), "utf8"));
+  let holdMode: "immediate" | "queue" | undefined;
+  let release: (() => void) | undefined;
+  await page.routeWebSocket(target => target.pathname.endsWith("/websocket"), socket => {
+    const server = socket.connectToServer();
+    socket.onMessage(message => {
+      const frame = JSON.parse(String(message));
+      const requests = Array.isArray(frame) ? frame.map(item => JSON.parse(item)) : [frame];
+      if (holdMode && requests.some(request => request.method === "codexm.call" &&
+        request.params?.[0] === "web.send" && request.params[1].mode === holdMode)) {
+        holdMode = undefined;
+        release = () => server.send(message);
+      } else {
+        server.send(message);
+      }
+    });
+  });
   const cli = (args: string[]) => execFileSync(binary!, ["--config", config.config, "web", ...args], {
     stdio: "pipe", env: { ...process.env, HOME: config.home }, encoding: "utf8",
   });
@@ -31,8 +47,21 @@ test("an account change only takes effect when a chat input is submitted", async
   await expect(page).toHaveURL(/\/chat\/[a-f0-9-]+$/);
   const draftAddress = page.url();
   const input = page.locator(".composer textarea");
-  await input.fill("GUI_FIXTURE_ACTIVE_BROWSER ACCOUNT_A");
+  async function checkLocked(message: string, label: string) {
+    await expect.poll(() => !!release).toBe(true);
+    await expect(input).toBeDisabled();
+    await expect(input).toHaveValue(message);
+    await expect(page.getByRole("button", { name: label, exact: true })).toBeDisabled();
+    release!();
+    release = undefined;
+    await expect(input).toBeEditable();
+    await expect(input).toHaveValue("");
+  }
+  const firstMessage = "GUI_FIXTURE_ACTIVE_BROWSER ACCOUNT_A";
+  await input.fill(firstMessage);
+  holdMode = "immediate";
   await page.getByRole("button", { name: "보내기", exact: true }).click();
+  await checkLocked(firstMessage, "전달 중…");
   await expect(page.getByText("현재 실행 first-browser-login", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "현재 턴 중지" })).toBeVisible();
   await input.fill("계정 B에서 실행할 지시");
@@ -43,8 +72,11 @@ test("an account change only takes effect when a chat input is submitted", async
   await expect(page.getByText("현재 실행 second-browser-login", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(draftAddress);
 
-  await input.fill("등록한 계정으로만 실행할 대기 입력");
+  const queueMessage = "등록한 계정으로만 실행할 대기 입력";
+  await input.fill(queueMessage);
+  holdMode = "queue";
   await input.press("ControlOrMeta+Enter");
+  await checkLocked(queueMessage, "큐에 추가 중…");
   await expect(page.getByText("second-browser-login 계정의 입력을 큐에 추가했습니다.")).toBeVisible();
   await page.locator(".queue-preview summary").click();
   await expect(page.locator(".queue-entry")).toContainText("second-browser-login");

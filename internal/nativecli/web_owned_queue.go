@@ -110,6 +110,10 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 	}
 	result := map[string]any{"thread_id": p.Thread, "mode": "queue", "queued_id": queued.ID, "status": "accepted",
 		"account": queued.Account, "handoffError": ""}
+	if !p.SwitchAccount && target.hasActiveQueueTurn(ctx, p.Thread) {
+		// The saved input can wait for the turn already running on this login.
+		return result, nil
+	}
 	// The user's current submit can interrupt an old account. An automatic
 	// dispatch after a browser/service disconnect never interrupts a turn.
 	owner, err := w.acquireWebChat(ctx, target, p.Thread, webAcquire{
@@ -234,12 +238,22 @@ func (w *WebChat) advanceOwnedQueue(ctx context.Context, id string) error {
 	if err := w.verifyLogin(ctx, target); err != nil {
 		return w.noteQueueWait(id, q, index, err)
 	}
+	if target.hasActiveQueueTurn(ctx, id) {
+		return w.noteQueueWait(id, q, index, nil)
+	}
 	owner, err := w.acquireWebChat(ctx, target, id, webAcquire{prepare: true, objective: goalObjective(next.Text, next.Goal)})
 	if err != nil {
 		return w.noteQueueWait(id, q, index, err)
 	}
 	defer owner.release()
 	return w.startQueuedInput(ctx, owner, id, q)
+}
+
+func (c *webConnection) hasActiveQueueTurn(ctx context.Context, id string) bool {
+	probe, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	thread, err := c.client.Read(probe, id, false)
+	return err == nil && thread.ID == id && thread.Status.Type == "active"
 }
 
 func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id string, q []webQueuedInput) error {

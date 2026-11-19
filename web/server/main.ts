@@ -229,6 +229,7 @@ Meteor.methods({
     const browser = owner(this.connection?.id);
     if (!params || typeof params !== "object" || Array.isArray(params))
       throw new Meteor.Error("invalid_input");
+    this.unblock();
     const page = await historyCache.peek(params, thread => bridge.call("web.historyVersion", { thread_id: thread }, browser));
     owner(this.connection?.id);
     return page;
@@ -253,8 +254,13 @@ Meteor.methods({
     if (!spec || internalMethods.has(method)) throw new Meteor.Error("unsupported");
     if (spec.mutation && !/^[A-Za-z0-9_-]{16,128}$/.test(operation))
       throw new Meteor.Error("invalid_input", "요청 ID가 필요합니다.");
+    if (!spec.mutation && method.startsWith("web.")) this.unblock();
     try {
-      if (method === "web.catalog") return await catalogCache.read(params);
+      if (method === "web.catalog") {
+        const result = await catalogCache.read(params);
+        owner(this.connection?.id);
+        return result;
+      }
       if (method === "web.history") {
         const result = await historyCache.read(params, revision => bridge.call(method, { ...params, history_revision: revision }, browser));
         owner(this.connection?.id);
@@ -267,6 +273,7 @@ Meteor.methods({
         operation,
         spec.mutation,
       );
+      if (!spec.mutation && method.startsWith("web.")) owner(this.connection?.id);
       if (method === "web.delete" && result?.deleted === true && typeof result.thread_id === "string") {
         await Promise.all([historyCache.deleted(result.thread_id), deleteArtifacts(state!, result.thread_id)]);
       }

@@ -66,6 +66,7 @@ button:hover { background: var(--hover); }
 .attached-message { flex-direction: column; align-items: flex-end; gap: 8px; }
 .composer { background: var(--composer-bg); border-color: var(--field-line); }
 .composer textarea { background: transparent; }
+.composer textarea:disabled { color: var(--muted); cursor: wait; opacity: 1; }
 .turn-details, .markdown blockquote { border-color: var(--line); }
 .markdown pre, .tool-item pre, .approval pre, .markdown :not(pre) > code { background: var(--surface); }
 :root[data-theme="dark"] .approval { background: #322e20; border-color: #645633; }

@@ -6,10 +6,11 @@ import { slashRange, type PromptDraft } from "./prompt-draft";
 type Entry = ChatSkill & { goal?: boolean };
 const goalEntry: Entry = { id: "goal", name: "goal", description: "입력한 내용으로 채팅 목표를 시작", goal: true };
 
-export function PromptEditor({ thread, account, draft, placeholder, suggestion, onChange, onKeyDown }: {
+export function PromptEditor({ thread, account, draft, disabled, placeholder, suggestion, onChange, onKeyDown }: {
   thread: string;
   account: string;
   draft: PromptDraft;
+  disabled: boolean;
   placeholder: string;
   suggestion?: string;
   onChange: (draft: PromptDraft) => void;
@@ -23,6 +24,8 @@ export function PromptEditor({ thread, account, draft, placeholder, suggestion, 
   const [available, setAvailable] = useState<ChatSkill[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const composing = useRef(false);
+
+  useEffect(() => { if (disabled) setRange(undefined); }, [disabled]);
 
   useEffect(() => {
     if (!requested) return;
@@ -39,7 +42,7 @@ export function PromptEditor({ thread, account, draft, placeholder, suggestion, 
     item.name.toLowerCase().includes(range.search) &&
     (item.id === goalEntry.id ? !draft.goal : !draft.skills.some(skill => skill.id === item.id))) : [];
   const position = Math.min(cursor, Math.max(0, entries.length - 1));
-  const predicted = !draft.text && !draft.pending ? suggestion : undefined;
+  const predicted = !disabled && !draft.text && !draft.pending ? suggestion : undefined;
 
   function updateRange(text: string, caret: number) {
     const next = composing.current ? undefined : slashRange(text, caret);
@@ -49,7 +52,7 @@ export function PromptEditor({ thread, account, draft, placeholder, suggestion, 
   }
 
   function pick(item: Entry) {
-    if (!range) return;
+    if (disabled || !range) return;
     const { start, end } = range;
     onChange({
       text: draft.text.slice(0, start) + draft.text.slice(end),
@@ -64,7 +67,7 @@ export function PromptEditor({ thread, account, draft, placeholder, suggestion, 
   }
 
   function keyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (disabled || composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (range && event.key === "Escape") {
       event.preventDefault();
       setRange(undefined);
@@ -93,20 +96,20 @@ export function PromptEditor({ thread, account, draft, placeholder, suggestion, 
     onKeyDown(event);
   }
 
-  return <div className="prompt-editor">
+  return <div className="prompt-editor" aria-busy={disabled}>
     {(draft.goal || draft.skills.length > 0) && <div className="prompt-chips" aria-label="적용할 명령과 스킬">
-      {draft.goal && <button type="button" className="prompt-chip" aria-label="목표 지정 제거" onClick={() =>
+      {draft.goal && <button type="button" className="prompt-chip" aria-label="목표 지정 제거" disabled={disabled} onClick={() =>
         onChange({ ...draft, goal: false, pending: undefined })}>/goal <span aria-hidden="true">×</span></button>}
-      {draft.skills.map(skill => <button key={skill.id} type="button" className="prompt-chip" aria-label={`${skill.name} 스킬 제거`}
+      {draft.skills.map(skill => <button key={skill.id} type="button" className="prompt-chip" aria-label={`${skill.name} 스킬 제거`} disabled={disabled}
         onClick={() => onChange({ ...draft, skills: draft.skills.filter(item => item.id !== skill.id), pending: undefined })}>
         {skill.name} <span aria-hidden="true">×</span>
       </button>)}
     </div>}
-    <textarea ref={field} aria-label="메시지" value={draft.text} placeholder={predicted ?? placeholder}
+    <textarea ref={field} aria-label="메시지" value={draft.text} placeholder={predicted ?? placeholder} disabled={disabled}
       aria-keyshortcuts={predicted ? "Tab" : undefined}
       aria-description={predicted ? "Tab을 눌러 Codex의 다음 입력 제안을 작성창에 넣습니다." : undefined}
-      aria-autocomplete="list" aria-controls={range ? menuID : undefined}
-      aria-activedescendant={range && entries.length ? `${menuID}-${position}` : undefined}
+      aria-autocomplete="list" aria-controls={!disabled && range ? menuID : undefined}
+      aria-activedescendant={!disabled && range && entries.length ? `${menuID}-${position}` : undefined}
       rows={3} enterKeyHint="send" onBlur={() => setRange(undefined)}
       onCompositionStart={() => { composing.current = true; setRange(undefined); }}
       onCompositionEnd={event => {
@@ -123,7 +126,7 @@ export function PromptEditor({ thread, account, draft, placeholder, suggestion, 
         if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) updateRange(event.currentTarget.value, event.currentTarget.selectionStart);
       }}
       onKeyDown={keyDown} />
-    {range && <div className="prompt-menu" id={menuID} role="listbox" aria-label="명령과 스킬">
+    {!disabled && range && <div className="prompt-menu" id={menuID} role="listbox" aria-label="명령과 스킬">
       {entries.map((item, index) => <button type="button" id={`${menuID}-${index}`} role="option"
         key={item.id} tabIndex={-1} aria-selected={index === position} onPointerDown={event => event.preventDefault()}
         onClick={() => pick(item)}>
