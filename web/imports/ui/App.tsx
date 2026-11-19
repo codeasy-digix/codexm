@@ -412,10 +412,47 @@ export function App() {
   </div>;
 }
 
-function Login({passwordMode,message}:{passwordMode:boolean;message:string}) {
-  const [username,setUsername]=useState(""),[password,setPassword]=useState(""),[token,setToken]=useState(""),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  return <main className="login"><div className="brand-icon">C</div><p className="eyebrow">CODEXM</p><h1>내 작업에 연결하세요</h1><p>이 머신의 채팅과 프로젝트를<br/>브라우저에서 이어갑니다.</p><form onSubmit={e=>{e.preventDefault();if(busy)return;setBusy(true);setError("");void(passwordMode?login(username,password):exchange(token)).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>
-    {passwordMode?<><label>아이디<input autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} required/></label><label>비밀번호<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required/></label></>:<label>로컬 접속 코드<input type="password" value={token} onChange={e=>setToken(e.target.value)} required/></label>}
-    <button className="primary" disabled={busy}>{busy?"연결 중…":passwordMode?"로그인":"연결"}</button>
-  </form>{(error||message)&&<p role="alert">{error||message}</p>}</main>;
+function Login({ passwordMode, message }: { passwordMode: boolean; message: string }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const secretInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Chrome uses macOS Secure Input while a password field has focus.
+    const releaseFocus = () => secretInput.current?.blur();
+    const releaseWhenHidden = () => { if (document.hidden) releaseFocus(); };
+    window.addEventListener("blur", releaseFocus);
+    document.addEventListener("visibilitychange", releaseWhenHidden);
+    return () => {
+      window.removeEventListener("blur", releaseFocus);
+      document.removeEventListener("visibilitychange", releaseWhenHidden);
+    };
+  }, []);
+
+  function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    secretInput.current?.blur();
+    setBusy(true);
+    setError("");
+    void (passwordMode ? login(username, password) : exchange(token))
+      .catch(error => setError(error.message))
+      .finally(() => setBusy(false));
+  }
+
+  return <main className="login">
+    <div className="brand-icon">C</div><p className="eyebrow">CODEXM</p>
+    <h1>내 작업에 연결하세요</h1><p>이 머신의 채팅과 프로젝트를<br/>브라우저에서 이어갑니다.</p>
+    <form onSubmit={submit}>
+      {passwordMode ? <>
+        <label>아이디<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required /></label>
+        <label>비밀번호<input ref={secretInput} type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
+      </> : <label>로컬 접속 코드<input ref={secretInput} type="password" value={token} onChange={e => setToken(e.target.value)} required /></label>}
+      <button className="primary" disabled={busy}>{busy ? "연결 중…" : passwordMode ? "로그인" : "연결"}</button>
+    </form>
+    {(error || message) && <p role="alert">{error || message}</p>}
+  </main>;
 }

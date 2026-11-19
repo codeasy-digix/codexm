@@ -13,10 +13,27 @@ test("HTTPS login denies anonymous/incorrect/foreign-origin requests and uses a 
   const blocked = await page.evaluate(() => new Promise(resolve => (window as any).Meteor.call("codexm.call", "snapshot", {}, "", (error: any) => resolve(error?.error))));
   expect(blocked).toBe("authentication_required");
   await page.getByLabel("아이디", { exact: true }).fill("fixture");
-  await page.getByLabel("비밀번호", { exact: true }).fill("wrong-password");
-  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  const passwordInput = page.getByLabel("비밀번호", { exact: true });
+  await passwordInput.fill("wrong-password");
+  await expect(passwordInput).toBeFocused();
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(passwordInput).not.toBeFocused();
+  let releaseLogin!: () => void;
+  const pendingLogin = new Promise<void>(resolve => { releaseLogin = resolve; });
+  await page.route(url + "/auth/login", async route => {
+    await pendingLogin;
+    await route.continue();
+  }, { times: 1 });
+  try {
+    await passwordInput.press("Enter");
+    await expect(page.getByRole("button", { name: "연결 중…", exact: true })).toBeDisabled();
+    await expect(passwordInput).not.toBeFocused();
+  } finally {
+    releaseLogin();
+  }
   await expect(page.getByRole("alert")).toContainText("아이디 또는 비밀번호");
-  await page.getByLabel("비밀번호", { exact: true }).fill(readFileSync(filename!, "utf8").trim());
+  await expect(passwordInput).not.toBeFocused();
+  await passwordInput.fill(readFileSync(filename!, "utf8").trim());
   await page.getByRole("button", { name: "로그인", exact: true }).click();
   await expect(page.getByLabel("채팅 검색")).toBeVisible();
   const cookie = (await context.cookies()).find(c => c.name === "codexm_session")!;
