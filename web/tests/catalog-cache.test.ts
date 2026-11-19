@@ -41,3 +41,25 @@ test("matching cached pages stay available and consistent during an incomplete r
   await expected;
   assert.deepEqual(await cache.read({ limit: 1 }), first);
 });
+
+test("requests during the cooldown share a trailing capture and cached reads can continue", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  let revision = 0;
+  let nativeRows = rows;
+  const cache = new ChatCatalogCache(new CacheDatabase("/nonexistent-codexm-fixture"), async () => ({
+    revision: String(++revision), meta, rows: nativeRows,
+  }));
+  const first = await cache.read({ limit: 1 });
+  nativeRows = rows.map((row, index) => ({
+    ...row, thread: { ...row.thread, name: index === 0 ? "renamed in the native catalog" : "" },
+  }));
+  const refresh = cache.refresh();
+  assert.equal(cache.refresh(), refresh);
+  assert.deepEqual(await cache.read({ limit: 1 }), first);
+  t.mock.timers.tick(11_999);
+  assert.equal(revision, 1);
+  t.mock.timers.tick(1);
+  await refresh;
+  assert.equal(revision, 2);
+  assert.equal((await cache.read({ limit: 1 })).threads[0].name, "renamed in the native catalog");
+});

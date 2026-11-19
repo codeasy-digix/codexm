@@ -42,6 +42,8 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
   const [notice, setNotice] = useState("");
   const inFlight = useRef(false);
   const locked = busy || pending || uncertain;
+  const head = items.find(item => item.state !== "held");
+  const next = !head?.state || head.state === "pending" ? head : undefined;
   const queued = draft?.kind === "editing" ? items.find(item => item.id === draft.id) : undefined;
   const changed = draft?.kind === "editing" && (!queued || editableText(queued) !== draft.original);
 
@@ -116,14 +118,17 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
   return <>
     {items.length > 0 && <details className="queue-preview">
       <summary><strong>대기 중인 입력 {items.length}개</strong>
-        <span className="queue-next" title={inputText(items[0].input)}>{inputText(items[0].input)}</span></summary>
+        {next
+          ? <span className="queue-next" title={inputText(next.input)}>{inputText(next.input)}</span>
+          : <span className="queue-next">{head?.state === "sending" ? "전송 결과 확인 필요" : "실행 보류"}</span>}
+      </summary>
       <ul className="queue-entries">
-        {items.map((item, index) => {
+        {items.map(item => {
           const original = editableText(item);
           const selected = draft?.kind === "editing" && draft.id === item.id;
           return <li key={item.id} className="queue-entry">
             <div className="queue-entry-meta">
-              <span>{item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" || item.state === "held" ? "실행 보류" : index === 0 ? "다음 입력" : "대기 중"}</span>
+              <span>{item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" || item.state === "held" ? "실행 보류" : item.id === next?.id ? "다음 입력" : "대기 중"}</span>
               {item.account && <small>{item.account === "default" ? "기본 계정" : item.account}</small>}
               {item.goal && <small>/goal</small>}
               {item.skills?.map(skill => <small key={skill.id}>{skill.name}</small>)}

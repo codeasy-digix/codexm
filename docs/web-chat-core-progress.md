@@ -79,6 +79,11 @@ Playwright 브라우저가 준비돼 있어야 한다. 설치된 Chrome을 쓸 �
 `CODEXM_BROWSER_CHANNEL=chrome`을 지정한다. 실행기는 합성 계정/이력의 일시적인
 OS 사용자 서비스를 쓰고 검사 후 등록을 제거한다. 결과·스크린샷은 Git 밖에 남는다.
 
+`CODEXM_WEB_TEST_MODE=catalog`과 `--mongod /absolute/mongod`를 지정하면 공식 런타임에서
+채팅 제목을 바꾼 뒤 로그인, 채팅 진입, 브라우저 종료 후 주기 갱신을 검사한다.
+로그인과 채팅 진입 시에는 이전 목록이 바로 열리고, 갱신한 제목이 웹과 MongoDB에
+반영되는지 확인한다.
+
 ## 한도 0% 인계 재현
 
 같은 실행기에 환경 변수 `CODEXM_WEB_TEST_MODE=quota`와

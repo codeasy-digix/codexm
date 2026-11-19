@@ -8,6 +8,7 @@ type IndexPage = { revision: string; rows: Row[]; meta?: Metadata; nextCursor?: 
 type Manifest = { _id: "current"; generation: string; meta: Metadata; pages: number; digest: string };
 type Chunk = { _id: string; generation: string; index: number; rows: Row[] };
 type Index = { meta: Metadata; rows: Row[]; pinned: ChatThread[]; digest: string };
+const refreshCooldownMs = 12_000;
 
 function assemble(meta: Metadata, chunks: Row[][], digest: string): Index {
   const rows = chunks.flat();
@@ -60,6 +61,7 @@ export class ChatCatalogCache {
   private hydration?: Promise<void>;
   private inFlight?: Promise<void>;
   private followUp?: Promise<void>;
+  private deferredRefresh?: Promise<void>;
   private writes = Promise.resolve();
   private savedDigest = "";
   private attemptedAt = 0;
@@ -94,7 +96,17 @@ export class ChatCatalogCache {
         return this.refresh(true);
       });
     }
-    if (!force && this.index && Date.now() - this.attemptedAt < 12_000) return Promise.resolve();
+    const delay = this.attemptedAt + refreshCooldownMs - Date.now();
+    if (!force && this.index && delay > 0) {
+      // A browser can enter just after a capture. Coalesce its request into
+      // a trailing refresh so fresh native changes still reach that browser.
+      return this.deferredRefresh ??= new Promise<void>((resolve, reject) => {
+        setTimeout(() => {
+          this.deferredRefresh = undefined;
+          this.refresh().then(resolve, reject);
+        }, delay).unref();
+      });
+    }
     this.attemptedAt = Date.now();
     this.inFlight = this.capture().finally(() => { this.inFlight = undefined; });
     return this.inFlight;

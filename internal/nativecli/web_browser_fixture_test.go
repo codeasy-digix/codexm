@@ -156,11 +156,29 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	foreignReleased, progressReleased, catchupSaved, relayAccepted := false, false, false, false
+	catalogSteps := []struct{ event, title string }{
+		{"login", "원본에서 갱신한 목록 · 접속"},
+		{"open", "원본에서 갱신한 목록 · 채팅 진입"},
+		{"periodic", "원본에서 갱신한 목록 · 주기"},
+	}
+	catalogStep := 0
 	for {
 		select {
 		case <-f.ctx.Done():
 			t.Fatal("browser fixture timed out")
 		case <-ticker.C:
+			if catalogStep < len(catalogSteps) {
+				step := catalogSteps[catalogStep]
+				if _, err := os.Stat(filepath.Join(output, "rename-catalog-"+step.event)); err == nil {
+					if err := f.client.Call(f.ctx, "thread/name/set", map[string]any{"threadId": catchup, "name": step.title}, nil); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(output, "catalog-renamed-"+step.event), nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+					catalogStep++
+				}
+			}
 			if _, err := os.Stat(filepath.Join(output, "accept-synthetic-relay")); err == nil && !relayAccepted {
 				// Simulate the GUI tool's successful acknowledgement only.
 				// The persisted receipt and web history are read by the real bridge.

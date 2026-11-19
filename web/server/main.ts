@@ -222,6 +222,7 @@ Meteor.methods({
   },
   "codexm.refreshCatalog"() {
     owner(this.connection?.id);
+    this.unblock();
     return catalogCache.refresh().catch(() => {});
   },
   async "codexm.cachedHistory"(params: Record<string, unknown>) {
