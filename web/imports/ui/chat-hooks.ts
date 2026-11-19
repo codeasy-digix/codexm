@@ -77,14 +77,14 @@ export function useChatModels(enabled: boolean, account: string, generation?: nu
   };
 }
 
-export function useCatalog(ready:boolean,account:string,search:string,project:string,archived:boolean) {
+export function useCatalog(ready:boolean,search:string,project:string,archived:boolean,openThread:string) {
   const [catalog,setCatalog]=useState<Catalog>(),[error,setError]=useState(""),[loading,setLoading]=useState(false);
   const generation=useRef(0),busy=useRef(false),visibleCount=useRef(50);
   const refresh=useCallback(async(cursor?:string|null,reset=false)=>{
     const epoch=generation.current;
     if (!ready||busy.current) return;
     busy.current=true;setLoading(true);
-    try {const params={account,search,project_id:project,archived};
+    try {const params={search,project_id:project,archived};
       let page=await call<Catalog>("web.catalog",{...params,...(cursor?{cursor}:{})});
       // Refresh every page already on screen. Retaining an old tail made
       // GUI-archived/deleted/moved chats linger until the browser was reloaded.
@@ -103,7 +103,17 @@ export function useCatalog(ready:boolean,account:string,search:string,project:st
         return next;
       });setError("");
     }catch(e){if(epoch===generation.current)setError((e as Error).message);}finally{if(epoch===generation.current){busy.current=false;setLoading(false);}}
-  },[ready,account,search,project,archived]);
+  },[ready,search,project,archived]);
+  const refreshList = useRef(refresh);
+  refreshList.current = refresh;
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    void method("codexm.refreshCatalog", []).then(() => {
+      if (!cancelled) void refreshList.current();
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [ready, openThread]);
   useEffect(()=>{
     generation.current++;busy.current=false;visibleCount.current=50;
     setCatalog(previous=>ready&&previous?{...previous,threads:[],nextCursor:undefined}:undefined);

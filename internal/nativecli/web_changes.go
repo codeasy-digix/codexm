@@ -97,6 +97,20 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 	if w.webOnly && r.Method == "web.interrupt" {
 		return w.interruptWebThread(ctx, p)
 	}
+	if w.webOnly && (r.Method == "web.archive" || r.Method == "web.delete" || r.Method == "web.move") {
+		pids, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
+		if err != nil {
+			return nil, err
+		}
+		if len(pids) == 1 && pids[0] != c.process.PID {
+			owner, err := w.openInputOwner(ctx, p.Thread, pids[0])
+			if err != nil {
+				return nil, errWebOtherOwner
+			}
+			defer owner.release()
+			c = owner.web
+		}
+	}
 	if err := w.verifyOwner(ctx, c, p.Thread, false); err != nil {
 		return nil, err
 	}
@@ -209,8 +223,8 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 	if w.c.Runtime.WebGUIRelay != "" && strings.EqualFold(p.Thread, w.c.Runtime.WebGUIRelay) {
 		return nil, errors.New("이 채팅은 GUI 메시지 중계 전용입니다.")
 	}
-	if strings.TrimSpace(p.Text) == "" {
-		return nil, errors.New("enter a message")
+	if err := normalizeWebPrompt(&p); err != nil {
+		return nil, err
 	}
 	if p.Mode != "immediate" && p.Mode != "steer" && p.Mode != "queue" {
 		return nil, errors.New("choose immediate or queue delivery")
@@ -222,6 +236,9 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 	}
 	if w.webOnly {
 		return w.sendWebOnly(ctx, c, r, p)
+	}
+	if p.Goal || len(p.SkillIDs) > 0 {
+		return nil, errors.New("이 입력은 웹 전용 연결에서 실행할 수 있습니다.")
 	}
 	owners, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
 	if p.Mode == "queue" {
@@ -254,7 +271,7 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 }
 
 func (w *WebChat) startWebTurn(ctx context.Context, owner *webInputOwner, selected *webConnection, r Request, p webParams) (any, error) {
-	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
+	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": promptInput(p)}
 	if owner.web != nil && sameWebLogin(owner.web, selected) && (p.Model != "" || p.Effort != "") {
 		if p.Model == "" {
 			return nil, errors.New("effort를 적용할 모델을 선택해 주세요.")
@@ -362,7 +379,7 @@ func steerWebTurn(ctx context.Context, client *cr.Client, r Request, p webParams
 	var reply struct{ TurnID string }
 	// Bind the official RPC to the running turn observed now, independently of
 	// the turn that was visible in the browser when the user began typing.
-	args := map[string]any{"threadId": p.Thread, "expectedTurnId": activeTurn, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
+	args := map[string]any{"threadId": p.Thread, "expectedTurnId": activeTurn, "clientUserMessageId": r.Operation, "input": promptInput(p)}
 	if err := callWebInput(ctx, client, "turn/steer", args, &reply); err != nil {
 		return nil, err
 	}

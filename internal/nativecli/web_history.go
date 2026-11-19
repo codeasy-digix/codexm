@@ -312,6 +312,13 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	if w.webOnly {
 		result["webOnly"], result["executionAccount"] = true, executionAccount
 	}
+	if w.webOnly && p.Cursor == "" {
+		check, cancel := context.WithTimeout(ctx, time.Second)
+		if goal, err := c.client.Goal(check, p.Thread); err == nil {
+			result["goal"] = goal
+		}
+		cancel()
+	}
 	if p.Cursor == "" {
 		result["relayedInputs"] = webRelayedInputs(w.c, p.Thread)
 	}

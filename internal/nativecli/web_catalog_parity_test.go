@@ -168,3 +168,28 @@ func TestWebCatalogRejectsCursorForAnotherViewAndCorruptMetadata(t *testing.T) {
 		t.Fatal("corrupt GUI state became empty success")
 	}
 }
+
+func TestWebCatalogUsesNativeRecentActivity(t *testing.T) {
+	w, home := desktopCatalogFixture(t)
+	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const id = "10000000-0000-4000-8000-000000000000"
+	if _, err = db.Exec(`ALTER TABLE threads ADD COLUMN recency_at_ms INTEGER;
+ UPDATE threads SET recency_at_ms = 1800000000245 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	page := parityPage(t, w, webParams{Limit: 1})
+	if first := page["threads"].([]WebThread)[0]; first.ID != id {
+		t.Fatalf("recently used chat must lead the list, got %s", first.ID)
+	}
+	index, err := w.readCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := index.rows[0]; first.Thread.ID != id || first.At != 1800000000245 {
+		t.Fatalf("cached catalog lost native recency, got %#v", first)
+	}
+}

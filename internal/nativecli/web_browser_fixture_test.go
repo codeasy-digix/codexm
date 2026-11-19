@@ -38,6 +38,15 @@ func TestWebChatBrowserFixture(t *testing.T) {
 		"```rust\nfn main() { println!(\"CodexM\"); }\n```\n\n<script>window.__unsafe = true</script>"
 	f.commandFixture = true
 	f.mu.Unlock()
+	for _, dir := range []string{"browse-target", filepath.Join(".agents", "skills", "fixture-proof")} {
+		if err := os.MkdirAll(filepath.Join(f.cmd.Dir, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(f.cmd.Dir, ".agents", "skills", "fixture-proof", "SKILL.md"),
+		[]byte("---\nname: fixture-proof\ndescription: Verify the fixture's skills menu.\n---\n\nSKILL_FIXTURE_BODY\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	var project struct{ Project struct{ ID string } }
 	if err := f.client.Call(f.ctx, "project/create", map[string]any{"name": "브라우저 테스트 프로젝트", "roots": []map[string]string{{"path": f.cmd.Dir}}, "idempotencyKey": "00000000-0000-4000-8000-000000000061"}, &project); err != nil {
 		t.Fatal(err)

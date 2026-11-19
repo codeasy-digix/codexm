@@ -58,14 +58,20 @@ func (w *WebChat) sendWebOnly(ctx context.Context, target *webConnection, r Requ
 			return nil, err
 		}
 	}
+	if err := w.preparePrompt(ctx, target, &p); err != nil {
+		return nil, err
+	}
 	if p.Mode == "queue" {
 		return w.enqueueWebInput(ctx, target, r, p)
 	}
-	owner, err := w.acquireWebChat(ctx, target, p.Thread, automatic, automatic)
+	owner, err := w.acquireWebChat(ctx, target, p.Thread, automatic, automatic, goalObjective(p.Text, p.Goal))
 	if err != nil {
 		return nil, err
 	}
 	defer owner.release()
+	if p.Goal {
+		return w.deliverGoal(ctx, owner, target, r, p)
+	}
 	return w.deliverWebInput(ctx, owner, target, r, p)
 }
 
@@ -116,7 +122,7 @@ func (w *WebChat) webDraftAccount(ctx context.Context, target *webConnection, id
 
 // The selected thread can be released without stopping a shared app-server.
 // Only a web-owned stdio connection can be used for this operation.
-func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id string, prepare, interrupt bool) (*webInputOwner, error) {
+func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id string, prepare, interrupt bool, objective string) (*webInputOwner, error) {
 	pids, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), id)
 	if err != nil {
 		return nil, err
@@ -140,6 +146,11 @@ func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id 
 		}
 		if err := w.verifyLogin(ctx, target); err != nil {
 			return nil, err
+		}
+		if objective != "" {
+			if _, err := readGoalForChange(ctx, source.client, id, objective); err != nil {
+				return nil, err
+			}
 		}
 		if err := w.releaseWebChat(ctx, source, id, interrupt && !same); err != nil {
 			return nil, err

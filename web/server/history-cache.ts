@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
-import { join } from "node:path";
-import { MongoClient, type Collection } from "mongodb";
+import type { Collection } from "mongodb";
 import { chatIdFromPath, type ChatHistory, type ChatHistoryPage } from "../imports/contracts/web";
+import type { CacheDatabase } from "./cache-database";
 
 type PageKey = { id: string; thread: string };
 type CachedPage = {
@@ -33,8 +32,6 @@ function pageKey(params: Record<string, unknown>): PageKey | undefined {
 }
 
 export class ChatHistoryCache {
-  private readonly directory: string;
-  private client?: MongoClient;
   private collection?: Collection<CachedPage>;
   private progress?: Collection<SavedProgress>;
   private indexes?: Promise<unknown>;
@@ -43,28 +40,13 @@ export class ChatHistoryCache {
   private scanning = false;
   private lastThread = "";
 
-  constructor(state: string) {
-    this.directory = join(state, "history-cache");
-  }
+  constructor(private readonly database: CacheDatabase) {}
 
   private pages() {
     if (Date.now() < this.retryAfter) return;
     if (this.collection) return this.collection;
-    let socket: string;
-    try {
-      const path = realpathSync(this.directory);
-      const directory = lstatSync(path);
-      socket = join(path, "mongodb.sock");
-      const endpoint = lstatSync(socket);
-      const uid = process.getuid?.();
-      if (!directory.isDirectory() || !endpoint.isSocket() || directory.uid !== uid ||
-        endpoint.uid !== uid || (directory.mode & 0o077) !== 0) return;
-    } catch { return; }
-    this.client = new MongoClient("mongodb://" + encodeURIComponent(socket) + "/codexm", {
-      directConnection: true, serverSelectionTimeoutMS: 250, connectTimeoutMS: 250,
-      socketTimeoutMS: 500, maxPoolSize: 4, waitQueueTimeoutMS: 250, retryReads: false, retryWrites: false,
-    });
-    const db = this.client.db();
+    const db = this.database.get();
+    if (!db) return;
     this.progress = db.collection<SavedProgress>("history_progress_v1");
     return this.collection = db.collection<CachedPage>("history_pages_v1");
   }
@@ -205,5 +187,4 @@ export class ChatHistoryCache {
     });
   }
 
-  async close() { await this.client?.close(); }
 }

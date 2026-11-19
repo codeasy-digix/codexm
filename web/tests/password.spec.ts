@@ -21,6 +21,9 @@ test("HTTPS login denies anonymous/incorrect/foreign-origin requests and uses a 
   await expect(page.getByLabel("채팅 검색")).toBeVisible();
   const cookie = (await context.cookies()).find(c => c.name === "codexm_session")!;
   expect(cookie.httpOnly).toBe(true); expect(cookie.secure).toBe(true); expect(cookie.sameSite).toBe("Strict");
-  await page.getByRole("button", { name: "로그아웃", exact: true }).click();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const settings = page.getByRole("dialog", { name: "설정", exact: true });
+  await settings.getByRole("button", { name: "계정 관리", exact: true }).click();
+  await settings.getByRole("button", { name: "로그아웃", exact: true }).click();
   await expect(page.getByLabel("채팅 검색")).toHaveCount(0);
 });

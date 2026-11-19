@@ -19,12 +19,14 @@ import (
 // A native queue can be consumed by whichever account loads the chat. Keep
 // web-only submissions private until the intended account can start them.
 type webQueuedInput struct {
-	ID       string `json:"id"`
-	Text     string `json:"text"`
-	Account  string `json:"account"`
-	Identity string `json:"identity"`
-	State    string `json:"state"`
-	Detail   string `json:"detail,omitempty"`
+	ID       string     `json:"id"`
+	Text     string     `json:"text"`
+	Account  string     `json:"account"`
+	Identity string     `json:"identity"`
+	State    string     `json:"state"`
+	Detail   string     `json:"detail,omitempty"`
+	Skills   []webSkill `json:"skills,omitempty"`
+	Goal     bool       `json:"goal,omitempty"`
 }
 
 const webQueueID = "web-"
@@ -101,14 +103,14 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 		}
 	}
 	queued := webQueuedInput{ID: webQueueID + r.Operation, Text: p.Text, Account: account,
-		Identity: queueLoginKey(target), State: "pending"}
+		Identity: queueLoginKey(target), State: "pending", Skills: p.selectedSkills, Goal: p.Goal}
 	q = append(q, queued)
 	if err := w.saveOwnedQueue(p.Thread, q); err != nil {
 		return nil, err
 	}
 	// The user's current submit can interrupt an old account. An automatic
 	// dispatch after a browser/service disconnect never interrupts a turn.
-	owner, err := w.acquireWebChat(ctx, target, p.Thread, true, true)
+	owner, err := w.acquireWebChat(ctx, target, p.Thread, true, true, goalObjective(p.Text, p.Goal))
 	if err == nil {
 		defer owner.release()
 		if len(q) == 1 {
@@ -190,7 +192,7 @@ func (w *WebChat) advanceOwnedQueue(ctx context.Context, id string) error {
 	if err := w.verifyLogin(ctx, target); err != nil {
 		return w.noteQueueWait(id, q, 0, err)
 	}
-	owner, err := w.acquireWebChat(ctx, target, id, true, false)
+	owner, err := w.acquireWebChat(ctx, target, id, true, false, goalObjective(q[0].Text, q[0].Goal))
 	if err != nil {
 		return w.noteQueueWait(id, q, 0, err)
 	}
@@ -225,12 +227,23 @@ func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id
 	if err := w.verifyInputOwner(ctx, owner, id, true); err != nil {
 		return w.noteQueueWait(id, q, 0, err)
 	}
+	p := webParams{Thread: id, Text: next.Text, Goal: next.Goal, Mode: "immediate"}
+	for _, skill := range next.Skills {
+		p.SkillIDs = append(p.SkillIDs, skill.ID)
+	}
+	if err := w.preparePrompt(ctx, owner.web, &p); err != nil {
+		return w.noteQueueWait(id, q, 0, err)
+	}
 	next.State, next.Detail = "sending", ""
 	if err := w.saveOwnedQueue(id, q); err != nil {
 		return err
 	}
 	r := Request{Operation: strings.TrimPrefix(next.ID, webQueueID)}
-	_, err = w.startWebTurn(ctx, owner, owner.web, r, webParams{Thread: id, Text: next.Text})
+	if p.Goal {
+		_, err = w.deliverGoal(ctx, owner, owner.web, r, p)
+	} else {
+		_, err = w.startWebTurn(ctx, owner, owner.web, r, p)
+	}
 	if err != nil {
 		if errors.Is(err, errWebInputUnconfirmed) {
 			next.Detail = "전송 결과를 확인하지 못했습니다. 채팅을 확인해 주세요."
@@ -273,7 +286,8 @@ func (w *WebChat) ownedQueueDisplay(id string) ([]json.RawMessage, error) {
 	}
 	items := make([]json.RawMessage, 0, len(q))
 	for _, input := range q {
-		b, err := json.Marshal(map[string]any{"id": input.ID, "input": cr.TextInput(input.Text), "account": input.Account, "state": input.State, "detail": input.Detail})
+		b, err := json.Marshal(map[string]any{"id": input.ID, "input": cr.TextInput(input.Text), "account": input.Account,
+			"state": input.State, "detail": input.Detail, "skills": input.Skills, "goal": input.Goal})
 		if err != nil {
 			return nil, err
 		}
@@ -302,10 +316,11 @@ func (w *WebChat) changeOwnedQueue(method string, p webParams) (any, error) {
 		if q[index].State == "sending" {
 			return nil, errWebQueueUncertain
 		}
-		if strings.TrimSpace(p.Text) == "" {
-			return nil, errors.New("대기 메시지를 입력해 주세요.")
+		p.Goal = q[index].Goal
+		if err := normalizeWebPrompt(&p); err != nil {
+			return nil, err
 		}
-		q[index].Text, q[index].State, q[index].Detail = p.Text, "pending", ""
+		q[index].Text, q[index].State, q[index].Detail, q[index].Goal = p.Text, "pending", "", p.Goal
 		result["updated"] = true
 	}
 	return result, w.saveOwnedQueue(p.Thread, q)

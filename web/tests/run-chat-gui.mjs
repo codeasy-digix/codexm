@@ -10,7 +10,8 @@ import { MongoClient } from "mongodb";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = dirname(root);
-const webOnly = process.env.CODEXM_WEB_TEST_MODE === "web-only";
+const mode = process.env.CODEXM_WEB_TEST_MODE;
+const webOnly = mode === "web-only" || mode === "workspace";
 const args = process.argv.slice(2);
 const options = {};
 for (let i = 0; i < args.length; i += 2) {
@@ -120,8 +121,8 @@ try {
     await new Promise(ok => setTimeout(ok, 500));
   }
   if (!webReady) throw new Error("isolated web service did not become ready");
-  const suite = webOnly ? "tests/web-only.spec.ts" : "tests/chat-gui.spec.ts";
-  await run(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", suite], {
+  const suite = mode === "workspace" ? "tests/workspace.spec.ts" : webOnly ? "tests/web-only.spec.ts" : "tests/chat-gui.spec.ts";
+  await run(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", suite, "--output", join(output, "test-results")], {
     ...process.env, CODEXM_CHAT_GUI_FIXTURE: fixtureDir, CODEXM_CHAT_GUI_BINARY: options.binary,
     CODEXM_WEB_TEST_URL: url, CODEXM_WEB_TEST_MONGO: options.mongod ? "1" : "",
   }, root).done;

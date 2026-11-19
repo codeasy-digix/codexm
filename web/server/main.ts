@@ -8,6 +8,8 @@ import { LocalAuth, LoginError } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
 import { ChatPush } from "./push";
 import { ChatHistoryCache } from "./history-cache";
+import { CacheDatabase } from "./cache-database";
+import { ChatCatalogCache } from "./catalog-cache";
 import { bridgeContract } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
@@ -22,7 +24,9 @@ const bridge = new BridgeClient(
   process.env.CODEXM_BINARY || "",
   process.env.CODEXM_CONFIG || "",
 );
-const historyCache = new ChatHistoryCache(state);
+const database = new CacheDatabase(state);
+const historyCache = new ChatHistoryCache(database);
+const catalogCache = new ChatCatalogCache(database, cursor => bridge.call("web.catalogIndex", { cursor }));
 const pushes = (() => {
   try {
     return new ChatPush(state, auth.secure ? origin : "mailto:support@digix.kr", () => auth.notificationScope(),
@@ -34,7 +38,14 @@ const pushes = (() => {
 })();
 const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
-const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage", "web.dispatchQueued"]);
+const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage",
+  "web.dispatchQueued", "web.catalogIndex"]);
+const catalogMutations = new Set(["web.pin", "web.move", "web.archive", "web.delete", "web.projectCreate",
+  "accounts.remove", "accounts.setDefault"]);
+// The bridge bounds sign-in attempts. Keep a matching in-memory record so
+// polling the same completed login invalidates the catalog only once.
+const catalogLogins = new Set<string>();
+let catalogAfterSend: ReturnType<typeof setTimeout> | undefined;
 let capabilities: any;
 const owner = (id?: string) => {
   try {
@@ -204,6 +215,10 @@ Meteor.methods({
       throw new Meteor.Error("authentication_required");
     }
   },
+  "codexm.refreshCatalog"() {
+    owner(this.connection?.id);
+    return catalogCache.refresh().catch(() => {});
+  },
   async "codexm.cachedHistory"(params: Record<string, unknown>) {
     const browser = owner(this.connection?.id);
     if (!params || typeof params !== "object" || Array.isArray(params))
@@ -233,6 +248,7 @@ Meteor.methods({
     if (spec.mutation && !/^[A-Za-z0-9_-]{16,128}$/.test(operation))
       throw new Meteor.Error("invalid_input", "요청 ID가 필요합니다.");
     try {
+      if (method === "web.catalog") return await catalogCache.read(params);
       if (method === "web.history") {
         return await historyCache.read(params, revision => bridge.call(method, { ...params, history_revision: revision }, browser));
       }
@@ -245,6 +261,19 @@ Meteor.methods({
       );
       if (method === "web.delete" && result?.deleted === true && typeof result.thread_id === "string") {
         await historyCache.deleted(result.thread_id);
+      }
+      if (catalogMutations.has(method)) await catalogCache.refresh(true).catch(() => {});
+      else if (method === "login.status" && result?.status === "succeeded" && typeof result.login_id === "string" &&
+          !catalogLogins.has(result.login_id)) {
+        catalogLogins.add(result.login_id);
+        void catalogCache.refresh(true).catch(() => catalogLogins.delete(result.login_id));
+      } else if (method === "web.send" && !catalogAfterSend) {
+        // New chats enter the native index after the first turn is persisted.
+        // Coalesce sends and leave that write off the request's critical path.
+        catalogAfterSend = setTimeout(() => {
+          catalogAfterSend = undefined;
+          void catalogCache.refresh(true).catch(() => {});
+        }, 1000).unref();
       }
       return result;
     } catch (error) {
@@ -329,6 +358,9 @@ Meteor.startup(async () => {
   if (pushes) setInterval(() => {
     void pushes.poll().catch(() => { /* Poll again after a temporary read failure. */ });
   }, 5000).unref();
+  const refreshCatalog = () => { void catalogCache.refresh().catch(() => {}); };
+  refreshCatalog();
+  setInterval(refreshCatalog, 60_000).unref();
   if (process.env.CODEXM_WEB_ONLY === "true") {
     const deliverQueuedInput = async () => {
       await bridge.call("web.dispatchQueued").catch(() => { /* Pending requests remain durable. */ });
@@ -355,5 +387,5 @@ process.on("exit", () => bridge.close());
 for (const signal of ["SIGTERM", "SIGINT"] as const)
   process.once(signal, async () => {
     bridge.close();
-    await historyCache.close().finally(() => process.exit(0));
+    await database.close().finally(() => process.exit(0));
   });

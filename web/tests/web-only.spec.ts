@@ -46,7 +46,7 @@ test("an account change only takes effect when a chat input is submitted", async
   await input.fill("등록한 계정으로만 실행할 대기 입력");
   await input.press("Meta+Enter");
   await expect(page.getByText("second-browser-login 계정의 입력을 큐에 추가했습니다.")).toBeVisible();
-  await page.getByText(/대기 중인 입력 1개/).click();
+  await page.locator(".queue-preview summary").click();
   await expect(page.locator(".queue-entry")).toContainText("second-browser-login");
   await page.locator(".queue-entry").getByRole("button", { name: "수정", exact: true }).click();
   await page.getByLabel("대기 메시지 수정").fill("편집 후 대기한 입력");

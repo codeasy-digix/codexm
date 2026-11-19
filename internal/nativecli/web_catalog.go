@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/catalog"
@@ -176,11 +178,29 @@ func (w *WebChat) thread(ctx context.Context, id string) (*WebThread, error) {
 	return &t, nil
 }
 
-func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (any, error) {
-	limit, err := webPageLimit(p.Limit, 100, 50)
-	if err != nil {
-		return nil, err
-	}
+type webCatalogRow struct {
+	Thread        WebThread `json:"thread"`
+	At            int64     `json:"at"`
+	NativeProject string    `json:"nativeProject,omitempty"`
+	Position      int64     `json:"position"`
+}
+
+type webCatalogMetadata struct {
+	Projects         []WebProject `json:"projects"`
+	OtherProjects    []WebProject `json:"otherProjects"`
+	Accounts         []Account    `json:"accounts"`
+	DefaultAccount   string       `json:"defaultAccount"`
+	DefaultCwd       string       `json:"defaultCwd"`
+	GUIQuitAvailable bool         `json:"guiQuitAvailable"`
+}
+
+type webCatalogExport struct {
+	revision string
+	rows     []webCatalogRow
+	meta     webCatalogMetadata
+}
+
+func (w *WebChat) readCatalog(ctx context.Context) (*webCatalogExport, error) {
 	home := config.Expand(w.c.Runtime.SharedCodexHome)
 	list, err := List(ctx, w.c)
 	if err != nil {
@@ -194,58 +214,98 @@ func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (a
 	if err != nil {
 		return nil, err
 	}
-	// Use one complete read-only native index, independent of the selected login.
-	// Official recency cursors can stall on older paginated rows; never scan and
-	// repair rollouts, resume a chat, or interpret a failed page as an empty list.
-	type item struct {
-		thread   WebThread
-		at       int64
-		position int64
-	}
-	items := []item{}
-	pins := []item{}
-	search := strings.ToLower(strings.TrimSpace(p.Search))
+	// Use one complete native index, independent of the selected login. UpdatedAt
+	// includes native recency when available, and falls back to modification time.
+	rows := make([]webCatalogRow, 0, len(list.Sessions))
 	for _, e := range list.Sessions {
 		if e.Source == "subagent" || e.AttachedParent != "" {
 			continue
 		}
-		pinned := desktop.IsPinned(e)
-		if !pinned && ((e.EmptyDraft() && desktop.Titles[e.ID] == "") || (e.Source != "cli" && e.Source != "vscode")) {
+		if !desktop.IsPinned(e) && ((e.EmptyDraft() && desktop.Titles[e.ID] == "") || (e.Source != "cli" && e.Source != "vscode")) {
 			continue
 		}
-		t := catalogWebThread(e, desktop, prefs)
-		at := e.ModifiedAt
-		if desktop.ChatSort == "created_at" {
-			at = e.CreatedAt
-		}
-		if desktop.ChatSort == "recency_at" {
-			at = e.UpdatedAt
-		}
-		i := item{t, at, e.SectionPosition}
-		if t.Pinned && !t.Archived {
-			pins = append(pins, i)
-		}
-		if t.Archived != p.Archived || (p.Project != "" && t.Project != p.Project && e.ProjectID != p.Project) || (p.Cwd != "" && t.Cwd != p.Cwd) {
-			continue
-		}
-		if search != "" && !strings.Contains(strings.ToLower(t.Name+" "+t.Preview), search) {
-			continue
-		}
-		items = append(items, i)
+		rows = append(rows, webCatalogRow{Thread: catalogWebThread(e, desktop, prefs),
+			At: e.UpdatedAt, NativeProject: e.ProjectID, Position: e.SectionPosition})
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].at != items[j].at {
-			return items[i].at > items[j].at
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].At != rows[j].At {
+			return rows[i].At > rows[j].At
 		}
-		return items[i].thread.ID < items[j].thread.ID
+		return rows[i].Thread.ID < rows[j].Thread.ID
 	})
+	accountList, err := Accounts(w.c)
+	if err != nil {
+		return nil, err
+	}
+	meta := webCatalogMetadata{Projects: desktop.Projects, OtherProjects: desktop.AdditionalProjects,
+		Accounts: accountList, DefaultAccount: webDefaultAccount(w.c, accountList),
+		GUIQuitAvailable: !w.webOnly && runtime.GOOS == "darwin", DefaultCwd: webDefaultCwd()}
+	return &webCatalogExport{revision: strconv.FormatInt(time.Now().UnixNano(), 36), rows: rows, meta: meta}, nil
+}
+
+// Capture a consistent list once, then send bounded batches over the serial
+// bridge. No browser query or account choice influences this cached snapshot.
+func (w *WebChat) catalogIndex(ctx context.Context, p webParams) (any, error) {
+	start := 0
+	if p.Cursor == "" {
+		index, err := w.readCatalog(ctx)
+		if err != nil {
+			return nil, err
+		}
+		w.catalogExport = index
+	} else {
+		revision, offset, ok := strings.Cut(p.Cursor, ".")
+		n, err := strconv.Atoi(offset)
+		if !ok || err != nil || w.catalogExport == nil || revision != w.catalogExport.revision ||
+			n <= 0 || n >= len(w.catalogExport.rows) {
+			return nil, errors.New("catalog export cursor expired")
+		}
+		start = n
+	}
+	index := w.catalogExport
+	end := min(start+200, len(index.rows))
+	result := map[string]any{"revision": index.revision, "rows": index.rows[start:end]}
+	if start == 0 {
+		result["meta"] = index.meta
+	}
+	if end < len(index.rows) {
+		result["nextCursor"] = index.revision + "." + strconv.Itoa(end)
+	} else {
+		w.catalogExport = nil
+	}
+	return result, nil
+}
+
+func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (any, error) {
+	limit, err := webPageLimit(p.Limit, 100, 50)
+	if err != nil {
+		return nil, err
+	}
+	index, err := w.readCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items, pins := []webCatalogRow{}, []webCatalogRow{}
+	search := strings.ToLower(strings.TrimSpace(p.Search))
+	for _, row := range index.rows {
+		t := row.Thread
+		if t.Pinned && !t.Archived {
+			pins = append(pins, row)
+		}
+		if t.Archived != p.Archived || (p.Project != "" && t.Project != p.Project && row.NativeProject != p.Project) || (p.Cwd != "" && t.Cwd != p.Cwd) {
+			continue
+		}
+		if search == "" || strings.Contains(strings.ToLower(t.Name+" "+t.Preview), search) {
+			items = append(items, row)
+		}
+	}
 	sort.SliceStable(pins, func(i, j int) bool {
-		if pins[i].position != pins[j].position {
-			return pins[i].position < pins[j].position
+		if pins[i].Position != pins[j].Position {
+			return pins[i].Position < pins[j].Position
 		}
-		return pins[i].thread.ID < pins[j].thread.ID
+		return pins[i].Thread.ID < pins[j].Thread.ID
 	})
-	key, _ := json.Marshal([]any{p.Project, p.Cwd, p.Search, p.Archived, desktop.ChatSort})
+	key, _ := json.Marshal([]any{p.Project, p.Cwd, p.Search, p.Archived, "recency_at"})
 	query := fmt.Sprintf("%x", sha256.Sum256(key))
 	start := 0
 	if p.Cursor != "" {
@@ -254,39 +314,31 @@ func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (a
 		if e != nil || json.Unmarshal(b, &cursor) != nil || cursor.Version != 1 || cursor.Query != query || !threadID.MatchString(cursor.ID) {
 			return nil, errors.New("catalog cursor does not match this view; refresh the list")
 		}
-		start = len(items)
-		for i, it := range items {
-			if it.at < cursor.At || (it.at == cursor.At && it.thread.ID > cursor.ID) {
-				start = i
-				break
-			}
-		}
+		start = sort.Search(len(items), func(i int) bool {
+			row := items[i]
+			return row.At < cursor.At || (row.At == cursor.At && row.Thread.ID > cursor.ID)
+		})
 	}
 	end := min(start+limit, len(items))
-	threads := []WebThread{}
-	for _, it := range items[start:end] {
-		threads = append(threads, it.thread)
+	threads := make([]WebThread, 0, end-start)
+	for _, row := range items[start:end] {
+		threads = append(threads, row.Thread)
 	}
 	var next *string
 	if end < len(items) {
 		last := items[end-1]
-		b, _ := json.Marshal(webCatalogCursor{1, query, last.at, last.thread.ID})
+		b, _ := json.Marshal(webCatalogCursor{1, query, last.At, last.Thread.ID})
 		s := base64.RawURLEncoding.EncodeToString(b)
 		next = &s
 	}
-	pinned := []WebThread{}
-	for _, it := range pins {
-		pinned = append(pinned, it.thread)
+	pinned := make([]WebThread, 0, len(pins))
+	for _, row := range pins {
+		pinned = append(pinned, row.Thread)
 	}
-	accountList, err := Accounts(w.c)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"threads": threads, "nextCursor": next, "projects": desktop.Projects, "otherProjects": desktop.AdditionalProjects,
-		"pinned": pinned, "accounts": accountList, "defaultAccount": webDefaultAccount(w.c, accountList),
-		"guiQuitAvailable": !w.webOnly && runtime.GOOS == "darwin", "defaultCwd": webDefaultCwd(), "total": len(items),
-	}, nil
+	return map[string]any{"threads": threads, "pinned": pinned, "nextCursor": next, "total": len(items),
+		"projects": index.meta.Projects, "otherProjects": index.meta.OtherProjects, "accounts": index.meta.Accounts,
+		"defaultAccount": index.meta.DefaultAccount, "defaultCwd": index.meta.DefaultCwd,
+		"guiQuitAvailable": index.meta.GUIQuitAvailable}, nil
 }
 
 func webDefaultAccount(c config.Config, registered []Account) string {

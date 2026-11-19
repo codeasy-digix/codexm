@@ -1,26 +1,31 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { authenticate, call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
+import { authenticate, call, exchange, login, useAccess, useStateData } from "../../client/data";
 import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type Catalog, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
 import { AccountLimits } from "./AccountLimits";
-import { Accounts } from "./Accounts";
 import { ChatActivityLabel } from "./ChatActivity";
 import { ChatMessages } from "./ChatMessages";
 import { ChatRequest } from "./ChatRequest";
 import { Composer } from "./Composer";
 import { GUIQuitDialog } from "./GUIQuitDialog";
 import { Modal } from "./Modal";
-import { NotificationSettings } from "./NotificationSettings";
-import { ShortcutSettings } from "./ShortcutSettings";
 import { TurnSettings } from "./TurnSettings";
 import { readChatShortcuts } from "./chat-shortcuts";
 import { useCatalog, useChatActivity, useChatHistory, useChatModels } from "./chat-hooks";
+import { SidebarChat } from "./SidebarChat";
+import { WorkspaceSettings } from "./WorkspaceSettings";
+import { FolderPicker } from "./FolderPicker";
+import { GoalIndicator } from "./GoalIndicator";
+import { useTheme } from "./theme";
 import "./styles/native.css";
+import "./styles/workspace.css";
 
-type Dialog = {kind:"new"|"project"|"accounts"|"settings"|"notifications"|"gui-quit"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
+type Dialog = {kind:"new"|"project"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
 type Section = "chats"|"pinned"|"archived";
 
 export function App() {
   const access=useAccess(),data=useStateData();
+  const [theme, setTheme] = useTheme();
+  const [pinPending, setPinPending] = useState<string[]>([]);
   const ready = access.status === "authenticated";
   const [account,setAccount]=useState("default"),[section,setSection]=useState<Section>("chats"),[project,setProject]=useState("");
   const [path, setPath] = useState(() => location.pathname);
@@ -35,7 +40,7 @@ export function App() {
   const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
   const [formAccount,setFormAccount]=useState("default");
-  const catalogState=useCatalog(ready,account,query,project,section==="archived");
+  const catalogState=useCatalog(ready,query,project,section==="archived",threadId);
   const {catalog}=catalogState;
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
   const selectedProject = projects.find(p => p.id === project);
@@ -155,19 +160,26 @@ export function App() {
       } else if(dialog.kind==="project") {
         const result=await mutate("web.projectCreate",{name:formName,cwd:formPath});filter("chats",result.project.id);setNotice("프로젝트를 추가했습니다.");
       } else if(dialog.kind==="move") {
-        await mutate("web.move",{thread_id:dialog.chat.id,project_id:formProject});setNotice("프로젝트를 옮겼습니다.");void chatState.refresh();
+        await mutate("web.move",{thread_id:dialog.chat.id,project_id:formProject,account:dialog.chat.account || "default"});
+        setNotice("프로젝트를 옮겼습니다.");void chatState.refresh();
       } else if(dialog.kind==="archive") {
-        await mutate("web.archive",{thread_id:dialog.chat.id,archived:!dialog.chat.archived});navigate("",true);setOpened(null);setNotice(dialog.chat.archived?"보관을 해제했습니다.":"채팅을 보관했습니다.");
+        await mutate("web.archive",{thread_id:dialog.chat.id,archived:!dialog.chat.archived,account:dialog.chat.account || "default"});
+        if (dialog.chat.id === selected?.id) { navigate("", true); setOpened(null); }
+        setNotice(dialog.chat.archived?"보관을 해제했습니다.":"채팅을 보관했습니다.");
       } else if(dialog.kind==="delete") {
         await mutate("web.delete",{thread_id:dialog.chat.id});navigate("",true);setOpened(null);setNotice("채팅을 영구 삭제했습니다.");
       }
       setDialog(null);
     }catch(e){setError((e as Error).message);}finally{setFormBusy(false);}
   }
-  async function pin() {
-    if(!chat)return;setMenu(false);
-    try {await mutate("web.pin",{thread_id:chat.id,pinned:!catalog?.pinned.some(t=>t.id===chat.id)});setNotice("고정 상태를 변경했습니다.");}
-    catch(e){setError((e as Error).message);}
+  async function pin(target: ChatThread) {
+    if (pinPending.includes(target.id) || (target.pinned && section !== "pinned")) return;
+    setPinPending(current => [...current, target.id]);
+    try {
+      await mutate("web.pin", { thread_id: target.id, pinned: !target.pinned, account: target.account || "default" });
+      setNotice(target.pinned ? "채팅 고정을 해제했습니다." : "채팅을 고정했습니다.");
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setPinPending(current => current.filter(id => id !== target.id)); }
   }
   async function loadOlder() {
     const node=scroll.current;if(!node||!selected||olderBusy.current||!history?.nextCursor)return;
@@ -202,22 +214,19 @@ export function App() {
         <button aria-label="프로젝트 추가" onClick={() => openDialog({kind:"project"})}>＋</button>
       </div>}
       <div className="list-heading"><span>{section==="pinned"?"고정한 채팅":section==="archived"?"보관된 채팅":project?`${selectedProject?.name || "프로젝트"} 채팅`:"전체 채팅"}</span>{catalogState.loading&&<small>갱신 중</small>}</div>
-      <div className="chat-list" aria-label="채팅 목록">{displayChats.map(t=><a key={t.id} href={chatPath(t.id)} aria-current={selected?.id===t.id ? "page" : undefined} title={chatTitle(t)} onClick={event => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        event.preventDefault();
-        if (selected?.id !== t.id) choose(t);
-        else setSidebar(false);
-      }}>
-        <strong>{chatTitle(t)}</strong>
-        <span className="chat-row-meta"><small>{t.cwd.split("/").filter(Boolean).pop()||t.cwd}</small>
-          {!t.archived && <ChatActivityLabel activity={t.id === selected?.id ? openActivity : activity.threads?.[t.id]} known={activity.writersKnown}/>}
-        </span>
-      </a>)}
+      <div className="chat-list" aria-label="채팅 목록">{displayChats.map(chat =>
+        <SidebarChat key={chat.id} chat={chat} selected={chat.id === threadId} pinnedTab={section === "pinned"}
+          busy={pinPending.includes(chat.id)} known={activity.writersKnown}
+          activity={chat.id === selected?.id ? openActivity : activity.threads?.[chat.id]}
+          onOpen={() => chat.id === selected?.id ? setSidebar(false) : choose(chat)}
+          onPin={() => void pin(chat)}
+          onArchive={() => { setSidebar(false); openDialog({ kind: "archive", chat }); }}
+          onMove={() => { setSidebar(false); openDialog({ kind: "move", chat }); }} />)}
         {!displayChats.length&&catalog&&!catalogState.loading&&<p className="muted empty-list">표시할 채팅이 없습니다.</p>}
         {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
         {section!=="pinned"&&catalog?.nextCursor&&<button className="load-more" disabled={catalogState.loading} onClick={()=>void catalogState.refresh(catalog.nextCursor)}>채팅 더 보기</button>}
       </div>
-      <div className="sidebar-footer"><button onClick={()=>openDialog({kind:"accounts"})}>계정 관리</button><button onClick={()=>{setSidebar(false);openDialog({kind:"notifications"});}}>알림</button><button onClick={()=>{setSidebar(false);openDialog({kind:"settings"});}}>설정</button><button onClick={()=>void logout().catch(e=>setError(e.message))}>로그아웃</button></div>
+      <div className="sidebar-footer"><button onClick={() => { setSidebar(false); openDialog({ kind: "settings" }); }}>설정</button></div>
     </aside>
     <main className="conversation" data-thread-id={selected?.id||""}>
       <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
@@ -227,11 +236,11 @@ export function App() {
               <label className="account-select">계정
                 <select aria-label="이번에 사용할 계정" title={account === "default" ? defaultLabel : account} value={account} disabled={!!threadId && !selected} onChange={e=>setAccount(e.target.value)}><option value="default">{defaultLabel}</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
               </label>
+              {(!threadId || selected) && <AccountLimits key={account} account={account} />}
               {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" onClick={() => openDialog({kind: "gui-quit"})}>GUI 종료</button>}
             </div>
             {executionAccount && <small className="default-account-name">현재 실행 {executionAccount === "default" ? "기본 계정" : executionAccount}</small>}
             {account !== "default" && defaultAccount && <small className="default-account-name" title={defaultLabel}>{defaultLabel}</small>}
-            {(!threadId || selected) && <AccountLimits key={account} account={account} />}
           </div>
           {chat && !isArchived && <TurnSettings
             key={composerKey}
@@ -247,8 +256,9 @@ export function App() {
             deferred={!!((!pendingAccountChange && (activity.accountTurn?.status === "inProgress" || history?.thread.status.type === "active")) || history?.thread.externalOwner)}
           />}
         </div>
-        {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>void pin()}>{catalog?.pinned.some(t=>t.id===chat.id)?"고정 해제":"고정하기"}</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" onClick={()=>openDialog({kind:"archive",chat:{...chat,archived:isArchived}})}>{isArchived?"보관 해제":"보관하기"}</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
+        {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
       </header>
+      {selected && history?.goal && <GoalIndicator key={selected.id} goal={history.goal} />}
       {!dialog&&error&&<div role="alert" className="banner error-banner">{error}</div>}{notice&&<div role="status" className="banner notice-banner">{notice}<button aria-label="알림 닫기" onClick={()=>setNotice("")}>×</button></div>}
       <div className="message-scroll" ref={scroll} aria-label="대화 내용" onScroll={e=>{const n=e.currentTarget;stick.current=n.scrollHeight-n.clientHeight-n.scrollTop<100;if(n.scrollTop<90&&!chatState.loading)void loadOlder();}}>
         {selected?<div className="message-inner">
@@ -302,27 +312,26 @@ export function App() {
       setNotice("Codex GUI를 종료했습니다. 채팅과 계정을 선택해 작업을 이어갈 수 있습니다.");
       void chatState.refresh();
       void catalogState.refresh();
-    }} /> : dialog&&<Modal title={dialog.kind==="notifications"?"완료 알림":dialog.kind==="settings"?"단축키 설정":dialog.kind==="new"?"새 채팅":dialog.kind==="project"?"프로젝트 추가":dialog.kind==="move"?"프로젝트로 이동":dialog.kind==="archive"?(dialog.chat.archived?"보관 해제":"채팅 보관"):dialog.kind==="delete"?"채팅 영구 삭제":"계정 관리"} onClose={()=>{if(!formBusy)setDialog(null);}}>
-      {dialog.kind==="notifications"?<NotificationSettings thread={selected?.id}/>:dialog.kind==="accounts"?<Accounts accounts={accounts}/>:dialog.kind==="settings"?<ShortcutSettings
-        bindings={shortcuts}
-        models={modelState.models}
-        modelsLoading={modelState.loading}
-        modelError={modelState.error}
-        retryModels={modelState.retry}
-        onSave={bindings=>{setShortcuts(bindings);setDialog(null);}}
-        onClose={()=>setDialog(null)}
-      />:<form className="dialog-form" onSubmit={e=>void submitDialog(e)}>
+    }} /> : dialog?.kind === "settings" ? <WorkspaceSettings theme={theme} onTheme={setTheme}
+      thread={selected?.id} accounts={accounts} onClose={() => setDialog(null)}
+      shortcuts={{
+        bindings: shortcuts, models: modelState.models, modelsLoading: modelState.loading,
+        modelError: modelState.error, retryModels: modelState.retry, onSave: setShortcuts,
+      }} /> : dialog && <Modal title={dialog.kind === "new" ? "새 채팅" : dialog.kind === "project" ? "프로젝트 추가" :
+      dialog.kind === "move" ? "프로젝트로 이동" : dialog.kind === "archive" ? (dialog.chat.archived ? "보관 해제" : "채팅 보관") : "채팅 영구 삭제"}
+      onClose={() => { if (!formBusy) setDialog(null); }}>
+      <form className="dialog-form" onSubmit={e=>void submitDialog(e)}>
         {"chat"in dialog&&<p className="dialog-chat-title">{chatTitle(dialog.chat)}</p>}
         {(dialog.kind==="new"||dialog.kind==="move")&&<label>프로젝트<select aria-label="프로젝트" value={formProject} onChange={e=>{setFormProject(e.target.value);const chosen=projects.find(p=>p.id===e.target.value);if(chosen?.roots[0])setFormPath(chosen.roots[0].path);}}><option value="">프로젝트 없음</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
         {dialog.kind==="new"&&<label>채팅을 시작할 계정<select value={formAccount} onChange={e=>setFormAccount(e.target.value)}><option value="default">{defaultLabel}</option>{accounts.map(candidate=><option key={candidate.name} value={candidate.name}>{candidate.name}</option>)}</select></label>}
         {dialog.kind==="project"&&<label>프로젝트 이름<input value={formName} onChange={e=>setFormName(e.target.value)} placeholder="폴더 이름 사용" maxLength={200}/></label>}
-        {(dialog.kind==="new"||dialog.kind==="project")&&<label>이 머신의 작업 폴더<input value={formPath} onChange={e=>setFormPath(e.target.value)} placeholder="/absolute/project/path" required spellCheck={false}/></label>}
+        {(dialog.kind==="new"||dialog.kind==="project") && <FolderPicker value={formPath} onChange={setFormPath} />}
         {dialog.kind==="move"&&<p className="muted">채팅의 프로젝트 소속을 변경합니다. 작업 폴더와 파일을 옮기지는 않습니다.</p>}
         {dialog.kind==="archive"&&<p>{dialog.chat.archived?"채팅을 일반 목록으로 복원합니다.":"진행 중인 작업과 하위 채팅이 중단될 수 있습니다. 채팅을 보관할까요?"}</p>}
         {dialog.kind==="delete"&&<p className="danger">이 채팅과 하위 대화를 영구 삭제합니다. 되돌릴 수 없습니다.</p>}
         {error&&<p role="alert" className="inline-error">{error}</p>}
         <div className="button-row"><button type="button" onClick={()=>setDialog(null)} disabled={formBusy}>취소</button><button className={dialog.kind==="delete"?"danger-button":"primary"} type="submit" disabled={formBusy}>{formBusy?"처리 중…":dialog.kind==="delete"?"영구 삭제":dialog.kind==="new"?"채팅 만들기":dialog.kind==="project"?"프로젝트 추가":"적용"}</button></div>
-      </form>}
+      </form>
     </Modal>}
   </div>;
 }

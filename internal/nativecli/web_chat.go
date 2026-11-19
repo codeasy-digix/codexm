@@ -37,6 +37,9 @@ var WebMethods = []Method{
 	{"web.historySources", false, false},
 	{"web.historyPage", false, false},
 	{"web.dispatchQueued", false, false},
+	{"web.catalogIndex", false, false},
+	{"web.directories", false, false},
+	{"web.skills", false, false},
 }
 
 func webSharedMethod(name string) bool {
@@ -77,6 +80,10 @@ type webParams struct {
 	Confirmation    string          `json:"confirmation"`
 	After           int64           `json:"after_ms"`
 	HistoryRevision string          `json:"history_revision"`
+	SkillIDs        []string        `json:"skills"`
+	Goal            bool            `json:"goal"`
+	nativeInput     []map[string]any
+	selectedSkills  []webSkill
 }
 
 type webConnection struct {
@@ -98,17 +105,18 @@ type webConnection struct {
 }
 
 type WebChat struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	c           config.Config
-	webOnly     bool
-	queueCursor string // Accessed by the serial web bridge only.
-	mu          sync.Mutex
-	connections map[string]*webConnection
-	generation  uint64
-	writers     webWriterMonitor
-	usageCache  webUsageCache
-	guiQuit     webGUIQuit
+	ctx           context.Context
+	cancel        context.CancelFunc
+	c             config.Config
+	webOnly       bool
+	queueCursor   string // Accessed by the serial web bridge only.
+	catalogExport *webCatalogExport
+	mu            sync.Mutex
+	connections   map[string]*webConnection
+	generation    uint64
+	writers       webWriterMonitor
+	usageCache    webUsageCache
+	guiQuit       webGUIQuit
 }
 
 func NewWebChat(ctx context.Context, c config.Config) *WebChat {
@@ -274,6 +282,10 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 	switch r.Method {
 	case "web.catalog":
 		return w.catalog(ctx, nil, p)
+	case "web.catalogIndex":
+		return w.catalogIndex(ctx, p)
+	case "web.directories":
+		return webDirectories(p.Cwd)
 	case "web.activity":
 		return w.activity(p.Thread, p.Account), nil
 	case "web.thread":
@@ -310,6 +322,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 	switch r.Method {
 	case "web.models":
 		return connection.availableModels(ctx)
+	case "web.skills":
+		return w.listPromptSkills(ctx, connection, p.Thread)
 	case "web.history":
 		return w.history(ctx, connection, p)
 	case "web.historyPage":

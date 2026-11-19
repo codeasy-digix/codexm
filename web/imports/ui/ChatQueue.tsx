@@ -1,10 +1,11 @@
 import React, { useId, useRef, useState } from "react";
 import { call, mutationUnconfirmed, queueDraftKeyPrefix } from "../../client/data";
 import type { QueuedInput } from "../contracts/web";
+import type { PromptDraft } from "./prompt-draft";
 import { inputText } from "./ChatMessages";
 
 export type SubmissionOutcome = "accepted" | "rejected" | "unknown";
-type RecalledDraft = { kind: "recalled"; text: string; checkHistory: boolean; unconfirmed: boolean };
+type RecalledDraft = PromptDraft & { kind: "recalled"; checkHistory: boolean; unconfirmed: boolean };
 type QueueDraft = RecalledDraft | { kind: "editing"; id: string; original: string; text: string };
 
 function editableText(item: QueuedInput) {
@@ -17,7 +18,8 @@ function readRecalledDraft(key: string): RecalledDraft | undefined {
   try {
     const stored = JSON.parse(sessionStorage.getItem(key) || "null");
     if (typeof stored?.text === "string") {
-      return { kind: "recalled", text: stored.text, checkHistory: stored.checkHistory === true, unconfirmed: stored.unconfirmed === true };
+      return { kind: "recalled", text: stored.text, skills: stored.skills ?? [], goal: stored.goal === true,
+        checkHistory: stored.checkHistory === true, unconfirmed: stored.unconfirmed === true };
     }
   } catch { /* Storage may be disabled. The current editor still works. */ }
 }
@@ -29,7 +31,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
   busy: boolean;
   sendDisabled: boolean;
   onChanged: () => void;
-  onRequeue: (text: string) => Promise<SubmissionOutcome>;
+  onRequeue: (draft: PromptDraft) => Promise<SubmissionOutcome>;
 }) {
   const key = queueDraftKeyPrefix + thread;
   const editorID = useId();
@@ -59,8 +61,11 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
     setNotice("");
     const remove = text === undefined;
     const recalled = draft?.kind === "editing" && draft.id === id ? draft.text : original;
+    const item = items.find(item => item.id === id);
+    const draftToRecall: RecalledDraft = { kind: "recalled", text: recalled, skills: item?.skills ?? [], goal: !!item?.goal,
+      checkHistory: false, unconfirmed: true };
     // Keep the text if the tab disconnects after Codex removes the item.
-    if (remove) keep({ kind: "recalled", text: recalled, checkHistory: false, unconfirmed: true });
+    if (remove) keep(draftToRecall);
     const params = { thread_id: thread, account, queued_id: id, expected_text: original,
       ...(remove ? {} : { text }) };
     try {
@@ -70,7 +75,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
         throw new Error("큐 변경 결과를 확인하지 못했습니다.");
       }
       if (remove) {
-        keep({ kind: "recalled", text: recalled, checkHistory: result.check_history === true, unconfirmed: false });
+        keep({ ...draftToRecall, checkHistory: result.check_history === true, unconfirmed: false });
         setNotice("대기열에서 뺐습니다.");
       } else {
         keep();
@@ -99,7 +104,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
     setNotice("");
     keep({ ...draft, unconfirmed: true });
     try {
-      const result = await onRequeue(draft.text);
+      const result = await onRequeue(draft);
       if (result === "accepted") keep();
       if (result === "rejected") keep(draft);
     } finally {
@@ -110,15 +115,21 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
 
   return <>
     {items.length > 0 && <details className="queue-preview">
-      <summary>대기 중인 입력 {items.length}개</summary>
+      <summary><strong>대기 중인 입력 {items.length}개</strong>
+        <span className="queue-next" title={inputText(items[0].input)}>{inputText(items[0].input)}</span></summary>
       <ul className="queue-entries">
-        {items.map(item => {
+        {items.map((item, index) => {
           const original = editableText(item);
           const selected = draft?.kind === "editing" && draft.id === item.id;
           return <li key={item.id} className="queue-entry">
+            <div className="queue-entry-meta">
+              <span>{item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" ? "실행 보류" : index === 0 ? "다음 입력" : "대기 중"}</span>
+              {item.account && <small>{item.account === "default" ? "기본 계정" : item.account}</small>}
+              {item.goal && <small>/goal</small>}
+              {item.skills?.map(skill => <small key={skill.id}>{skill.name}</small>)}
+            </div>
             <p>{inputText(item.input)}</p>
-            {item.account && <small className="muted">{item.account === "default" ? "기본 계정" : item.account}
-              {item.state === "sending" && " · 전송 결과 확인 필요"}{item.detail && ` · ${item.detail}`}</small>}
+            {item.detail && <small className="muted">{item.detail}</small>}
             {original !== undefined && <div className="queue-actions">
               <button type="button" disabled={locked || !!draft || item.state === "sending"} onClick={() => {
                 setError("");setNotice("");
