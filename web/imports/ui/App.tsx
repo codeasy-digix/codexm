@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { authenticate, call, exchange, login, useAccess, useStateData } from "../../client/data";
+import { authenticate, call, exchange, login, reconnect, useAccess, useStateData } from "../../client/data";
 import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type Catalog, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
 import { AccountLimits } from "./AccountLimits";
 import { ChatActivityLabel } from "./ChatActivity";
 import { ChatMessages } from "./ChatMessages";
+import { ChatFiles, useChatFiles } from "./ChatFiles";
 import { ChatRequest } from "./ChatRequest";
 import { Composer } from "./Composer";
 import { GUIQuitDialog } from "./GUIQuitDialog";
@@ -19,7 +20,7 @@ import { useTheme } from "./theme";
 import "./styles/native.css";
 import "./styles/workspace.css";
 
-type Dialog = {kind:"new"|"project"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete";chat:ChatThread};
+type Dialog = {kind:"new"|"project"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete"|"files";chat:ChatThread};
 type Section = "chats"|"pinned"|"archived";
 
 export function App() {
@@ -40,13 +41,14 @@ export function App() {
   const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
   const [formAccount,setFormAccount]=useState("default");
-  const catalogState=useCatalog(ready,query,project,section==="archived",threadId);
+  const catalogState=useCatalog(ready,query,project,section==="archived",threadId,access.online);
   const {catalog}=catalogState;
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
   const selectedProject = projects.find(p => p.id === project);
   const newChatReady = !!catalog && (!project || !!selectedProject);
-  const chatState=useChatHistory(ready,selected,account);
+  const chatState=useChatHistory(ready, selected, account, access.online);
   const history=chatState.history?.thread.id===selected?.id?chatState.history:undefined;
+  const fileState = useChatFiles(ready, access.online, selected?.id ?? "", history?.turns, dialog?.kind === "files" && dialog.chat.id === selected?.id);
   const activity = useChatActivity(ready, selected?.id || "", account);
   const pending = activity.pending ?? history?.pending ?? [];
   const blocking = pending.find(request => request.params.isBlocking !== false);
@@ -66,7 +68,10 @@ export function App() {
   const liveTurnId = openActivity && openActivity.state !== "idle" && openActivity.state !== "unknown" ? openActivity.turnId : undefined;
   const projectNames = new Map<string, number>();
   for (const p of projects) projectNames.set(p.name, (projectNames.get(p.name) ?? 0) + 1);
-  const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null),olderBusy=useRef(false);
+  const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null);
+  const viewed = useRef(new Map<string, { chat: ChatThread; top: number; bottom: boolean }>());
+  const viewport = useRef({ thread: "", restored: false });
+  const hasHistory = !!history;
   const first=new Date().getHours()<12?"무엇부터 시작할까요?":"어떤 작업을 이어갈까요?";
   const accounts: Catalog["accounts"] = catalog?.accounts || data.snapshot?.accounts || [];
   const defaultAccount = catalog?.defaultAccount || accounts.find((candidate: {name: string; default?: boolean}) => candidate.default)?.name;
@@ -90,11 +95,14 @@ export function App() {
     if (access.status === "anonymous") {
       setOpened(null);setOpenError(null);setDialog(null);setQuery("");setSidebar(false);setTurnSelections({});setAccount("default");
     }
-  },[access.status]);
+    if (!ready) viewed.current.clear();
+  },[access.status, ready]);
   useEffect(() => {
     const onPopState = () => {
       setPath(location.pathname);
-      setOpened(null);
+      const previous = viewed.current.get(chatIdFromPath(location.pathname));
+      setOpened(previous?.chat ?? null);
+      if (previous) setAccount(previous.chat.account || "default");
       setOpenError(null);
       setSidebar(false);
       setError("");
@@ -104,7 +112,7 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   useEffect(() => {
-    if (!ready || !threadId || selected) return;
+    if (!access.online || !threadId || selected) return;
     let current = true;
     setOpenError(null);
     void call<ChatThread | null>("web.thread", { thread_id: threadId }).then(chat => {
@@ -120,13 +128,29 @@ export function App() {
       if (current) setOpenError("채팅을 불러오지 못했습니다.");
     });
     return () => { current = false; };
-  }, [ready, threadId, selected, openAttempt]);
-  useEffect(()=>{stick.current=true;anchor.current=null;olderBusy.current=false;setMenu(false);},[selected?.id,account]);
+  }, [access.online, threadId, selected, openAttempt]);
+  useEffect(() => { setMenu(false); }, [selected?.id, account]);
   useLayoutEffect(()=>{
-    const node=scroll.current;if(!node)return;
-    if(anchor.current&&anchor.current.thread===selected?.id&&anchor.current.revision===chatState.olderRevision){node.scrollTop=node.scrollHeight-anchor.current.height+anchor.current.top;anchor.current=null;}
-    else if(stick.current&&!anchor.current)node.scrollTop=node.scrollHeight;
-  },[turns,selected?.id,chatState.olderRevision]);
+    const thread = selected?.id ?? "";
+    if (viewport.current.thread !== thread) {
+      viewport.current = { thread, restored: false };
+      anchor.current = null;
+    }
+    const node = scroll.current;
+    if (!node || !thread || !hasHistory) return;
+    if (!viewport.current.restored) {
+      const saved = viewed.current.get(thread);
+      stick.current = saved?.bottom ?? true;
+      node.scrollTop = stick.current ? node.scrollHeight : saved?.top ?? 0;
+      viewport.current.restored = true;
+    } else if (anchor.current?.thread === thread && anchor.current.revision === chatState.olderRevision) {
+      node.scrollTop = node.scrollHeight - anchor.current.height + anchor.current.top;
+      anchor.current = null;
+    } else if (stick.current && !anchor.current) node.scrollTop = node.scrollHeight;
+  },[turns, selected?.id, hasHistory, chatState.olderRevision]);
+  useLayoutEffect(() => {
+    if (selected && !viewed.current.has(selected.id)) rememberPosition(selected, 0, true);
+  }, [selected]);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==="Escape"){setSidebar(false);setMenu(false);}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[]);
 
   function navigate(id: string, replace = false) {
@@ -167,7 +191,10 @@ export function App() {
         if (dialog.chat.id === selected?.id) { navigate("", true); setOpened(null); }
         setNotice(dialog.chat.archived?"보관을 해제했습니다.":"채팅을 보관했습니다.");
       } else if(dialog.kind==="delete") {
-        await mutate("web.delete",{thread_id:dialog.chat.id});navigate("",true);setOpened(null);setNotice("채팅을 영구 삭제했습니다.");
+        await mutate("web.delete",{thread_id:dialog.chat.id});
+        chatState.forget(dialog.chat.id);
+        viewed.current.delete(dialog.chat.id);
+        navigate("",true);setOpened(null);setNotice("채팅을 영구 삭제했습니다.");
       }
       setDialog(null);
     }catch(e){setError((e as Error).message);}finally{setFormBusy(false);}
@@ -182,9 +209,23 @@ export function App() {
     finally { setPinPending(current => current.filter(id => id !== target.id)); }
   }
   async function loadOlder() {
-    const node=scroll.current;if(!node||!selected||olderBusy.current||!history?.nextCursor)return;
-    olderBusy.current=true;anchor.current={height:node.scrollHeight,top:node.scrollTop,thread:selected.id,revision:chatState.olderRevision+1};
-    const loaded=await chatState.loadOlder();if(!loaded)anchor.current=null;olderBusy.current=false;
+    const node=scroll.current;if(!node||!selected||anchor.current||!history?.nextCursor)return;
+    const request = {height:node.scrollHeight,top:node.scrollTop,thread:selected.id,revision:chatState.olderRevision+1};
+    anchor.current = request;
+    const loaded = await chatState.loadOlder();
+    if (!loaded && anchor.current === request) anchor.current = null;
+  }
+
+  function rememberPosition(chat: ChatThread, top: number, bottom: boolean) {
+    viewed.current.delete(chat.id);
+    viewed.current.set(chat.id, { chat, top, bottom });
+    if (viewed.current.size > 12) viewed.current.delete(viewed.current.keys().next().value!);
+  }
+  function scrolled(node: HTMLDivElement) {
+    if (!selected || !hasHistory || !viewport.current.restored) return;
+    stick.current = node.scrollHeight - node.clientHeight - node.scrollTop < 100;
+    rememberPosition(selected, node.scrollTop, stick.current);
+    if (node.scrollTop < 90) void loadOlder();
   }
 
   if (access.status === "anonymous") return <Login passwordMode={access.password} message={access.message} />;
@@ -256,18 +297,22 @@ export function App() {
             deferred={!!((!pendingAccountChange && (activity.accountTurn?.status === "inProgress" || history?.thread.status.type === "active")) || history?.thread.externalOwner)}
           />}
         </div>
-        {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
+        {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>openDialog({kind:"files",chat})}>채팅 파일</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
       </header>
-      {selected && history?.goal && <GoalIndicator key={selected.id} goal={history.goal} />}
+      {!access.online && <div className="banner connection-banner" role="status">
+        {access.message || "서버 연결을 복구하는 중…"}
+        <button className="text-button" type="button" onClick={reconnect}>다시 연결</button>
+      </div>}
+      {selected && history?.goal && <GoalIndicator key={"goal:" + selected.id} goal={history.goal} />}
       {!dialog&&error&&<div role="alert" className="banner error-banner">{error}</div>}{notice&&<div role="status" className="banner notice-banner">{notice}<button aria-label="알림 닫기" onClick={()=>setNotice("")}>×</button></div>}
-      <div className="message-scroll" ref={scroll} aria-label="대화 내용" onScroll={e=>{const n=e.currentTarget;stick.current=n.scrollHeight-n.clientHeight-n.scrollTop<100;if(n.scrollTop<90&&!chatState.loading)void loadOlder();}}>
+      <div className="message-scroll" ref={scroll} aria-label="대화 내용" onScroll={e=>scrolled(e.currentTarget)}>
         {selected?<div className="message-inner">
           {history?.nextCursor&&<button className="older-button" disabled={chatState.loadingOlder} onClick={()=>void loadOlder()}>{chatState.loadingOlder?"이전 메시지를 불러오는 중…":"이전 메시지 불러오기"}</button>}
           {chatState.loading&&<p className="loading-message" role="status">최근 대화를 불러오는 중…</p>}
           {chatState.error&&<p role="alert" className="inline-error">{chatState.error}</p>}
           {(!!turns.length || !!history?.relayedInputs?.length) && <ChatMessages thread={selected.id} turns={turns} account={account}
             external={history?.thread.externalOwner} liveTurnId={liveTurnId}
-            relayedInputs={history?.relayedInputs} hasOlder={!!history?.nextCursor}/>}
+            relayedInputs={history?.relayedInputs} hasOlder={!!history?.nextCursor} cwd={selected.cwd} files={fileState.files}/>}
           {history&&!turns.length&&!history.relayedInputs?.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
         </div>:path !== "/" ? <div className="message-inner">
           {(openError || !threadId)
@@ -289,6 +334,7 @@ export function App() {
       {chat&&!isArchived&&<Composer
         key={chat.id}
         chat={chat}
+        online={access.online}
         account={account}
         history={history}
         liveTurn={history?.webOnly ? activity.turn : activity.accountTurn}
@@ -307,7 +353,10 @@ export function App() {
       />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
     </main>
-    {dialog?.kind === "gui-quit" ? <GUIQuitDialog onClose={() => setDialog(null)} onStopped={() => {
+    {dialog?.kind === "files" ? dialog.chat.id === selected?.id && <ChatFiles
+      key={dialog.chat.id} thread={dialog.chat.id} files={fileState.files} loading={fileState.loading}
+      error={fileState.error} onRegistered={fileState.registered} onClose={() => setDialog(null)} />
+      : dialog?.kind === "gui-quit" ? <GUIQuitDialog onClose={() => setDialog(null)} onStopped={() => {
       setDialog(null);
       setNotice("Codex GUI를 종료했습니다. 채팅과 계정을 선택해 작업을 이어갈 수 있습니다.");
       void chatState.refresh();

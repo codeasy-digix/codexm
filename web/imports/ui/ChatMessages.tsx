@@ -1,8 +1,9 @@
-import React, { useState } from "react";
-import Markdown, { type Components } from "react-markdown";
+import React, { memo, useMemo, useState } from "react";
+import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { call } from "../../client/data";
-import type { ChatItem, ChatTurn, RelayedInput } from "../contracts/web";
+import { artifactURL, inlineArtifact, type ChatArtifact, type ChatItem, type ChatTurn, type RelayedInput } from "../contracts/web";
+import { FileLink } from "./ChatFiles";
 
 const markdownComponents: Components = {
   table({ node: _node, ...props }) {
@@ -69,10 +70,64 @@ function UserMessage({ text }: { text: string }) {
   return <div className="user-message"><span className="sr-only">나</span><p>{text}</p></div>;
 }
 
-export function ChatMessages({thread,turns,account,external,liveTurnId,relayedInputs,hasOlder}:{
+function messageFiles(thread: string, cwd: string, files: ChatArtifact[]) {
+  const paths = new Map(files.map(file => [file.source + ":" + file.path, file]));
+  const links = new Map(files.map(file => [artifactURL(thread, file.id), file]));
+  const find = (value: unknown) => {
+    if (typeof value !== "string") return;
+    let path = value.replace(/^file:\/\/(?:localhost)?(?=\/)/i, "").replace(/#L\d+(?:-L?\d+)?$/, "");
+    if (/^(?:[a-z][\w+.-]*:|\/\/)/i.test(path)) return;
+    try { path = decodeURIComponent(path); } catch { /* This can be a literal filesystem path. */ }
+    const marker = "/visualizations/";
+    const parts = path.slice(path.lastIndexOf(marker) + marker.length).split("/");
+    if (path.includes(marker) && parts[3] === thread) return paths.get("visualization:" + parts.join("/"));
+    const root = cwd.replace(/\/+$/, "") + "/";
+    if (path.startsWith("/")) {
+      if (!path.startsWith(root)) return;
+      path = path.slice(root.length);
+    }
+    return paths.get("workspace:" + path.replace(/^(?:\.\/)+/, ""));
+  };
+  const urlTransform = (url: string) => {
+    if (links.has(url)) return url;
+    const file = find(url);
+    if (file) return artifactURL(thread, file.id);
+    if (/^(?:\/(?!\/)|file:|\.\.?\/|~\/)/i.test(url)) return "";
+    return defaultUrlTransform(url);
+  };
+  const components: Components = {
+    ...markdownComponents,
+    a({ node: _node, href, children, ...props }) {
+      const file = href ? links.get(href) : undefined;
+      return file ? <FileLink thread={thread} file={file} preview /> :
+        href ? <a href={href} {...props}>{children}</a> : <span>{children}</span>;
+    },
+    img({ node: _node, src, alt, ...props }) {
+      const file = typeof src === "string" ? links.get(src) : undefined;
+      if (file) return <FileLink thread={thread} file={file} preview />;
+      if (src) return <img src={src} alt={alt} loading="lazy" {...props} />;
+      return <span>{alt}</span>;
+    },
+  };
+  return { find, components, urlTransform, thread };
+}
+
+const MessageMarkdown = memo(function MessageMarkdown({ body, media }: { body: string; media: ReturnType<typeof messageFiles> }) {
+  const text = body.replace(/visualize([^\r\n]*?)/g, (_marker, payload) => {
+    try {
+      const file = media.find(JSON.parse(payload)?.path);
+      if (file) return "[생성 파일](" + artifactURL(media.thread, file.id) + ")";
+    } catch { /* Leave unavailable file references readable. */ }
+    return "생성 파일 · 채팅 메뉴에서 확인";
+  });
+  return <Markdown remarkPlugins={[remarkGfm]} components={media.components} urlTransform={media.urlTransform}>{text}</Markdown>;
+});
+
+export function ChatMessages({thread,turns,account,external,liveTurnId,relayedInputs,hasOlder,cwd,files}:{
   thread:string;turns:ChatTurn[];account:string;external?:boolean;liveTurnId?:string;
-  relayedInputs?:RelayedInput[] | null;hasOlder:boolean;
+  relayedInputs?:RelayedInput[] | null;hasOlder:boolean;cwd:string;files:ChatArtifact[];
 }) {
+  const media = useMemo(() => messageFiles(thread, cwd, files), [thread, cwd, files]);
   const relayedByTurn = new Map<string, RelayedInput[]>();
   const after: RelayedInput[] = [];
   const newestFirst = [...turns].reverse();
@@ -99,13 +154,25 @@ export function ChatMessages({thread,turns,account,external,liveTurnId,relayedIn
     const messages = turn.items.filter(item => item.type === "agentMessage" && item.text);
     const ordered = [...messages.filter(item => item.phase === "commentary"), ...messages.filter(item => item.phase !== "commentary")];
     return <article className="turn" key={turn.id} data-turn-id={turn.id}>
-      {turn.items.filter(item=>item.type==="userMessage").map(item=><UserMessage key={item.id} text={inputText(item.content)}/>)}
+      {turn.items.filter(item => item.type === "userMessage").map(item => {
+        const attachments = new Map((item.content ?? []).flatMap((part, index) => {
+          const file = part.type === "localImage" ? media.find(part.path) : undefined;
+          return file ? [[index, file] as const] : [];
+        }));
+        if (!attachments.size) return <UserMessage key={item.id} text={inputText(item.content)} />;
+        const text = inputText(item.content?.filter((_part, i) => !attachments.has(i)));
+        return <div key={item.id} className="user-message attached-message">
+          <span className="sr-only">나</span>
+          {text && <p>{text}</p>}
+          {[...attachments].map(([index, file]) => <FileLink key={index} thread={thread} file={file} preview />)}
+        </div>;
+      })}
       {relayedByTurn.get(turn.id)?.map(input=><UserMessage key={input.id} text={input.text}/>)}
       <div className="assistant-message">
         {ordered.map(item => {
           const classes = `${item.streaming ? "live-message" : "markdown"}${item.phase === "commentary" ? " commentary-message" : ""}`;
           return <div className={classes} key={item.id}>
-            {item.streaming ? item.text : <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{item.text || ""}</Markdown>}
+            {item.streaming ? item.text : <MessageMarkdown body={item.text || ""} media={media} />}
           </div>;
         })}
         {turn.error&&<p role="alert" className="inline-error">{turn.error.message}</p>}

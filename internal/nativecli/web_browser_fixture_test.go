@@ -37,6 +37,7 @@ func TestWebChatBrowserFixture(t *testing.T) {
 		"| 작업 과정 | 세부 항목 | 필요할 때 읽기 | 12 | 코드와 **마크다운**을 표시합니다. |\n\n" +
 		"```rust\nfn main() { println!(\"CodexM\"); }\n```\n\n<script>window.__unsafe = true</script>"
 	f.commandFixture = true
+	responseText := f.responseText
 	f.mu.Unlock()
 	for _, dir := range []string{"browse-target", filepath.Join(".agents", "skills", "fixture-proof")} {
 		if err := os.MkdirAll(filepath.Join(f.cmd.Dir, dir), 0700); err != nil {
@@ -55,10 +56,27 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if err := f.client.Call(f.ctx, "thread/start", map[string]any{"cwd": f.cmd.Dir, "historyMode": "paginated", "projectId": project.Project.ID}, &first); err != nil {
 		t.Fatal(err)
 	}
+	visualizations := filepath.Join(f.c.Runtime.SharedCodexHome, "visualizations", "2026", "01", "02", first.Thread.ID)
+	if err := os.MkdirAll(visualizations, 0700); err != nil {
+		t.Fatal(err)
+	}
+	comparison := filepath.Join(visualizations, "fixture-comparison.html")
+	if err := os.WriteFile(comparison, []byte("<!doctype html><h1>Browser artifact fixture</h1><script>window.__unsafe=true</script>"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 26; i++ {
+		if i == 26 {
+			payload, _ := json.Marshal(map[string]string{"path": comparison, "mode": "wide"})
+			f.mu.Lock()
+			f.responseText += "\n\nvisualize" + string(payload) + "\n\n![작업 폴더 이미지](./workspace-image.png)"
+			f.mu.Unlock()
+		}
 		f.start(first.Thread.ID, fmt.Sprintf("페이지 이력 %02d", i))
 		f.completed(first.Thread.ID, i)
 	}
+	f.mu.Lock()
+	f.responseText = responseText
+	f.mu.Unlock()
 	if err := f.client.Call(f.ctx, "thread/name/set", map[string]any{"threadId": first.Thread.ID, "name": "긴 이력 페이지 테스트"}, nil); err != nil {
 		t.Fatal(err)
 	}

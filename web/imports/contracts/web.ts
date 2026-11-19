@@ -35,6 +35,9 @@ export const bridgeContract = {
     { name: "web.catalogIndex", mutation: false, model: false },
     { name: "web.directories", mutation: false, model: false },
     { name: "web.skills", mutation: false, model: false },
+    { name: "web.artifacts", mutation: false, model: false },
+    { name: "web.artifactRegister", mutation: true, model: false },
+    { name: "web.artifact", mutation: false, model: false },
   ],
 };
 
@@ -53,7 +56,11 @@ export type PendingRequest = {
 export type ChatHistoryPage = {
   turns: ChatTurn[];
   nextCursor?: string | null;
+  sync?: HistorySync;
 };
+export type HistoryTurn = { id: string; digest: string };
+export type HistoryBasis = { revision?: string; relayDigest?: string; turns: HistoryTurn[] };
+export type HistorySync = { revision?: string; relayDigest?: string; order?: HistoryTurn[]; unchanged?: true };
 export type QueuedInput = {
   id: string;
   input: Array<{ type: string; text?: string; text_elements?: unknown[] }>;
@@ -76,7 +83,25 @@ export type ChatHistory = ChatHistoryPage & {
   executionAccount?: string;
   goal?: ThreadGoal | null;
 };
+export type ChatHistoryUpdate = Omit<ChatHistory, "turns"> & { turns?: ChatTurn[] };
 export type ChatSkill = { id: string; name: string; description?: string; scope?: string };
+export type ChatArtifact = {
+  id: string;
+  name: string;
+  source: "visualization" | "workspace";
+  path: string;
+  mime: string;
+  size: number;
+  version: string;
+};
+
+export function artifactURL(thread: string, id: string) {
+  return "/artifacts/" + encodeURIComponent(thread) + "/" + encodeURIComponent(id);
+}
+
+export function inlineArtifact(mime: string) {
+  return ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mime);
+}
 export type ThreadGoal = {
   objective: string;
   status: "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";

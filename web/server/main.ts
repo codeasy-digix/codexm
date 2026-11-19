@@ -10,6 +10,7 @@ import { ChatPush } from "./push";
 import { ChatHistoryCache } from "./history-cache";
 import { CacheDatabase } from "./cache-database";
 import { ChatCatalogCache } from "./catalog-cache";
+import { deleteArtifacts, serveArtifact } from "./artifacts";
 import { bridgeContract } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
@@ -39,7 +40,7 @@ const pushes = (() => {
 const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
 const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage",
-  "web.dispatchQueued", "web.catalogIndex"]);
+  "web.dispatchQueued", "web.catalogIndex", "web.artifact"]);
 const catalogMutations = new Set(["web.pin", "web.move", "web.archive", "web.delete", "web.projectCreate",
   "accounts.remove", "accounts.setDefault"]);
 // The bridge bounds sign-in attempts. Keep a matching in-memory record so
@@ -105,6 +106,10 @@ async function body(req: import("node:http").IncomingMessage) {
     res.setHeader("X-Frame-Options", "DENY");
     if (auth.secure) res.setHeader("Strict-Transport-Security", "max-age=86400");
     if (req.url === "/sw.js") res.setHeader("Cache-Control", "no-cache");
+    if (req.url?.startsWith("/artifacts/")) {
+      await serveArtifact(req, res, state!, auth, bridge);
+      return;
+    }
     if (!isAuth) {
       next();
       return;
@@ -250,7 +255,9 @@ Meteor.methods({
     try {
       if (method === "web.catalog") return await catalogCache.read(params);
       if (method === "web.history") {
-        return await historyCache.read(params, revision => bridge.call(method, { ...params, history_revision: revision }, browser));
+        const result = await historyCache.read(params, revision => bridge.call(method, { ...params, history_revision: revision }, browser));
+        owner(this.connection?.id);
+        return result;
       }
       const result = await bridge.call(
         method,
@@ -260,7 +267,7 @@ Meteor.methods({
         spec.mutation,
       );
       if (method === "web.delete" && result?.deleted === true && typeof result.thread_id === "string") {
-        await historyCache.deleted(result.thread_id);
+        await Promise.all([historyCache.deleted(result.thread_id), deleteArtifacts(state!, result.thread_id)]);
       }
       if (catalogMutations.has(method)) await catalogCache.refresh(true).catch(() => {});
       else if (method === "login.status" && result?.status === "succeeded" && typeof result.login_id === "string" &&

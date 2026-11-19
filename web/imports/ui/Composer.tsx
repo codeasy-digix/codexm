@@ -10,6 +10,7 @@ import {
 
 type Props = {
   chat: ChatThread;
+  online: boolean;
   account: string;
   pendingAccountChange?: boolean;
   history?: ChatHistory;
@@ -19,7 +20,7 @@ type Props = {
   onSent: (id?: string) => void;
 };
 
-export function Composer({ chat, account, history, liveTurn, models, selection, onSent, pendingAccountChange }: Props) {
+export function Composer({ chat, online, account, history, liveTurn, models, selection, onSent, pendingAccountChange }: Props) {
   const queueModifier = queueModifierForPlatform(navigator.platform);
   const queueShortcut = queueModifier === "Meta" ? "⌘Enter" : "Ctrl+Enter";
   const [draft, setDraft] = useState(() => readPromptDraft(chat.id));
@@ -67,7 +68,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   }
 
   useEffect(() => {
-    if (!relayID) return;
+    if (!relayID || !online) return;
     let closed = false;
     let timer: ReturnType<typeof setTimeout>;
     async function check() {
@@ -100,11 +101,11 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
     }
     void check();
     return () => { closed = true; clearTimeout(timer); };
-  }, [chat.id, relayID, relayKey]);
+  }, [chat.id, relayID, relayKey, online]);
 
   async function send(mode: "immediate" | "queue", recalled?: PromptDraft): Promise<SubmissionOutcome> {
     const sent = recalled ?? draftRef.current;
-    if (!sent.text.trim() || inFlight.current || uncertain) return "rejected";
+    if (!online || !sent.text.trim() || inFlight.current || uncertain) return "rejected";
     if (relayID && (mode === "immediate" || sent.text === relayText.current)) return "rejected";
     const parameters: Record<string, unknown> = { thread_id: chat.id, account, text: sent.text, mode,
       skills: sent.skills.map(skill => skill.id), goal: sent.goal };
@@ -161,7 +162,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   }
 
   async function stop() {
-    if (!turn || inFlight.current) return;
+    if (!online || !turn || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
@@ -177,7 +178,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   }
 
   return <div className="composer-wrap">
-    <ChatQueue thread={chat.id} account={account} items={queue} busy={busy} sendDisabled={uncertain}
+    <ChatQueue thread={chat.id} account={account} items={queue} busy={busy || !online} sendDisabled={uncertain}
       onChanged={onSent} onRequeue={input => send("queue", input)} />
     {external && history?.webOnly && <p className="owner-note">다른 앱이 이 채팅을 열고 있습니다. 해당 창에서 채팅을 닫으면 웹에서 이어갈 수 있습니다.</p>}
     {external && !history?.webOnly && delivery?.state !== "unavailable" && <p className="owner-note">{guiRelay ? "GUI 채팅에 해당 창의 계정으로 전달합니다." : "이 채팅을 열어 둔 창의 계정으로 전달합니다."}</p>}
@@ -199,9 +200,9 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       <div className="composer-bottom">
         <small>Enter 전송·개입 · {queueShortcut} 큐 · Shift+Enter 줄바꿈</small>
         <div className="composer-actions">
-          {active && !external && <button className="stop-button" onClick={() => void stop()} disabled={busy} aria-label="현재 턴 중지">■</button>}
-          <button aria-keyshortcuts={`${queueModifier}+Enter`} title={queueShortcut} onClick={() => void send("queue")} disabled={busy || uncertain || !draft.text.trim() || relayingDraft}>큐에 추가</button>
-          <button className="primary" onClick={() => void send("immediate")} disabled={busy || !!relayID || uncertain || !draft.text.trim()}>
+          {active && !external && <button className="stop-button" onClick={() => void stop()} disabled={busy || !online} aria-label="현재 턴 중지">■</button>}
+          <button aria-keyshortcuts={`${queueModifier}+Enter`} title={queueShortcut} onClick={() => void send("queue")} disabled={busy || !online || uncertain || !draft.text.trim() || relayingDraft}>큐에 추가</button>
+          <button className="primary" onClick={() => void send("immediate")} disabled={busy || !online || !!relayID || uncertain || !draft.text.trim()}>
             {busy || relayID ? "전달 중…" : "보내기"}
           </button>
         </div>

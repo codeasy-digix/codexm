@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MongoClient } from "mongodb";
 
@@ -72,6 +72,38 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   expect(bars[1].x).toBe(bars[0].x);
   expect(bars[0].width).toBeGreaterThanOrEqual(account!.width * 0.7);
 
+  const generated = page.getByRole("link", { name: "fixture-comparison.html", exact: true });
+  await expect(generated).toBeVisible();
+  const artifactPath = (await generated.getAttribute("href"))!;
+  const artifact = await page.request.get(new URL(artifactPath, url!).href);
+  expect(artifact.ok()).toBe(true);
+  expect(artifact.headers()["content-type"]).toBe("application/octet-stream");
+  expect(artifact.headers()["content-disposition"]).toMatch(/^attachment;.*fixture-comparison\.html/);
+  expect(await artifact.text()).toContain("<h1>Browser artifact fixture</h1>");
+  expect((await fetch(new URL(artifactPath, url!))).status).toBe(401);
+  expect((await page.request.get(new URL(artifactPath.replace(f.thread, f.second), url!).href)).status()).toBe(404);
+  writeFileSync(join(f.home, "workspace-image.png"), Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aEioAAAAASUVORK5CYII=", "base64"));
+  await page.getByRole("button", { name: "채팅 메뉴" }).click();
+  await page.getByRole("menuitem", { name: "채팅 파일" }).click();
+  const files = page.getByRole("dialog", { name: "채팅 파일" });
+  await files.getByLabel("작업 폴더 기준 파일 경로").fill("../workspace-image.png");
+  await files.getByRole("button", { name: "파일 등록" }).click();
+  await expect(files.getByRole("alert")).toContainText("작업 폴더 기준");
+  await files.getByLabel("작업 폴더 기준 파일 경로").fill("./workspace-image.png");
+  await files.getByRole("button", { name: "파일 등록" }).click();
+  const image = files.getByRole("link", { name: "workspace-image.png", exact: true });
+  await expect(image).toBeVisible();
+  const imagePath = (await image.getAttribute("href"))!;
+  const inline = await page.request.head(new URL(imagePath, url!).href);
+  expect(inline.ok()).toBe(true);
+  expect(inline.headers()["content-type"]).toBe("image/png");
+  expect(inline.headers()["content-disposition"]).toMatch(/^inline;/);
+  await files.getByRole("button", { name: "닫기", exact: true }).last().click();
+  const rendered = page.locator(".assistant-message img[alt='workspace-image.png']");
+  await expect(rendered).toBeVisible();
+  await expect.poll(() => rendered.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBe(1);
+
   await other.getByRole("button", { name: "고정하기", exact: true }).click();
   await expect(other.getByLabel("고정됨", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(chatURL);
@@ -140,12 +172,61 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(page.getByRole("button", { name: "목표 지정 제거" })).toBeVisible();
   await expect(page.getByRole("button", { name: "fixture-proof 스킬 제거" })).toBeVisible();
 
+  const scroll = page.locator(".message-scroll");
+  if (!(await page.getByText("페이지 이력 17", { exact: true }).count()))
+    await page.getByRole("button", { name: "이전 메시지 불러오기", exact: true }).click();
+  await expect(page.getByText("페이지 이력 17", { exact: true })).toHaveCount(1);
+  const previousScroll = await scroll.evaluate(node => {
+    node.scrollTop = Math.floor((node.scrollHeight - node.clientHeight) * 0.4);
+    return node.scrollTop;
+  });
   await other.getByRole("link").click();
   await expect(other).toHaveClass(/is-current/);
   await expect(first).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(input).toHaveValue("");
+  await page.evaluate(thread => {
+    const testWindow = window as any;
+    const meteor = testWindow.Meteor, apply = meteor.apply;
+    testWindow.heldHistory = [];
+    testWindow.heldCache = 0;
+    meteor.apply = function (...args: any[]) {
+      if (args[0] === "codexm.cachedHistory" && args[1][0]?.thread_id === thread) testWindow.heldCache++;
+      if (args[0] === "codexm.call" && args[1][0] === "web.history" && args[1][1]?.thread_id === thread) {
+        testWindow.heldHistory.push({ send: () => apply.apply(this, args), basis: args[1][1].history_basis });
+        return;
+      }
+      return apply.apply(this, args);
+    };
+    testWindow.restoreHistory = () => {
+      meteor.apply = apply;
+      for (const pending of testWindow.heldHistory) pending.send();
+    };
+  }, f.thread);
   await first.getByRole("link").click();
   await expect(input).toHaveValue(draft);
+  await expect(page.getByText("페이지 이력 17", { exact: true })).toHaveCount(1);
+  await expect(page.getByText("최근 대화를 불러오는 중…")).toHaveCount(0);
+  await expect.poll(() => scroll.evaluate(node => node.scrollTop)).toBeCloseTo(previousScroll, 0);
+  expect(await page.evaluate(() => (window as any).heldCache)).toBe(0);
+  await expect.poll(() => page.evaluate(() => (window as any).heldHistory[0]?.basis?.turns?.length ?? 0)).toBeGreaterThan(0);
+  await page.evaluate(() => (window as any).restoreHistory());
+
+  // Force a lost socket and one temporary ticket failure without reloading.
+  let ticketAttempts = 0;
+  await page.route("**/auth/ticket", route => ++ticketAttempts === 1
+    ? route.fulfill({ status: 503, json: { error: "temporary fixture failure" } })
+    : route.continue());
+  await page.evaluate(() => (window as any).Meteor.disconnect());
+  await expect(page.locator(".connection-banner")).toContainText("서버 연결을 복구하는 중…");
+  await expect(page.getByText("페이지 이력 17", { exact: true })).toHaveCount(1);
+  await expect(input).toHaveValue(draft);
+  await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
+  await page.evaluate(() => (window as any).Meteor.reconnect());
+  await expect.poll(() => ticketAttempts).toBeGreaterThanOrEqual(2);
+  await expect(page.locator(".connection-banner")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeEnabled();
+  await expect(input).toHaveValue(draft);
+  await expect(page).toHaveURL(chatURL);
   const context = page.context();
   await page.close();
   const reopened = await context.newPage();

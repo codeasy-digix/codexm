@@ -40,6 +40,7 @@ var WebMethods = []Method{
 	{"web.catalogIndex", false, false},
 	{"web.directories", false, false},
 	{"web.skills", false, false},
+	{"web.artifacts", false, false}, {"web.artifactRegister", true, false}, {"web.artifact", false, false},
 }
 
 func webSharedMethod(name string) bool {
@@ -82,6 +83,8 @@ type webParams struct {
 	HistoryRevision string          `json:"history_revision"`
 	SkillIDs        []string        `json:"skills"`
 	Goal            bool            `json:"goal"`
+	FilePath        string          `json:"file_path"`
+	Artifact        string          `json:"artifact_id"`
 	nativeInput     []map[string]any
 	selectedSkills  []webSkill
 }
@@ -292,6 +295,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return w.thread(ctx, p.Thread)
 	case "web.usage":
 		return w.usage(p.Account)
+	case "web.artifacts", "web.artifactRegister", "web.artifact":
+		return w.artifacts(ctx, r.Method, p)
 	case "web.guiQuitPreview":
 		if w.webOnly {
 			return nil, errors.New("GUI control is disabled in web-only mode")

@@ -56,6 +56,14 @@ button:hover { background: var(--hover); }
 .chat-header-controls select { color: inherit; }
 .assistant-message, .empty-conversation h2 { color: inherit; }
 .user-message p { background: var(--message-bg); border: 1px solid var(--message-line); border-radius: 16px 16px 5px 16px; }
+.connection-banner { flex-shrink: 0; background: var(--surface); color: var(--muted); border-bottom: 1px solid var(--line); }
+.connection-banner button { font-size: inherit; }
+.chat-files { padding: 0; margin: 0 0 18px; list-style: none; }
+.chat-files li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.chat-files li small { display: block; overflow-wrap: anywhere; color: var(--muted); }
+.chat-file-link { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 5px; max-width: 100%; overflow-wrap: anywhere; color: var(--accent); }
+.chat-file-link img { max-width: 100%; max-height: 420px; object-fit: contain; border-radius: 8px; }
+.attached-message { flex-direction: column; align-items: flex-end; gap: 8px; }
 .composer { background: var(--composer-bg); border-color: var(--field-line); }
 .composer textarea { background: transparent; }
 .turn-details, .markdown blockquote { border-color: var(--line); }

@@ -6,8 +6,8 @@ import { currentSubscription } from "./push";
 export const queueDraftKeyPrefix = "codexm.queueDraft.";
 type AccessStatus = "checking" | "authenticated" | "anonymous" | "unavailable";
 let state: Data = {};
-let access: { status: AccessStatus; message: string; password: boolean } =
-  { status: "checking", message: "", password: true };
+let access: { status: AccessStatus; message: string; password: boolean; online: boolean } =
+  { status: "checking", message: "", password: true, online: false };
 const listeners = new Set<() => void>(),
   authListeners = new Set<() => void>();
 const documents = new Map<string, Data>();
@@ -24,7 +24,9 @@ const documents = new Map<string, Data>();
       });
   },
   endUpdate() {
-    state = documents.get("state") || {};
+    const next = documents.get("state");
+    if (!next && access.status === "authenticated") return;
+    state = next || {};
     for (const listener of listeners) listener();
   },
   saveOriginals() {},
@@ -52,11 +54,16 @@ export const useAccess = () =>
     },
     () => access,
   );
-function setAccess(status: AccessStatus, message = "", password = access.password) {
-  access = { status, message, password };
+function setAccess(status: AccessStatus, message = "", password = access.password, online = status === "authenticated") {
+  access = { status, message, password, online };
   for (const listener of authListeners) listener();
 }
+export function connectionAvailable() {
+  return access.online && Meteor.status().connected;
+}
 export function method<T = any>(name: string, args: any[]): Promise<T> {
+  if (name !== "codexm.authenticate" && !connectionAvailable())
+    return Promise.reject(Object.assign(new Error("서버 연결이 복구되면 다시 시도해 주세요."), { code: "connection_recovering" }));
   return new Promise((resolve, reject) =>
     Meteor.apply(name, args, { noRetry: true }, (error: any, result: any) =>
       error ? reject(error) : resolve(result),
@@ -76,12 +83,41 @@ export function mutationUnconfirmed(message: string) {
 let subscription: Meteor.SubscriptionHandle | undefined;
 let authEpoch = 0;
 let checking: Promise<void> | undefined;
+let authRetry: ReturnType<typeof setTimeout> | undefined;
+let retryDelay = 1000;
 
 function resetConnection() {
   authEpoch++;
   checking = undefined;
+  clearTimeout(authRetry);
+  retryDelay = 1000;
   subscription?.stop();
   subscription = undefined;
+}
+
+function clearView() {
+  documents.clear();
+  state = {};
+  for (const listener of listeners) listener();
+}
+
+function connecting() {
+  if (access.status === "authenticated") setAccess("authenticated", "서버 연결을 복구하는 중…", access.password, false);
+  else if (access.status !== "anonymous") setAccess("checking");
+}
+
+function retryAuthentication(epoch: number, message: string) {
+  if (epoch !== authEpoch || !Meteor.status().connected) return;
+  if (access.status === "authenticated") connecting();
+  else setAccess("unavailable", message);
+  clearTimeout(authRetry);
+  authRetry = setTimeout(() => { if (epoch === authEpoch) void authenticate(); }, retryDelay);
+  retryDelay = Math.min(retryDelay * 2, 15_000);
+}
+
+export function reconnect() {
+  if (!Meteor.status().connected) { Meteor.reconnect(); return; }
+  if (!access.online && access.status !== "anonymous") void authenticate();
 }
 
 function authPost(endpoint: string, data: Record<string, string> = {}) {
@@ -98,16 +134,24 @@ export function authenticate(message?: string): Promise<void> {
   if (!Meteor.status().connected) return Promise.resolve();
   if (checking) return checking;
   const epoch = authEpoch;
-  setAccess("checking");
+  clearTimeout(authRetry);
+  connecting();
   checking = (async () => {
     try {
       const response = await authPost("ticket");
       if (epoch !== authEpoch) return;
       if (response.status === 401) {
-        const mode = await fetch("/auth/mode", { signal: AbortSignal.timeout(12_000) });
-        if (!mode.ok) throw new Error("로그인 설정을 읽을 수 없습니다.");
-        const { password } = await mode.json();
-        if (epoch === authEpoch) setAccess("anonymous", message || "로그인이 필요합니다.", password !== false);
+        subscription?.stop();
+        subscription = undefined;
+        clearView();
+        setAccess("anonymous", message || "로그인이 필요합니다.");
+        try {
+          const mode = await fetch("/auth/mode", { signal: AbortSignal.timeout(12_000) });
+          if (mode.ok && epoch === authEpoch && access.status === "anonymous") {
+            const { password } = await mode.json();
+            if (epoch === authEpoch && access.status === "anonymous") setAccess("anonymous", access.message, password !== false);
+          }
+        } catch { /* Keep the login form available while the settings endpoint recovers. */ }
         return;
       }
       const data = await response.json();
@@ -118,14 +162,13 @@ export function authenticate(message?: string): Promise<void> {
       subscription?.stop();
       subscription = Meteor.subscribe("codexm.state", {
         onStop(error: any) {
-          if (error && epoch === authEpoch && Meteor.status().connected) {
-            setAccess("unavailable", error.reason || error.message);
-          }
+          if (error) retryAuthentication(epoch, error.reason || error.message);
         },
       });
+      retryDelay = 1000;
       setAccess("authenticated");
     } catch (error) {
-      if (epoch === authEpoch) setAccess("unavailable", (error as Error).message);
+      retryAuthentication(epoch, (error as Error).message);
     } finally {
       if (epoch === authEpoch) checking = undefined;
     }
@@ -160,10 +203,8 @@ export async function logout() {
     }
   } catch { /* The server already ended this session. */ }
   resetConnection();
-  documents.clear();
-  state = {};
-  for (const listener of listeners) listener();
-  setAccess("checking");
+  clearView();
+  setAccess("anonymous", "로그아웃했습니다.");
   await authenticate("로그아웃했습니다.");
 }
 
@@ -178,7 +219,7 @@ async function startAccess() {
       message = (error as Error).message;
     }
   }
-  let wasConnected = false;
+  let wasConnected: boolean | undefined;
   Tracker.autorun(() => {
     const connected = Meteor.status().connected;
     if (connected === wasConnected) return;
@@ -188,8 +229,12 @@ async function startAccess() {
       message = undefined;
     } else {
       resetConnection();
-      setAccess("checking", "서버 연결 중…");
+      connecting();
     }
+  });
+  window.addEventListener("online", reconnect);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") reconnect();
   });
 }
 Meteor.startup(() => { void startAccess(); });

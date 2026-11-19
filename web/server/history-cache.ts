@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Collection } from "mongodb";
-import { chatIdFromPath, type ChatHistory, type ChatHistoryPage } from "../imports/contracts/web";
+import { chatIdFromPath, type ChatHistory, type ChatHistoryPage, type ChatHistoryUpdate, type HistoryBasis } from "../imports/contracts/web";
 import type { CacheDatabase } from "./cache-database";
 
 type PageKey = { id: string; thread: string };
@@ -19,6 +19,29 @@ type NativeHistory = Omit<ChatHistory, keyof ChatHistoryPage> & Partial<ChatHist
   historyRevision?: string;
   historyUnchanged?: boolean;
 };
+
+const revisionPattern = /^[0-9a-f]{64}$/;
+const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+function historyBasis(params: Record<string, unknown>): HistoryBasis | undefined {
+  if (params.history_basis === undefined || params.cursor) return;
+  const value = params.history_basis as Partial<HistoryBasis> | null;
+  const hash = (value: unknown) => value === undefined || typeof value === "string" && revisionPattern.test(value);
+  if (!value || !Array.isArray(value.turns) || value.turns.length > 20 || !hash(value.revision) || !hash(value.relayDigest) ||
+    value.turns.some(turn => !turn || typeof turn.id !== "string" || turn.id.length > 256 ||
+      typeof turn.digest !== "string" || !revisionPattern.test(turn.digest)) ||
+    new Set(value.turns.map(turn => turn.id)).size !== value.turns.length) {
+    throw new Error("이력 갱신 기준을 확인할 수 없습니다.");
+  }
+  return { revision: value.revision, relayDigest: value.relayDigest, turns: value.turns };
+}
+
+function pageDelta(page: ChatHistoryPage, revision: string | undefined, basis: HistoryBasis): ChatHistoryPage {
+  const known = new Map(basis.turns.map(turn => [turn.id, turn.digest]));
+  const order = page.turns.map(turn => ({ id: turn.id, digest: digest(turn) }));
+  const turns = page.turns.filter((turn, i) => known.get(turn.id) !== order[i].digest);
+  return { turns, nextCursor: page.nextCursor, sync: { revision, order } };
+}
 
 function pageKey(params: Record<string, unknown>): PageKey | undefined {
   const { thread_id: thread } = params;
@@ -85,28 +108,42 @@ export class ChatHistoryCache {
     const saved = await this.load(key);
     if (!saved || !key) return null;
     const revision = await nativeVersion(key.thread);
-    return revision === saved.revision ? saved.page : null;
+    if (revision !== saved.revision) return null;
+    return historyBasis(params) ? pageDelta(saved.page, revision, { turns: [] }) : saved.page;
   }
 
-  async read(params: Record<string, unknown>, nativeRead: (revision: string) => Promise<NativeHistory>) {
+  async read(params: Record<string, unknown>, nativeRead: (revision: string) => Promise<NativeHistory>): Promise<ChatHistoryUpdate> {
     const key = pageKey(params);
-    if (!key || !this.pages()) return nativeRead("");
-    return this.withThread(key.thread, async () => {
-      const saved = await this.load(key);
-      const result = await nativeRead(saved?.revision ?? "");
-      const { historyRevision: revision, historyUnchanged, ...response } = result;
+    const basis = historyBasis(params);
+    const read = async (): Promise<ChatHistoryUpdate> => {
+      // A warm browser can validate its own revision without reading MongoDB.
+      const saved = basis?.revision ? undefined : await this.load(key);
+      const { historyRevision: revision, historyUnchanged, turns, nextCursor, relayedInputs, ...response } =
+        await nativeRead(basis?.revision ?? saved?.revision ?? "");
+      const relayDigest = basis ? digest(relayedInputs ?? []) : undefined;
+      const metadata = relayDigest === basis?.relayDigest && basis ? response : { ...response, relayedInputs };
+      if (historyUnchanged && revision && revision === basis?.revision) {
+        return { ...metadata, sync: { revision, relayDigest, unchanged: true } };
+      }
+      const patch = (page: ChatHistoryPage) => {
+        if (!basis) return { ...metadata, ...page };
+        const delta = pageDelta(page, revision, basis);
+        return { ...metadata, ...delta, sync: { ...delta.sync, relayDigest } };
+      };
       if (historyUnchanged && saved && revision === saved.revision) {
-        return { ...response, ...saved.page };
+        return patch(saved.page);
       }
-      if (revision && Array.isArray(response.turns) && response.turns.length) {
-        await this.save(key, revision, { turns: response.turns, nextCursor: response.nextCursor ?? null });
+      const page = { turns: turns ?? [], nextCursor: nextCursor ?? null };
+      if (key && revision && page.turns.length) {
+        await this.save(key, revision, page);
       }
-      return response;
-    });
+      return patch(page);
+    };
+    return key && this.pages() ? this.withThread(key.thread, read) : read();
   }
 
   private async save(key: PageKey, revision: string, page: ChatHistoryPage) {
-    if (!/^[0-9a-f]{64}$/.test(revision) || Buffer.byteLength(JSON.stringify(page)) > 12 * 1024 * 1024) return false;
+    if (!revisionPattern.test(revision) || Buffer.byteLength(JSON.stringify(page)) > 12 * 1024 * 1024) return false;
     try {
       const pages = this.pages();
       if (!pages) return false;
