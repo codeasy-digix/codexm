@@ -125,6 +125,11 @@ codexm account ACCOUNT_NAME --remove     # 목록 등록만 해제, 인증·대�
 인증을 강제로 바꾸지 않으며 기본 인증을 바꾼 GUI는 재실행해야 합니다.
 등록 해제는 과거 작업 기록을 변경하거나 다른 계정으로 작업을 자동 재배정하지 않습니다.
 
+`codexm doctor --pin-shared-storage`는 이 장비의 Codex `config.toml`에 공용
+`sqlite_home`을 지정합니다. GUI나 일반 CLI가 셸 환경을 상속하지 않은 경우에도 같은
+채팅 인덱스, 대화 본문 DB, 대기열을 읽습니다. 기존 설정은 비공개 상태 디렉터리에
+백업합니다. 다른 위치가 이미 명시돼 있으면 계정 선택 전에 충돌을 알려 줍니다.
+
 ## 선택적인 채팅 웹
 
 기본 TUI/메뉴 앱은 웹 서버·Node 없이 실행합니다. 선택적 Meteor + React 웹은 같은

@@ -45,22 +45,25 @@ func SetNativeDefault(c config.Config, name string) (string, error) {
 	if inside(resolvedRoot, resolvedShared) || inside(resolvedShared, resolvedRoot) {
 		return "", errors.New("native and named credentials must use separate homes")
 	}
-	fd, e := syscall.Open(filepath.Join(shared, ".account-default.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
+	lock, e := lockNativeAccountConfig(shared)
 	if e != nil {
-		return "", errors.New("cannot lock native default selection")
+		return "", e
 	}
-	lock := os.NewFile(uintptr(fd), "native default lock")
 	defer lock.Close()
-	if e = syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		return "", errors.New("another terminal is changing the native default; try again when it finishes")
-	}
 	conf := filepath.Join(shared, "config.toml")
 	beforeConfig, e := nativePrivateRead(conf, true)
 	if e != nil {
 		return "", e
 	}
+	native, e := parseNativeConfig(beforeConfig)
+	if e != nil {
+		return "", e
+	}
+	if _, e = verifyNativeSQLiteHome(shared, native.SQLiteHome); e != nil {
+		return "", e
+	}
 	source := filepath.Join(root, name, "auth.json")
-	if e = validateNativeFileLogin(beforeConfig, source); e != nil {
+	if e = validateNativeFileLogin(native, source); e != nil {
 		return "", e
 	}
 
@@ -145,18 +148,29 @@ func ValidateNativeAccount(c config.Config, name string) error {
 	if err != nil {
 		return err
 	}
-	return validateNativeFileLogin(b, filepath.Join(config.Expand(c.Runtime.AccountsDir), name, "auth.json"))
+	native, err := parseNativeConfig(b)
+	if err != nil {
+		return err
+	}
+	return validateNativeFileLogin(native, filepath.Join(config.Expand(c.Runtime.AccountsDir), name, "auth.json"))
 }
 
-func validateNativeFileLogin(beforeConfig []byte, source string) error {
-	var native struct {
-		Store       string `toml:"cli_auth_credentials_store"`
-		ForcedLogin string `toml:"forced_login_method"`
-		Workspace   string `toml:"forced_chatgpt_workspace_id"`
+type nativeConfig struct {
+	Store       string  `toml:"cli_auth_credentials_store"`
+	ForcedLogin string  `toml:"forced_login_method"`
+	Workspace   string  `toml:"forced_chatgpt_workspace_id"`
+	SQLiteHome  *string `toml:"sqlite_home"`
+}
+
+func parseNativeConfig(data []byte) (nativeConfig, error) {
+	var native nativeConfig
+	if toml.Unmarshal(data, &native) != nil {
+		return nativeConfig{}, errors.New("native configuration could not be read safely")
 	}
-	if toml.Unmarshal(beforeConfig, &native) != nil {
-		return errors.New("native configuration could not be read safely")
-	}
+	return native, nil
+}
+
+func validateNativeFileLogin(native nativeConfig, source string) error {
 	if native.Store != "" && native.Store != "file" {
 		return errors.New("native account selection requires cli_auth_credentials_store = \"file\"; the native login was preserved")
 	}
