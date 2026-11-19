@@ -285,7 +285,7 @@ func (w *WebChat) catalog(ctx context.Context, _ *webConnection, p webParams) (a
 	return map[string]any{
 		"threads": threads, "nextCursor": next, "projects": desktop.Projects, "otherProjects": desktop.AdditionalProjects,
 		"pinned": pinned, "accounts": accountList, "defaultAccount": webDefaultAccount(w.c, accountList),
-		"guiQuitAvailable": runtime.GOOS == "darwin", "defaultCwd": webDefaultCwd(), "total": len(items),
+		"guiQuitAvailable": !w.webOnly && runtime.GOOS == "darwin", "defaultCwd": webDefaultCwd(), "total": len(items),
 	}, nil
 }
 

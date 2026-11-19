@@ -31,6 +31,7 @@ export const bridgeContract = {
     { name: "web.historyVersion", mutation: false, model: false },
     { name: "web.historySources", mutation: false, model: false },
     { name: "web.historyPage", mutation: false, model: false },
+    { name: "web.dispatchQueued", mutation: false, model: false },
   ],
 };
 
@@ -53,6 +54,9 @@ export type ChatHistoryPage = {
 export type QueuedInput = {
   id: string;
   input: Array<{ type: string; text?: string; text_elements?: unknown[] }>;
+  account?: string;
+  state?: "pending" | "sending" | "blocked";
+  detail?: string;
 };
 export type RelayedInput = { id: string; text: string; observedTurnId?: string; sentAt: number; acceptedAt: number };
 export type ChatHistory = ChatHistoryPage & {
@@ -63,6 +67,8 @@ export type ChatHistory = ChatHistoryPage & {
   delivery?: { state: "ready" | "waiting" | "idle" | "unavailable" | "relay"; turnId?: string } | null;
   loginDraining?: boolean;
   loginGeneration?: number;
+  webOnly?: boolean;
+  executionAccount?: string;
 };
 export type AccountLimits = { fiveHour: number | null; week: number | null; loading: boolean };
 

@@ -32,6 +32,8 @@ type Spec struct {
 	TmuxServer                                                 string `json:"tmux_server,omitempty"`
 	Workspace                                                  bool   `json:"workspace,omitempty"`
 	Service                                                    bool   `json:"service,omitempty"`
+	External                                                   bool   `json:"external_supervisor,omitempty"`
+	WebOnly                                                    bool   `json:"web_only,omitempty"`
 	Args                                                       []string
 	PID                                                        int
 }
@@ -53,6 +55,17 @@ func webTarget(spec Spec) string {
 	return spec.Session + ":"
 }
 func webAlive(ctx context.Context, spec Spec) bool {
+	if spec.External {
+		if spec.PID <= 0 || syscall.Kill(spec.PID, 0) != nil {
+			return false
+		}
+		lock, err := os.OpenFile(filepath.Join(spec.State, "process.lock"), os.O_RDWR, 0)
+		if err != nil {
+			return false
+		}
+		defer lock.Close()
+		return unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB) == unix.EWOULDBLOCK
+	}
 	if spec.Service {
 		return webService(spec).Status(ctx).Running
 	}
@@ -84,6 +97,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	port := f.Int("port", 4317, "loopback port")
 	noOpen := f.Bool("no-open", false, "print the local URL without opening a browser")
 	publicOrigin := f.String("public-origin", "", "HTTPS origin served by a loopback reverse proxy")
+	webOnly := f.Bool("web-only", false, "handle only conversations owned by the web app")
 	username := f.String("username", "", "web login username (web user)")
 	passwordStdin := f.Bool("password-stdin", false, "read web password from stdin (web user)")
 	if err := f.Parse(args); err != nil {
@@ -102,6 +116,9 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	if *username != "" || *passwordStdin {
 		return errors.New("login options require codexm web user")
 	}
+	if *webOnly && action != "start" && action != "serve" {
+		return errors.New("--web-only requires web start or web serve")
+	}
 	path := filepath.Join(state, "launch.json")
 	var spec Spec
 	b, _ := os.ReadFile(path)
@@ -118,7 +135,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		}
 		return json.NewEncoder(out).Encode(m)
 	case "status":
-		return json.NewEncoder(out).Encode(map[string]any{"running": alive && ready(state, spec.Origin), "starting": alive && !ready(state, spec.Origin), "url": spec.Origin, "session": spec.Session, "state": state, "tmux_server": webTmuxServer(spec), "os_service": spec.Service})
+		return json.NewEncoder(out).Encode(map[string]any{"running": alive && ready(state, spec.Origin), "starting": alive && !ready(state, spec.Origin), "url": spec.Origin, "session": spec.Session, "state": state, "tmux_server": webTmuxServer(spec), "os_service": spec.Service || spec.External, "external_supervisor": spec.External, "web_only": spec.WebOnly})
 	case "logs":
 		b, err := os.ReadFile(filepath.Join(state, "web.log"))
 		if err != nil {
@@ -130,6 +147,9 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		_, err = out.Write(b)
 		return err
 	case "stop":
+		if spec.External {
+			return errors.New("web is managed by an external OS service; stop it with its service manager")
+		}
 		if spec.Service {
 			if err := webService(spec).Stop(ctx); err != nil {
 				return err
@@ -153,6 +173,9 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		}
 		return errors.New("web shutdown did not finish; inspect its named tmux session")
 	case "uninstall":
+		if spec.External {
+			return errors.New("web is managed by an external OS service; remove its registration with its service manager")
+		}
 		if !spec.Service {
 			return errors.New("no managed web service is registered for this configuration")
 		}
@@ -162,10 +185,20 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		fmt.Fprintln(out, "Web service registration removed; local web data preserved.")
 		return nil
 	case "start":
+		if spec.External && !alive {
+			return errors.New("web is managed by an external OS service; start it with its service manager")
+		}
+	case "serve":
+		if *dev != "" {
+			return errors.New("web serve requires a production bundle")
+		}
 	default:
-		return errors.New("usage: codexm web [status|stop|logs|user|uninstall] [--public-origin https://HOST] [--no-open]")
+		return errors.New("usage: codexm web [start|serve|status|stop|logs|user|uninstall] [--public-origin https://HOST] [--web-only] [--no-open]")
 	}
 	if alive {
+		if action == "serve" {
+			return errors.New("another web process owns this configuration")
+		}
 		if !ready(state, spec.Origin) {
 			fmt.Fprintln(out, "Web is starting; inspect codexm web logs and retry when ready.")
 			return nil
@@ -194,6 +227,7 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 	probe.Close()
 	spec = Spec{Session: "codexm-web", TmuxServer: "default", Workspace: true, Origin: "http://" + address, Config: c.Path, Binary: self, State: state}
 	spec.Listen = address
+	spec.WebOnly = *webOnly
 	if *publicOrigin != "" {
 		spec.Origin, err = httpsOrigin(*publicOrigin)
 		if err != nil {
@@ -236,6 +270,16 @@ func Command(ctx context.Context, c config.Config, self string, args []string, o
 		if err != nil {
 			return err
 		}
+	}
+	if action == "serve" {
+		spec.External, spec.Service, spec.PID = true, false, os.Getpid()
+		return runWeb(ctx, spec, func() error {
+			b, _ := json.Marshal(spec)
+			if err := config.AtomicWrite(path, b, 0600); err != nil {
+				return err
+			}
+			return unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		})
 	}
 	if webAlive(ctx, spec) {
 		return errors.New("named web session belongs to another configuration")
@@ -373,6 +417,10 @@ func Run(ctx context.Context, c config.Config, path string) error {
 	if s.Config != c.Path || s.State != filepath.Join(c.StateDir(), "web") {
 		return errors.New("web launch configuration mismatch")
 	}
+	return runWeb(ctx, s, nil)
+}
+
+func runWeb(ctx context.Context, s Spec, publish func() error) error {
 	address, err := listenAddress(s)
 	if err != nil {
 		return err
@@ -386,6 +434,12 @@ func Run(ctx context.Context, c config.Config, path string) error {
 	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return errors.New("another web process owns this configuration")
 	}
+	if publish != nil {
+		if err := publish(); err != nil {
+			return err
+		}
+	}
+	_ = os.Remove(filepath.Join(s.State, "ready.json"))
 	log, err := os.OpenFile(filepath.Join(s.State, "web.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
@@ -393,8 +447,10 @@ func Run(ctx context.Context, c config.Config, path string) error {
 	defer log.Close()
 	cmd := exec.Command(s.Program, s.Args...)
 	cmd.Dir = s.Directory
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = append(os.Environ(), "BIND_IP=127.0.0.1", "ROOT_URL="+s.Origin, "PORT="+port, "CODEXM_BINARY="+s.Binary, "CODEXM_CONFIG="+s.Config, "CODEXM_WEB_STATE="+s.State, "DO_NOT_TRACK=1", "RSPACK_DEVSERVER_PORT="+strconv.Itoa(func() int { p, _ := strconv.Atoi(port); return p + 3 }()))
+	if !s.External {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+	cmd.Env = append(os.Environ(), "BIND_IP=127.0.0.1", "ROOT_URL="+s.Origin, "PORT="+port, "CODEXM_BINARY="+s.Binary, "CODEXM_CONFIG="+s.Config, "CODEXM_WEB_STATE="+s.State, "CODEXM_WEB_ONLY="+strconv.FormatBool(s.WebOnly), "DO_NOT_TRACK=1", "RSPACK_DEVSERVER_PORT="+strconv.Itoa(func() int { p, _ := strconv.Atoi(port); return p + 3 }()))
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if err = cmd.Start(); err != nil {
@@ -402,14 +458,21 @@ func Run(ctx context.Context, c config.Config, path string) error {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	signal := func(sig syscall.Signal) {
+		if s.External {
+			_ = cmd.Process.Signal(sig)
+		} else {
+			_ = syscall.Kill(-cmd.Process.Pid, sig)
+		}
+	}
 	select {
 	case err = <-done:
 	case <-ctx.Done():
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		signal(syscall.SIGTERM)
 		select {
 		case err = <-done:
 		case <-time.After(5 * time.Second):
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			signal(syscall.SIGKILL)
 			err = <-done
 		}
 	}

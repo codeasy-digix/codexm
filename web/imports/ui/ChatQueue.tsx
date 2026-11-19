@@ -117,8 +117,10 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
           const selected = draft?.kind === "editing" && draft.id === item.id;
           return <li key={item.id} className="queue-entry">
             <p>{inputText(item.input)}</p>
+            {item.account && <small className="muted">{item.account === "default" ? "기본 계정" : item.account}
+              {item.state === "sending" && " · 전송 결과 확인 필요"}{item.detail && ` · ${item.detail}`}</small>}
             {original !== undefined && <div className="queue-actions">
-              <button type="button" disabled={locked || !!draft} onClick={() => {
+              <button type="button" disabled={locked || !!draft || item.state === "sending"} onClick={() => {
                 setError("");setNotice("");
                 keep({ kind: "editing", id: item.id, original, text: original });
               }}>수정</button>
@@ -134,7 +136,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
       <textarea id={editorID} rows={3} value={draft.text} onChange={e => keep({ ...draft, text: e.target.value })}
         readOnly={pending} />
       {draft.kind === "editing" && changed && <p role="status">대기 상태가 바뀌었습니다. 적어 둔 내용은 복사할 수 있습니다.</p>}
-      {draft.kind === "recalled" && draft.checkHistory && <p>다른 Codex 창에서 이미 실행을 시작했는지 대화에서 확인한 뒤 다시 추가하세요.</p>}
+      {draft.kind === "recalled" && draft.checkHistory && <p>이미 실행을 시작했는지 대화에서 확인한 뒤 다시 추가하세요.</p>}
       {draft.kind === "recalled" && draft.unconfirmed && !pending && <p role="status">대기열 변경 결과를 대화와 대기열에서 먼저 확인해 주세요. 초안은 복사할 수 있습니다.</p>}
       <div className="queue-actions">
         {draft.kind === "editing" ? <button type="button" className="primary"

@@ -148,7 +148,8 @@
   an isolated tmux PTY. Use synthetic accounts/chats for handoff tests.
   Report unsupported ownership cases instead of hiding failures.
 - This repository alone owns source, builds, installation, updates and product docs.
-  `.home` only registers an installed command and loads personal shell settings.
+  `.home` registers installed commands, personal shell settings and host-specific
+  OS service definitions for the installed foreground web command.
   Never restore product cloning/pins/build/install/update helpers there.
 - Prefer Rust for new native modules and standalone data/file processing tools.
   Reuse the root Cargo workspace, locked dependencies, and `crates/` libraries.

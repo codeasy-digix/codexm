@@ -10,6 +10,7 @@ import { MongoClient } from "mongodb";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = dirname(root);
+const webOnly = process.env.CODEXM_WEB_TEST_MODE === "web-only";
 const args = process.argv.slice(2);
 const options = {};
 for (let i = 0; i < args.length; i += 2) {
@@ -29,6 +30,7 @@ const fixtureDir = await mkdtemp(join(output, "fixture-"));
 const log = await open(join(output, "check.log"), "a", 0o600);
 let fixture, fixtureExit, manifest;
 let mongo, mongoDirectory;
+let foreground;
 const children = new Set();
 function run(program, argv, env = process.env, cwd = source) {
   const child = spawn(program, argv, { env, cwd, stdio: ["ignore", log.fd, log.fd] });
@@ -104,7 +106,11 @@ try {
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const env = { ...process.env, HOME: manifest.home, PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
-  await run(options.binary, ["--config", manifest.config, "web", "--bundle", options.bundle, "--port", String(port), "--no-open"], env).done;
+  const serviceArgs = ["--config", manifest.config, "web", ...(webOnly ? ["serve", "--web-only"] : []),
+    "--bundle", options.bundle, "--port", String(port), "--no-open"];
+  const service = run(options.binary, serviceArgs, env);
+  if (webOnly) foreground = service;
+  else await service.done;
   // The launcher may return "Building" before the service finishes starting.
   let webReady = false;
   for (const deadline = Date.now() + 120_000; Date.now() < deadline;) {
@@ -114,7 +120,8 @@ try {
     await new Promise(ok => setTimeout(ok, 500));
   }
   if (!webReady) throw new Error("isolated web service did not become ready");
-  await run(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", "tests/chat-gui.spec.ts"], {
+  const suite = webOnly ? "tests/web-only.spec.ts" : "tests/chat-gui.spec.ts";
+  await run(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", suite], {
     ...process.env, CODEXM_CHAT_GUI_FIXTURE: fixtureDir, CODEXM_CHAT_GUI_BINARY: options.binary,
     CODEXM_WEB_TEST_URL: url, CODEXM_WEB_TEST_MONGO: options.mongod ? "1" : "",
   }, root).done;
@@ -123,7 +130,12 @@ try {
   try {
     if (manifest) {
       const env = { ...process.env, HOME: manifest.home };
-      await run(options.binary, ["--config", manifest.config, "web", "uninstall"], env).done;
+      if (foreground) {
+        if (foreground.child.exitCode === null) foreground.child.kill("SIGTERM");
+        await foreground.done;
+      } else {
+        await run(options.binary, ["--config", manifest.config, "web", "uninstall"], env).done;
+      }
       await writeFile(join(fixtureDir, "stop-fixture"), "isolated web service removed");
     }
     if (fixtureExit) await fixtureExit;

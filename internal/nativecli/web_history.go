@@ -224,6 +224,18 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		Thread WebThread `json:"thread"`
 	}
 	if err := c.client.Call(ctx, "thread/read", map[string]any{"threadId": p.Thread, "includeTurns": false}, &read); err != nil {
+		if w.webOnly {
+			draft, draftErr := w.thread(ctx, p.Thread)
+			if draftErr == nil && draft != nil && draft.Status.Type == "idle" && !draft.Archived && draft.Account != c.account {
+				if _, entryErr := catalog.Lookup(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread); errors.Is(entryErr, sql.ErrNoRows) {
+					q, queueErr := w.ownedQueueDisplay(p.Thread)
+					if queueErr != nil {
+						return nil, queueErr
+					}
+					return map[string]any{"thread": draft, "turns": []WebTurn{}, "queue": q, "pending": []webPendingRequest{}, "webOnly": true}, nil
+				}
+			}
+		}
 		return nil, err
 	}
 	home := config.Expand(w.c.Runtime.SharedCodexHome)
@@ -259,6 +271,15 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		cancel()
 	}
 	read.Thread.External = len(owners) > 0 && (len(owners) != 1 || owners[0] != c.process.PID)
+	executionAccount := ""
+	if w.webOnly && len(owners) == 1 {
+		_, owner, release := w.leaseWebWriter(ctx, owners[0])
+		if owner != nil {
+			executionAccount = owner.loginName
+			read.Thread.External = false
+			release()
+		}
+	}
 	var delivery *webDelivery
 	var externalTurn string
 	if read.Thread.External && p.Cursor == "" && !read.Thread.Archived {
@@ -276,10 +297,20 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		if err != nil {
 			return nil, err
 		}
+		if w.webOnly {
+			owned, err := w.ownedQueueDisplay(p.Thread)
+			if err != nil {
+				return nil, err
+			}
+			queue.Data = append(queue.Data, owned...)
+		}
 	}
 	result := map[string]any{
 		"thread": read.Thread, "queue": queue.Data, "queueNextCursor": queue.NextCursor, "pending": w.writerPending(c, p.Thread, owners),
 		"delivery": delivery, "loginDraining": w.loginChanged(c), "loginGeneration": c.generation,
+	}
+	if w.webOnly {
+		result["webOnly"], result["executionAccount"] = true, executionAccount
 	}
 	if p.Cursor == "" {
 		result["relayedInputs"] = webRelayedInputs(w.c, p.Thread)

@@ -46,17 +46,11 @@ func (w *WebChat) openInputOwner(ctx context.Context, id string, pid int) (*webI
 		return nil, err
 	}
 	target := &webInputOwner{pid: pid, incarnation: incarnation}
-	w.mu.Lock()
-	for _, c := range w.connections {
-		if c.process.PID == pid && !c.retiring && sameProcess(ctx, c.process) {
-			c.inUse++
-			target.client, target.web = c.client, c
-			target.release = func() { w.releaseConnection(c) }
-			break
-		}
-	}
-	w.mu.Unlock()
+	target.client, target.web, target.release = w.leaseWebWriter(ctx, pid)
 	if target.client == nil {
+		if w.webOnly {
+			return nil, errWebForeignInput
+		}
 		target.client, err = w.dialExternalWriter(ctx, pid)
 		if err != nil {
 			return nil, err
@@ -69,6 +63,18 @@ func (w *WebChat) openInputOwner(ctx context.Context, id string, pid int) (*webI
 		return nil, errWebForeignInput
 	}
 	return target, nil
+}
+
+func (w *WebChat) leaseWebWriter(ctx context.Context, pid int) (*cr.Client, *webConnection, func()) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, c := range w.connections {
+		if c.process.PID == pid && !c.retiring && sameProcess(ctx, c.process) {
+			c.inUse++
+			return c.client, c, func() { w.releaseConnection(c) }
+		}
+	}
+	return nil, nil, nil
 }
 
 func (w *WebChat) dialExternalWriter(ctx context.Context, pid int) (*cr.Client, error) {
@@ -209,6 +215,9 @@ func (w *WebChat) externalDelivery(ctx context.Context, id string, pids []int) w
 	defer cancel()
 	o, err := w.openInputOwner(ctx, id, pids[0])
 	if err != nil {
+		if w.webOnly {
+			return unavailable
+		}
 		return w.guiRelayDelivery(ctx, id, pids[0], unavailable)
 	}
 	defer o.release()

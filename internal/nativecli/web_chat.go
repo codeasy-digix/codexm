@@ -36,6 +36,7 @@ var WebMethods = []Method{
 	{"web.historyVersion", false, false},
 	{"web.historySources", false, false},
 	{"web.historyPage", false, false},
+	{"web.dispatchQueued", false, false},
 }
 
 func webSharedMethod(name string) bool {
@@ -82,6 +83,7 @@ type webConnection struct {
 	client     *cr.Client
 	process    processIdentity
 	account    string
+	loginName  string
 	login      accounts.LoginIdentity
 	generation uint64
 	// The connection pool lock guards usage and retirement.
@@ -99,6 +101,8 @@ type WebChat struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	c           config.Config
+	webOnly     bool
+	queueCursor string // Accessed by the serial web bridge only.
 	mu          sync.Mutex
 	connections map[string]*webConnection
 	generation  uint64
@@ -109,7 +113,8 @@ type WebChat struct {
 
 func NewWebChat(ctx context.Context, c config.Config) *WebChat {
 	ctx, cancel := context.WithCancel(ctx)
-	return &WebChat{ctx: ctx, cancel: cancel, c: c, connections: map[string]*webConnection{}}
+	return &WebChat{ctx: ctx, cancel: cancel, c: c, webOnly: os.Getenv("CODEXM_WEB_ONLY") == "true",
+		connections: map[string]*webConnection{}}
 }
 
 func (w *WebChat) Close() {
@@ -276,8 +281,14 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 	case "web.usage":
 		return w.usage(p.Account)
 	case "web.guiQuitPreview":
+		if w.webOnly {
+			return nil, errors.New("GUI control is disabled in web-only mode")
+		}
 		return w.guiQuit.preview(ctx, r.Owner, findWebDesktop)
 	case "web.guiQuit":
+		if w.webOnly {
+			return nil, errors.New("GUI control is disabled in web-only mode")
+		}
 		err := w.guiQuit.quit(ctx, r.Owner, p.Confirmation, findWebDesktop, stopWebDesktop)
 		return err == nil, err
 	case "web.guiRelayStatus":
@@ -288,6 +299,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return w.historyVersion(ctx, p.Thread)
 	case "web.historySources":
 		return w.historySources(ctx)
+	case "web.dispatchQueued":
+		return true, w.dispatchQueued(ctx)
 	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {

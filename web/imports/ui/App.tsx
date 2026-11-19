@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { authenticate, call, exchange, login, logout, useAccess, useStateData } from "../../client/data";
-import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
+import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type Catalog, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
 import { AccountLimits } from "./AccountLimits";
 import { Accounts } from "./Accounts";
 import { ChatActivityLabel } from "./ChatActivity";
@@ -34,6 +34,7 @@ export function App() {
   const [shortcuts, setShortcuts] = useState(readChatShortcuts);
   const [dialog,setDialog]=useState<Dialog|null>(null),[menu,setMenu]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [formName,setFormName]=useState(""),[formPath,setFormPath]=useState(""),[formProject,setFormProject]=useState(""),[formBusy,setFormBusy]=useState(false);
+  const [formAccount,setFormAccount]=useState("default");
   const catalogState=useCatalog(ready,account,query,project,section==="archived");
   const {catalog}=catalogState;
   const projects=[...(catalog?.projects||[]),...(catalog?.otherProjects||[])];
@@ -62,9 +63,11 @@ export function App() {
   for (const p of projects) projectNames.set(p.name, (projectNames.get(p.name) ?? 0) + 1);
   const scroll=useRef<HTMLDivElement>(null),stick=useRef(true),anchor=useRef<{height:number;top:number;thread:string;revision:number}|null>(null),olderBusy=useRef(false);
   const first=new Date().getHours()<12?"무엇부터 시작할까요?":"어떤 작업을 이어갈까요?";
-  const accounts=catalog?.accounts||data.snapshot?.accounts||[];
+  const accounts: Catalog["accounts"] = catalog?.accounts || data.snapshot?.accounts || [];
   const defaultAccount = catalog?.defaultAccount || accounts.find((candidate: {name: string; default?: boolean}) => candidate.default)?.name;
   const defaultLabel = defaultAccount ? `기본 계정 · ${defaultAccount}` : "기본 계정";
+  const executionAccount = history?.executionAccount;
+  const pendingAccountChange = !!executionAccount && executionAccount !== (account === "default" ? defaultAccount || account : account);
   const chat=selected&&history?{
     ...history.thread,
     name: history.thread.name || selected.name,
@@ -136,6 +139,7 @@ export function App() {
   function openDialog(next:Dialog) {
     setError("");setMenu(false);setFormName("");
     const target=next.kind==="new"?selectedProject:undefined;
+    if (next.kind === "new") setFormAccount(account);
     setFormPath(target?.roots[0]?.path||catalog?.defaultCwd||"");
     setFormProject("chat"in next?next.chat.projectId||"":target?.id||"");setDialog(next);
   }
@@ -147,7 +151,7 @@ export function App() {
     e.preventDefault();if(!dialog||formBusy)return;setFormBusy(true);setError("");
     try {
       if(dialog.kind==="new") {
-        const result=await mutate("web.create",{cwd:formPath,project_id:formProject});choose(result.thread);
+        const result=await mutate("web.create",{cwd:formPath,project_id:formProject,account:formAccount});choose(result.thread);
       } else if(dialog.kind==="project") {
         const result=await mutate("web.projectCreate",{name:formName,cwd:formPath});filter("chats",result.project.id);setNotice("프로젝트를 추가했습니다.");
       } else if(dialog.kind==="move") {
@@ -225,6 +229,7 @@ export function App() {
               </label>
               {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" onClick={() => openDialog({kind: "gui-quit"})}>GUI 종료</button>}
             </div>
+            {executionAccount && <small className="default-account-name">현재 실행 {executionAccount === "default" ? "기본 계정" : executionAccount}</small>}
             {account !== "default" && defaultAccount && <small className="default-account-name" title={defaultLabel}>{defaultLabel}</small>}
             {(!threadId || selected) && <AccountLimits key={account} account={account} />}
           </div>
@@ -239,7 +244,7 @@ export function App() {
             onSelectionChange={value => setTurnSelections(current => ({ ...current, [composerKey]: value }))}
             shortcuts={shortcuts}
             shortcutsEnabled={!dialog && !sidebar && !menu}
-            deferred={!!(activity.accountTurn?.status === "inProgress" || history?.thread.status.type === "active" || history?.thread.externalOwner)}
+            deferred={!!((!pendingAccountChange && (activity.accountTurn?.status === "inProgress" || history?.thread.status.type === "active")) || history?.thread.externalOwner)}
           />}
         </div>
         {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>void pin()}>{catalog?.pinned.some(t=>t.id===chat.id)?"고정 해제":"고정하기"}</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" onClick={()=>openDialog({kind:"archive",chat:{...chat,archived:isArchived}})}>{isArchived?"보관 해제":"보관하기"}</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
@@ -272,14 +277,23 @@ export function App() {
       {selected && openActivity?.source === "external" && openActivity.state === "waiting" && !pending.length &&
         <p className="external-request-note" role="status">이 채팅을 열어 둔 Codex 앱이나 CLI에서 응답해 주세요.</p>}
       {chat&&!isArchived&&<Composer
-        key={composerKey}
+        key={chat.id}
         chat={chat}
         account={account}
         history={history}
-        liveTurn={activity.accountTurn}
+        liveTurn={history?.webOnly ? activity.turn : activity.accountTurn}
+        pendingAccountChange={pendingAccountChange}
         models={modelState.models}
         selection={selection}
-        onSent={()=>{stick.current=true;void chatState.refresh();void catalogState.refresh();}}
+        onSent={id => {
+          stick.current = true;
+          if (id && id !== chat.id) {
+            navigate(id, true);
+          } else {
+            void chatState.refresh();
+          }
+          void catalogState.refresh();
+        }}
       />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
     </main>
@@ -300,6 +314,7 @@ export function App() {
       />:<form className="dialog-form" onSubmit={e=>void submitDialog(e)}>
         {"chat"in dialog&&<p className="dialog-chat-title">{chatTitle(dialog.chat)}</p>}
         {(dialog.kind==="new"||dialog.kind==="move")&&<label>프로젝트<select aria-label="프로젝트" value={formProject} onChange={e=>{setFormProject(e.target.value);const chosen=projects.find(p=>p.id===e.target.value);if(chosen?.roots[0])setFormPath(chosen.roots[0].path);}}><option value="">프로젝트 없음</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}
+        {dialog.kind==="new"&&<label>채팅을 시작할 계정<select value={formAccount} onChange={e=>setFormAccount(e.target.value)}><option value="default">{defaultLabel}</option>{accounts.map(candidate=><option key={candidate.name} value={candidate.name}>{candidate.name}</option>)}</select></label>}
         {dialog.kind==="project"&&<label>프로젝트 이름<input value={formName} onChange={e=>setFormName(e.target.value)} placeholder="폴더 이름 사용" maxLength={200}/></label>}
         {(dialog.kind==="new"||dialog.kind==="project")&&<label>이 머신의 작업 폴더<input value={formPath} onChange={e=>setFormPath(e.target.value)} placeholder="/absolute/project/path" required spellCheck={false}/></label>}
         {dialog.kind==="move"&&<p className="muted">채팅의 프로젝트 소속을 변경합니다. 작업 폴더와 파일을 옮기지는 않습니다.</p>}

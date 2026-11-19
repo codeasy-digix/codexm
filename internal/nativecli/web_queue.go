@@ -65,6 +65,9 @@ func (w *WebChat) changeQueue(ctx context.Context, c *webConnection, method stri
 	if strings.EqualFold(p.Thread, w.c.Runtime.WebGUIRelay) {
 		return nil, errors.New("이 채팅은 GUI 메시지 중계 전용입니다.")
 	}
+	if w.webOnly && strings.HasPrefix(p.Queued, webQueueID) {
+		return w.changeOwnedQueue(method, p)
+	}
 	if !threadID.MatchString(p.Queued) || p.ExpectedText == nil {
 		return nil, errors.New("대기열에서 변경할 메시지를 선택해 주세요.")
 	}
@@ -87,6 +90,9 @@ func (w *WebChat) changeQueue(ctx context.Context, c *webConnection, method stri
 		}
 	}
 	cancel()
+	if w.webOnly && otherOwner {
+		return nil, errWebOtherOwner
+	}
 	if err := verifyQueuedText(ctx, client, p); err != nil {
 		return nil, err
 	}

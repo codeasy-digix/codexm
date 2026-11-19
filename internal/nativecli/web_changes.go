@@ -57,31 +57,11 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 		if w.loginChanged(c) {
 			return nil, errWebLoginDraining
 		}
-		cwd, err := webDirectory(p.Cwd)
+		thread, err := w.createWebThread(ctx, c, p.Cwd, p.Project)
 		if err != nil {
 			return nil, err
 		}
-		args := map[string]any{"cwd": cwd, "historyMode": "paginated"}
-		if p.Project != "" {
-			args["projectId"] = p.Project
-		}
-		var result struct {
-			Thread WebThread `json:"thread"`
-			Model  string    `json:"model"`
-			Effort string    `json:"reasoningEffort"`
-		}
-		if err := c.client.Call(ctx, "thread/start", args, &result); err != nil {
-			return nil, err
-		}
-		w.rememberAccount(result.Thread.ID, c.account)
-		result.Thread.Account = c.account
-		if result.Thread.Model == "" {
-			result.Thread.Model = result.Model
-		}
-		if result.Thread.Effort == "" {
-			result.Thread.Effort = result.Effort
-		}
-		return map[string]any{"thread": result.Thread, "account": c.account}, nil
+		return map[string]any{"thread": thread, "account": c.account}, nil
 	}
 	if p.Thread == "" {
 		return nil, errors.New("thread UUID required")
@@ -113,6 +93,9 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 	}
 	if r.Method == "web.queueUpdate" || r.Method == "web.queueCancel" {
 		return w.changeQueue(ctx, c, r.Method, p)
+	}
+	if w.webOnly && r.Method == "web.interrupt" {
+		return w.interruptWebThread(ctx, p)
 	}
 	if err := w.verifyOwner(ctx, c, p.Thread, false); err != nil {
 		return nil, err
@@ -156,6 +139,34 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 		return map[string]any{"thread_id": p.Thread, "interrupted": true}, nil
 	}
 	return nil, errors.New("unsupported web mutation")
+}
+
+func (w *WebChat) createWebThread(ctx context.Context, c *webConnection, directory, project string) (WebThread, error) {
+	cwd, err := webDirectory(directory)
+	if err != nil {
+		return WebThread{}, err
+	}
+	args := map[string]any{"cwd": cwd, "historyMode": "paginated"}
+	if project != "" {
+		args["projectId"] = project
+	}
+	var result struct {
+		Thread WebThread `json:"thread"`
+		Model  string    `json:"model"`
+		Effort string    `json:"reasoningEffort"`
+	}
+	if err := c.client.Call(ctx, "thread/start", args, &result); err != nil {
+		return WebThread{}, err
+	}
+	w.rememberAccount(result.Thread.ID, c.account)
+	result.Thread.Account = c.account
+	if result.Thread.Model == "" {
+		result.Thread.Model = result.Model
+	}
+	if result.Thread.Effort == "" {
+		result.Thread.Effort = result.Effort
+	}
+	return result.Thread, nil
 }
 
 // Native archive/delete includes descendants. Confirm none belongs to another
@@ -209,6 +220,9 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 			return nil, errors.New("모델과 effort는 새 턴을 시작할 때 선택할 수 있습니다.")
 		}
 	}
+	if w.webOnly {
+		return w.sendWebOnly(ctx, c, r, p)
+	}
 	owners, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
 	if p.Mode == "queue" {
 		// The official queue accepts input independently of the owner's turn or
@@ -241,7 +255,7 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 
 func (w *WebChat) startWebTurn(ctx context.Context, owner *webInputOwner, selected *webConnection, r Request, p webParams) (any, error) {
 	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": cr.TextInput(p.Text)}
-	if owner.web == selected && (p.Model != "" || p.Effort != "") {
+	if owner.web != nil && sameWebLogin(owner.web, selected) && (p.Model != "" || p.Effort != "") {
 		if p.Model == "" {
 			return nil, errors.New("effort를 적용할 모델을 선택해 주세요.")
 		}
@@ -297,6 +311,13 @@ func (w *WebChat) sendToWriter(ctx context.Context, c *webConnection, r Request,
 		return nil, errWebForeignInput
 	}
 	defer owner.release()
+	return w.deliverWebInput(ctx, owner, c, r, p)
+}
+
+func (w *WebChat) deliverWebInput(ctx context.Context, owner *webInputOwner, c *webConnection, r Request, p webParams) (any, error) {
+	probe, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	automatic := p.Mode == "immediate" && p.Turn == ""
 	if owner.web != nil {
 		if err := owner.web.verifyExecutionLogin(ctx); err != nil {
 			return nil, err

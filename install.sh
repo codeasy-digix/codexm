@@ -45,8 +45,10 @@ mkdir -p "$install_root/versions" "$install_root/bin" "$link_dir"
 stage=$(mktemp -d "$install_root/.install-XXXXXX")
 old_current=
 old_public=
+old_web=
 switched=false
 public_switched=false
+web_switched=false
 complete=false
 restore_link() {
   restore_target=$1
@@ -58,6 +60,7 @@ restore_link() {
 }
 cleanup() {
   if ! $complete; then
+    if $web_switched; then restore_link "$install_root/bin/codexm-web" "$old_web"; fi
     if $public_switched; then restore_link "$link_dir/codexm" "$old_public"; fi
   fi
   if $switched && ! $complete; then
@@ -66,7 +69,7 @@ cleanup() {
       case "$target_os" in darwin) mv -fh "$install_root/bin/.rollback-$$" "$install_root/bin/codexm" ;; *) mv -fT "$install_root/bin/.rollback-$$" "$install_root/bin/codexm" ;; esac
     else rm -f "$install_root/bin/codexm"; fi
   fi
-  rm -f "$install_root/bin/.codexm-$$" "$link_dir/.codexm-$$"
+  rm -f "$install_root/bin/.codexm-$$" "$install_root/bin/.codexm-web-$$" "$link_dir/.codexm-$$"
   rm -rf "$stage"
 }
 trap cleanup EXIT HUP INT TERM
@@ -127,6 +130,14 @@ for entry in "$install_root/bin/codexm" "$link_dir/codexm"; do
 done
 if [ -L "$install_root/bin/codexm" ]; then old_current=$(readlink "$install_root/bin/codexm"); fi
 if [ -L "$link_dir/codexm" ]; then old_public=$(readlink "$link_dir/codexm"); fi
+web_entry="$install_root/bin/codexm-web"
+if [ -n "$web_bundle" ]; then
+  if [ -e "$web_entry" ] && [ ! -L "$web_entry" ]; then
+    echo "Preserved non-symlink entrypoint: $web_entry" >&2
+    exit 1
+  fi
+  if [ -L "$web_entry" ]; then old_web=$(readlink "$web_entry"); fi
+fi
 # A failed migration must not switch either public entrypoint.
 "$destination/codexm" __migrate-config
 ln -s "$destination/codexm" "$install_root/bin/.codexm-$$"
@@ -135,5 +146,11 @@ switched=true
 ln -s "$install_root/bin/codexm" "$link_dir/.codexm-$$"
 case "$target_os" in darwin) mv -fh "$link_dir/.codexm-$$" "$link_dir/codexm" ;; *) mv -fT "$link_dir/.codexm-$$" "$link_dir/codexm" ;; esac
 public_switched=true
+if [ -n "$web_bundle" ]; then
+  # A native-only install leaves the last matching web binary and bundle selected.
+  ln -s "$destination/codexm" "$install_root/bin/.codexm-web-$$"
+  case "$target_os" in darwin) mv -fh "$install_root/bin/.codexm-web-$$" "$web_entry" ;; *) mv -fT "$install_root/bin/.codexm-web-$$" "$web_entry" ;; esac
+  web_switched=true
+fi
 complete=true
 printf 'Installed codexm %s: %s\n' "$version" "$link_dir/codexm"

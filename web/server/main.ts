@@ -34,7 +34,7 @@ const pushes = (() => {
 })();
 const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
-const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage"]);
+const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage", "web.dispatchQueued"]);
 let capabilities: any;
 const owner = (id?: string) => {
   try {
@@ -329,6 +329,13 @@ Meteor.startup(async () => {
   if (pushes) setInterval(() => {
     void pushes.poll().catch(() => { /* Poll again after a temporary read failure. */ });
   }, 5000).unref();
+  if (process.env.CODEXM_WEB_ONLY === "true") {
+    const deliverQueuedInput = async () => {
+      await bridge.call("web.dispatchQueued").catch(() => { /* Pending requests remain durable. */ });
+      setTimeout(deliverQueuedInput, 1100).unref();
+    };
+    void deliverQueuedInput();
+  }
   // Reconcile native CLI/GUI writes even when every browser is closed.
   const refreshHistory = async () => {
     if (bridge.busy) {

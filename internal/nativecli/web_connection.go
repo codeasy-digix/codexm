@@ -34,6 +34,13 @@ func (w *WebChat) connection(ctx context.Context, account string) (*webConnectio
 		return nil, err
 	}
 	identity := accounts.InspectIdentity(w.c, account)
+	if old := w.connections[account]; w.webOnly && old != nil && old.inUse == 0 {
+		select {
+		case <-old.client.ProcessDone:
+			delete(w.connections, account)
+		default:
+		}
+	}
 	if old := w.connections[account]; old != nil {
 		changed := old.login.Revision != identity.Revision
 		if !old.retiring && changed && old.inUse == 0 && !time.Now().Before(old.checkAfter) {
@@ -82,8 +89,12 @@ func (w *WebChat) connection(ctx context.Context, account string) (*webConnectio
 	}
 	home := config.Expand(w.c.Runtime.SharedCodexHome)
 	shared, _ := json.Marshal(home)
-	cmd := exec.Command(r.Binary, "--no-daemon", "-c", "sqlite_home="+string(shared), "-c", `cli_auth_credentials_store="file"`,
-		"-c", "features.default_mode_request_user_input=true", "app-server", "--listen", "stdio://")
+	args := []string{"--no-daemon", "-c", "sqlite_home=" + string(shared), "-c", `cli_auth_credentials_store="file"`,
+		"-c", "features.default_mode_request_user_input=true"}
+	if w.webOnly {
+		args = append(args, "-c", "thread_unload_delay_secs=1")
+	}
+	cmd := exec.Command(r.Binary, append(args, "app-server", "--listen", "stdio://")...)
 	cmd.Env, cmd.Dir = environment(w.c, runtimeAccount), home
 	if err := os.MkdirAll(home, 0700); err != nil {
 		return nil, err
@@ -104,7 +115,7 @@ func (w *WebChat) connection(ctx context.Context, account string) (*webConnectio
 		return nil, errors.New("연결하는 동안 저장된 계정이 바뀌었습니다. 다시 시도해 주세요.")
 	}
 	w.generation++
-	c := &webConnection{client: client, process: process, account: account, login: identity,
+	c := &webConnection{client: client, process: process, account: account, loginName: runtimeAccount, login: identity,
 		generation: w.generation, inUse: 1, pending: map[string]cr.Message{}}
 	w.connections[account] = c
 	go c.events(w.ctx)

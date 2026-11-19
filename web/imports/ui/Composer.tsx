@@ -9,14 +9,15 @@ import {
 type Props = {
   chat: ChatThread;
   account: string;
+  pendingAccountChange?: boolean;
   history?: ChatHistory;
   liveTurn?: Pick<LiveTurn, "id" | "status">;
   models: ChatModel[];
   selection: TurnSelection;
-  onSent: () => void;
+  onSent: (id?: string) => void;
 };
 
-export function Composer({ chat, account, history, liveTurn, models, selection, onSent }: Props) {
+export function Composer({ chat, account, history, liveTurn, models, selection, onSent, pendingAccountChange }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -91,7 +92,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
     setError("");
     setNotice("");
     try {
-      const result = await call<{ mode: "start" | "steer" | "queue" | "relay"; relay_id?: string }>("web.send", parameters, crypto.randomUUID());
+      const result = await call<{ mode: "start" | "steer" | "queue" | "relay"; relay_id?: string; account?: string; thread_id?: string }>("web.send", parameters, crypto.randomUUID());
       if (result.mode === "relay" && result.relay_id) {
         relayText.current = sent;
         sessionStorage.setItem(relayKey, result.relay_id);
@@ -100,13 +101,15 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       }
       if (recalled === undefined) setText(current => current === sent ? "" : current);
       if (mode === "queue") {
-        setNotice(hasOverride ? "큐에 추가했습니다. 이 입력은 채팅의 실행 설정으로 처리됩니다." : "큐에 추가했습니다.");
+        const label = result.account === "default" ? "기본 계정" : result.account;
+        const queuedNotice = label ? `${label} 계정의 입력을 큐에 추가했습니다.` : "큐에 추가했습니다.";
+        setNotice(hasOverride ? queuedNotice + " 이 입력은 채팅의 실행 설정으로 처리됩니다." : queuedNotice);
       } else if (result.mode === "queue") {
         setNotice("새 작업 요청을 전달했습니다.");
       } else {
         setNotice(result.mode === "steer" ? "현재 작업에 전달했습니다." : "작업을 시작했습니다.");
       }
-      onSent();
+      onSent(result.thread_id);
       return "accepted";
     } catch (e) {
       const message = (e as Error).message;
@@ -128,7 +131,7 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
     setBusy(true);
     setError("");
     try {
-      await call("web.interrupt", { thread_id: chat.id, account, turn_id: turn }, crypto.randomUUID());
+      await call("web.interrupt", { thread_id: chat.id, account: history?.executionAccount || account, turn_id: turn }, crypto.randomUUID());
       onSent();
     } catch (e) {
       setError((e as Error).message);
@@ -141,7 +144,9 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
   return <div className="composer-wrap">
     <ChatQueue thread={chat.id} account={account} items={queue} busy={busy} sendDisabled={uncertain}
       onChanged={onSent} onRequeue={input => send("queue", input)} />
-    {external && delivery?.state !== "unavailable" && <p className="owner-note">{guiRelay ? "GUI 채팅에 해당 창의 계정으로 전달합니다." : "이 채팅을 열어 둔 창의 계정으로 전달합니다."}</p>}
+    {external && history?.webOnly && <p className="owner-note">다른 앱이 이 채팅을 열고 있습니다. 해당 창에서 채팅을 닫으면 웹에서 이어갈 수 있습니다.</p>}
+    {external && !history?.webOnly && delivery?.state !== "unavailable" && <p className="owner-note">{guiRelay ? "GUI 채팅에 해당 창의 계정으로 전달합니다." : "이 채팅을 열어 둔 창의 계정으로 전달합니다."}</p>}
+    {pendingAccountChange && <p className="owner-note">{active ? "전송하거나 큐에 추가하면 현재 작업을 중단하고 선택한 계정으로 전환합니다." : "다음 입력부터 선택한 계정으로 전환합니다."}</p>}
     {draining && <p className="owner-note" role="status">기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.</p>}
     {error && <p role="alert" className="inline-error">{error}</p>}
     {uncertain && <p className="inline-error">전송 결과가 불확실하여 재전송을 막았습니다. 대화와 큐에서 원래 입력을 확인하세요.</p>}

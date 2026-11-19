@@ -219,7 +219,9 @@ func Main(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(r)
 	case "web":
-		return webhost.Command(ctx, c, self, args, os.Stdout)
+		webctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+		return webhost.Command(webctx, c, self, args, os.Stdout)
 	case "__web-gui-relay":
 		return nativecli.RunWebGUIRelay(ctx, c, args, os.Stdout)
 	case "__web":
