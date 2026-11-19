@@ -4,6 +4,8 @@
   --field-line: #dce2dc;
   --hover: #eef2ee;
   --row-current: #e6f1e9;
+  --chat-row-line: #dfe4df;
+  --chat-row-current: #dcebe1;
   --message-bg: #f2f7f4;
   --message-line: #dce8e0;
   --composer-bg: #fbfcfa;
@@ -12,23 +14,25 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  color: #e7eee9;
-  background: #171b19;
-  --canvas: #171b19;
-  --panel: #1e2421;
-  --muted: #a3afa8;
-  --line: #39453d;
-  --field-line: #435147;
-  --surface: #222a25;
-  --hover: #303c34;
-  --row-current: #2e4538;
-  --tint: #263e31;
-  --accent: #a1d5b7;
-  --accent-ink: #15291e;
+  color: #e5e6eb;
+  background: var(--canvas);
+  --canvas: #1c1d20;
+  --panel: #27282d;
+  --muted: #aeb1b7;
+  --line: #3a3c43;
+  --field-line: #4a4c53;
+  --surface: #242529;
+  --hover: #363840;
+  --row-current: #363941;
+  --chat-row-line: #42444b;
+  --chat-row-current: #383a41;
+  --tint: #30343c;
+  --accent: #9abbeb;
+  --accent-ink: #1b2330;
   --danger: #ffaeaa;
-  --message-bg: #283a30;
-  --message-line: #3e5145;
-  --composer-bg: #202821;
+  --message-bg: #2d2f35;
+  --message-line: #41434a;
+  --composer-bg: #24262a;
 }
 
 body, .conversation { background: var(--canvas); }
@@ -40,7 +44,12 @@ button, input, select, textarea, .chat-header select, .popover, .modal, .tool-it
 button { color: inherit; background: var(--panel); }
 button:hover { background: var(--hover); }
 .primary { background: var(--accent); color: var(--accent-ink); }
-:root[data-theme="dark"] .primary:hover { background: #b4e0c7; }
+:root[data-theme="dark"] .primary:hover { background: #b1ccf3; }
+:root[data-theme="dark"] .brand-icon { color: var(--accent); background: var(--hover); }
+:root[data-theme="dark"] .brand > span:last-of-type { color: var(--muted); background: var(--tint); }
+:root[data-theme="dark"] :is(.sections button > span, .chat-list small) { color: var(--muted); }
+:root[data-theme="dark"] .sidebar-backdrop,
+:root[data-theme="dark"] .modal::backdrop { background: #101114a6; }
 .sidebar-search input { border-color: var(--field-line); }
 .sidebar-footer { border-color: var(--line); }
 .sections button[aria-pressed="true"], .sidebar button.selected { background: var(--row-current); color: var(--accent); }
@@ -62,12 +71,12 @@ button:hover { background: var(--hover); }
   align-items: center;
   gap: 3px;
   background: transparent;
-  border: 1px solid var(--line);
+  border: 1px solid var(--chat-row-line);
   border-radius: 9px;
   margin-bottom: 5px;
 }
 .sidebar-chat-row:hover { border-color: var(--field-line); }
-.sidebar-chat-row.is-current { background: var(--row-current); border-color: var(--message-line); }
+.sidebar-chat-row.is-current { background: var(--chat-row-current); border-color: var(--field-line); }
 .sidebar-chat-row > a {
   flex: 1;
   min-width: 0;
@@ -98,30 +107,28 @@ button:hover { background: var(--hover); }
 .account-actions-row { align-items: flex-end; gap: 9px; }
 .account-actions-row .account-select { flex: 1 1 112px; min-width: 60px; }
 .account-actions-row .account-limits {
-  display: flex;
-  align-items: center;
+  flex: 1 1 172px;
+  min-width: 100px;
+  max-width: 180px;
   height: 32px;
-  flex: none;
-  gap: 8px;
+  align-content: center;
+  gap: 2px;
   margin: 0;
 }
-.account-limit { grid-template-columns: auto 20px minmax(2.7em, auto); gap: 3px; }
+.account-limit { grid-template-columns: 2.3em minmax(0, 1fr) 2.8em; line-height: 1.2; }
+.account-limit :is(meter, .limit-track) { height: 5px; }
 @media (min-width: 741px) {
-  .chat-header-controls.has-turn-settings, .chat-header-controls.has-gui-quit.has-turn-settings {
+  .chat-header-controls.has-turn-settings {
     grid-template-columns: minmax(245px, 290px) minmax(0, 178px) minmax(0, 122px);
   }
   .chat-header-controls.has-gui-quit.has-turn-settings { grid-template-columns: minmax(290px, 340px) minmax(0, 178px) minmax(0, 122px); }
 }
 @media (max-width: 740px) {
+  .chat-header-controls { order: 1; flex: 0 0 100%; }
   .chat-header-controls.has-turn-settings { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
   .has-turn-settings .account-header { grid-column: 1 / -1; }
   .has-gui-quit.has-turn-settings .account-actions-row { flex-wrap: nowrap; }
   .has-gui-quit.has-turn-settings .account-select { flex-basis: 112px; }
-  .chat-header-controls:not(.has-turn-settings) .account-actions-row .account-select { max-width: 100px; }
-}
-@media (max-width: 400px) {
-  .account-actions-row .account-limits { gap: 4px; }
-  .account-limit { grid-template-columns: auto 12px 2.7em; }
 }
 
 .workspace-settings { width: min(620px, 100% - 28px); }

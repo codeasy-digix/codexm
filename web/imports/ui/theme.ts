@@ -15,8 +15,10 @@ export function useTheme() {
     const system = matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       const resolved = theme === "system" ? (system.matches ? "dark" : "light") : theme;
-      document.documentElement.dataset.theme = resolved;
-      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", resolved === "dark" ? "#171b19" : "#ffffff");
+      const root = document.documentElement;
+      root.dataset.theme = resolved;
+      const canvas = getComputedStyle(root).getPropertyValue("--canvas").trim();
+      if (canvas) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", canvas);
     };
     apply();
     try { localStorage.setItem(key, theme); } catch { /* The current page can still change appearance. */ }

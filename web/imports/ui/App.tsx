@@ -233,10 +233,10 @@ export function App() {
         <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}${catalog?.guiQuitAvailable ? " has-gui-quit" : ""}`}>
           <div className="account-header">
             <div className="account-actions-row">
+              {(!threadId || selected) && <AccountLimits key={account} account={account} />}
               <label className="account-select">계정
                 <select aria-label="이번에 사용할 계정" title={account === "default" ? defaultLabel : account} value={account} disabled={!!threadId && !selected} onChange={e=>setAccount(e.target.value)}><option value="default">{defaultLabel}</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
               </label>
-              {(!threadId || selected) && <AccountLimits key={account} account={account} />}
               {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" onClick={() => openDialog({kind: "gui-quit"})}>GUI 종료</button>}
             </div>
             {executionAccount && <small className="default-account-name">현재 실행 {executionAccount === "default" ? "기본 계정" : executionAccount}</small>}

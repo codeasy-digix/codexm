@@ -30,6 +30,7 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(first).toBeVisible();
   await expect(first).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(first).toHaveCSS("border-top-width", "1px");
+  await expect(first).toHaveCSS("border-top-color", "rgb(223, 228, 223)");
   const browserOrder = await rows.evaluateAll(items => items.map(item => item.querySelector("a")?.getAttribute("href")?.split("/").at(-1)));
   if (process.env.CODEXM_WEB_TEST_MONGO === "1") {
     const socket = join(realpathSync(join(f.state, "history-cache")), "mongodb.sock");
@@ -52,17 +53,24 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   const chatURL = new URL(`/chat/${f.thread}`, url!).href;
   await expect(page).toHaveURL(chatURL);
   await expect(first.getByRole("link")).toHaveAttribute("aria-current", "page");
-  await expect(first).toHaveCSS("background-color", "rgb(230, 241, 233)");
+  await expect(first).toHaveCSS("background-color", "rgb(220, 235, 225)");
   await expect(other).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(page.locator(".user-message p").last()).toHaveCSS("background-color", "rgb(242, 247, 244)");
   await expect(page.locator(".user-message p").last()).toHaveCSS("border-top-width", "1px");
   const header = page.locator(".chat-header");
+  const quota = header.getByRole("group", { name: "선택 계정의 남은 한도" });
   const [account, limits, model] = await Promise.all([header.getByLabel("이번에 사용할 계정").boundingBox(),
-    header.getByRole("group", { name: "선택 계정의 남은 한도" }).boundingBox(),
+    quota.boundingBox(),
     header.getByRole("combobox", { name: "모델", exact: true }).boundingBox()]);
   expect(account).toBeTruthy(); expect(limits).toBeTruthy(); expect(model).toBeTruthy();
+  expect(limits!.x + limits!.width).toBeLessThan(account!.x);
   expect(limits!.y + limits!.height).toBeCloseTo(account!.y + account!.height, 0);
   expect(model!.y).toBeCloseTo(account!.y, 0);
+  const bars = await quota.locator("meter, .limit-track").evaluateAll(items => items.map(item => item.getBoundingClientRect().toJSON()));
+  expect(bars).toHaveLength(2);
+  expect(bars[1].y).toBeGreaterThan(bars[0].y);
+  expect(bars[1].x).toBe(bars[0].x);
+  expect(bars[0].width).toBeGreaterThanOrEqual(account!.width * 0.7);
 
   await other.getByRole("button", { name: "고정하기", exact: true }).click();
   await expect(other.getByLabel("고정됨", { exact: true })).toBeVisible();
@@ -82,8 +90,11 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await page.getByRole("button", { name: "전체 채팅", exact: true }).click();
 
   await page.emulateMedia({ colorScheme: "dark" });
-  await expect(first).toHaveCSS("background-color", "rgb(46, 69, 56)");
+  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(28, 29, 32)");
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#1c1d20");
+  await expect(first).toHaveCSS("background-color", "rgb(56, 58, 65)");
   await expect(other).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(other).toHaveCSS("border-top-color", "rgb(66, 68, 75)");
   const settings = page.getByRole("dialog", { name: "설정", exact: true });
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await settings.getByRole("combobox", { name: "테마", exact: true }).selectOption("light");
