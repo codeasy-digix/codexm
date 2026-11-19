@@ -129,7 +129,7 @@ test("Send preserves accepted relay text across reload and keeps the explicit qu
   await expect(displayed).toHaveCount(1);
   expect(await displayed.textContent()).toBe(original);
   await input.fill("다음 작업에 넣을 입력");
-  await input.press("Meta+Enter");
+  await input.press("ControlOrMeta+Enter");
   await expect(page.getByText("큐에 추가했습니다.", {exact:true})).toBeVisible();
   expect(await page.evaluate(() => (window as any).__relayFixture.sent)).toEqual(["immediate", "queue"]);
   await page.evaluate(() => { (window as any).__relayFixture.idle = true; });
@@ -312,7 +312,7 @@ test("MongoDB catches up all native turns after the browser closes and retains o
   }
 });
 
-test("project picker, idle send, Enter intervention and Command+Enter for a separate native writer", async ({page}) => {
+test("project picker, idle send, Enter intervention and the queue shortcut for a separate native writer", async ({page}) => {
   const row = page.getByRole("link",{name:/진행 중 개입 테스트/});
   const input = page.getByLabel("메시지", {exact: true});
   const send = page.getByRole("button", {name: "보내기", exact: true});
@@ -345,7 +345,7 @@ test("project picker, idle send, Enter intervention and Command+Enter for a sepa
     await expect(page.getByText("현재 작업에 전달했습니다.", {exact: true})).toBeVisible();
     await expect(page.locator(".queue-preview")).toHaveCount(0);
     await input.fill("외부 작업이 끝난 뒤 실행합니다");
-    await input.press("Meta+Enter");
+    await input.press("ControlOrMeta+Enter");
     await expect(page.getByText("큐에 추가했습니다.", {exact: true})).toBeVisible();
     await expect(page.locator(".queue-preview summary")).toContainText("1개");
     await page.locator(".composer-wrap").screenshot({path: join(fixtureRoot!, "external-delivery.png")});
@@ -508,7 +508,7 @@ test("streamed answer, intervention, queue, browser reconnect and default login 
   await expect(input).toHaveValue("다음 단계는 큐로 진행합니다\n");
   await expect(page.locator(".queue-preview")).toHaveCount(0);
   await input.fill("다음 단계는 큐로 진행합니다");
-  await input.press("Meta+Enter");
+  await input.press("ControlOrMeta+Enter");
   await expect(page.getByText("큐에 추가했습니다.",{exact:true})).toBeVisible();
   await expect(page.locator(".queue-preview summary")).toContainText("1개");
   const renewal = "기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.";

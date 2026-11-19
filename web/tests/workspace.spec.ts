@@ -138,6 +138,7 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   const context = page.context();
   await page.close();
   const reopened = await context.newPage();
+  await reopened.addInitScript(() => Object.defineProperty(navigator, "platform", { value: "Win32" }));
   await reopened.emulateMedia({ colorScheme: "dark" });
   await reopened.goto(chatURL);
   await expect(reopened.locator("html")).toHaveAttribute("data-theme", "light");
@@ -153,7 +154,13 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(goal.locator(".goal-details")).toContainText(draft);
   await expect(restored).toHaveValue("");
   await restored.fill("다음에 실행할 대기 요청");
+  await expect(reopened.getByRole("button", { name: "큐에 추가", exact: true })).toHaveAttribute("aria-keyshortcuts", "Control+Enter");
+  await restored.press("Shift+Enter");
+  await expect(restored).toHaveValue("다음에 실행할 대기 요청\n");
+  await restored.fill("다음에 실행할 대기 요청");
   await restored.press("Meta+Enter");
+  await expect(restored).toHaveValue("다음에 실행할 대기 요청");
+  await restored.press("Control+Enter");
   const queue = reopened.locator(".queue-preview");
   await expect(queue.locator("summary")).toContainText("대기 중인 입력 1개");
   await expect(queue.locator("summary")).toContainText("다음에 실행할 대기 요청");

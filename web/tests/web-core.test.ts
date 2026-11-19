@@ -1,16 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { composerAction,mergeTurns,mergeLiveTurn,chatTitle,type ChatTurn } from "../imports/contracts/web.ts";
+import { composerAction,queueModifierForPlatform,mergeTurns,mergeLiveTurn,chatTitle,type ChatTurn } from "../imports/contracts/web.ts";
 import { chatShortcutStorageKey, defaultChatShortcuts, readChatShortcuts, shortcutFromEvent, shortcutLabel } from "../imports/ui/chat-shortcuts.ts";
 
-test("composer distinguishes intervention, queue, IME and explicit newlines",()=>{
-  assert.equal(composerAction({key:"Enter",shiftKey:false}),"immediate");
-  assert.equal(composerAction({key:"Enter",shiftKey:false,metaKey:true}),"queue");
-  assert.equal(composerAction({key:"Enter",shiftKey:true}),null);
-  assert.equal(composerAction({key:"Enter",shiftKey:false,isComposing:true}),null);
-  assert.equal(composerAction({key:"Enter",shiftKey:true,keyCode:229}),null);
-  for(const key of ["altKey","ctrlKey"])assert.equal(composerAction({key:"Enter",shiftKey:false,[key]:true}),null);
-  assert.equal(composerAction({key:"a",shiftKey:false}),null);
+test("composer distinguishes platform queue shortcuts, intervention, IME and explicit newlines", () => {
+  const enter = { key: "Enter", shiftKey: false };
+  for (const [platform, modifier] of [["MacIntel", "Meta"], ["iPad", "Meta"], ["Win32", "Control"], ["Linux x86_64", "Control"]] as const) {
+    assert.equal(queueModifierForPlatform(platform), modifier);
+    const queueKey = modifier === "Meta" ? "metaKey" : "ctrlKey";
+    const otherKey = modifier === "Meta" ? "ctrlKey" : "metaKey";
+    assert.equal(composerAction(enter, modifier), "immediate");
+    assert.equal(composerAction({ ...enter, [queueKey]: true }, modifier), "queue");
+    assert.equal(composerAction({ ...enter, [otherKey]: true }, modifier), null);
+    assert.equal(composerAction({ ...enter, metaKey: true, ctrlKey: true }, modifier), null);
+    for (const keys of [{ shiftKey: true }, { altKey: true }, { isComposing: true }, { keyCode: 229 }, { key: "a" }]) {
+      assert.equal(composerAction({ ...enter, ...keys }, modifier), null);
+      assert.equal(composerAction({ ...enter, [queueKey]: true, ...keys }, modifier), null);
+    }
+  }
 });
 
 test("model and effort shortcut defaults use Command+Shift and reserve the composer keys", () => {

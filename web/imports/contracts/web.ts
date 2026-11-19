@@ -156,9 +156,16 @@ export function effortLabel(effort: string): string {
   return effort === "xhigh" ? "Extra High" : effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
-export function composerAction(e: { key: string; shiftKey: boolean; isComposing?: boolean; keyCode?: number; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean }): "immediate" | "queue" | null {
-  if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.altKey || e.shiftKey) return null;
-  return e.metaKey ? "queue" : "immediate";
+type QueueModifier = "Meta" | "Control";
+
+export function queueModifierForPlatform(platform: string): QueueModifier {
+  return /^(Mac|iPhone|iPad|iPod)/i.test(platform) ? "Meta" : "Control";
+}
+
+export function composerAction(e: { key: string; shiftKey: boolean; isComposing?: boolean; keyCode?: number; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean }, modifier: QueueModifier): "immediate" | "queue" | null {
+  if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.altKey || e.shiftKey) return null;
+  if (modifier === "Meta" ? e.ctrlKey : e.metaKey) return null;
+  return e.metaKey || e.ctrlKey ? "queue" : "immediate";
 }
 
 export function mergeTurns(existing: ChatTurn[],incoming: ChatTurn[],older = false): ChatTurn[] {

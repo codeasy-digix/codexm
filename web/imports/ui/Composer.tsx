@@ -4,7 +4,7 @@ import { ChatQueue, type SubmissionOutcome } from "./ChatQueue";
 import { PromptEditor } from "./PromptEditor";
 import { emptyPromptDraft, readPromptDraft, settleStoredPrompt, writePromptDraft, type PromptDraft } from "./prompt-draft";
 import {
-  composerAction, resolveTurnSelection,
+  composerAction, queueModifierForPlatform, resolveTurnSelection,
   type ChatHistory, type ChatModel, type ChatThread, type LiveTurn, type TurnSelection,
 } from "../contracts/web";
 
@@ -20,6 +20,8 @@ type Props = {
 };
 
 export function Composer({ chat, account, history, liveTurn, models, selection, onSent, pendingAccountChange }: Props) {
+  const queueModifier = queueModifierForPlatform(navigator.platform);
+  const queueShortcut = queueModifier === "Meta" ? "⌘Enter" : "Ctrl+Enter";
   const [draft, setDraft] = useState(() => readPromptDraft(chat.id));
   const draftRef = useRef(draft);
   const mounted = useRef(true);
@@ -188,17 +190,17 @@ export function Composer({ chat, account, history, liveTurn, models, selection, 
       <PromptEditor thread={chat.id} account={account} draft={draft} onChange={save}
         placeholder={active ? "현재 작업에 개입하거나 다음 요청을 큐에 추가하세요" : "Codex에게 요청하세요"}
         onKeyDown={event => {
-          const mode = composerAction(event.nativeEvent);
+          const mode = composerAction(event.nativeEvent, queueModifier);
           if (mode) {
             event.preventDefault();
             if (!event.repeat) void send(mode);
           }
         }} />
       <div className="composer-bottom">
-        <small>Enter 전송·개입 · ⌘Enter 큐 · Shift+Enter 줄바꿈</small>
+        <small>Enter 전송·개입 · {queueShortcut} 큐 · Shift+Enter 줄바꿈</small>
         <div className="composer-actions">
           {active && !external && <button className="stop-button" onClick={() => void stop()} disabled={busy} aria-label="현재 턴 중지">■</button>}
-          <button aria-keyshortcuts="Meta+Enter" onClick={() => void send("queue")} disabled={busy || uncertain || !draft.text.trim() || relayingDraft}>큐에 추가</button>
+          <button aria-keyshortcuts={`${queueModifier}+Enter`} title={queueShortcut} onClick={() => void send("queue")} disabled={busy || uncertain || !draft.text.trim() || relayingDraft}>큐에 추가</button>
           <button className="primary" onClick={() => void send("immediate")} disabled={busy || !!relayID || uncertain || !draft.text.trim()}>
             {busy || relayID ? "전달 중…" : "보내기"}
           </button>
