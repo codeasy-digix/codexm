@@ -114,7 +114,7 @@ func (w *WebChat) sendToGUIWriter(ctx context.Context, c *webConnection, r Reque
 	probe, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	home := config.Expand(w.c.Runtime.SharedCodexHome)
-	activity := readGUIWriterActivity(probe, home, p.Thread, owner.Writer)
+	activity := readWebProcessActivity(probe, home, p.Thread, owner.Writer)
 	if activity.State == "idle" {
 		// An idle loaded GUI consumes its official queue immediately. Recheck
 		// its writer. If a turn has since started, the queue safely waits.
@@ -133,7 +133,7 @@ func (w *WebChat) sendToGUIWriter(ctx context.Context, c *webConnection, r Reque
 	return w.submitGUIRelay(ctx, c, r, p, owner, turn)
 }
 
-func readGUIWriterActivity(ctx context.Context, home, id string, owner processIdentity) webActivity {
+func readWebProcessActivity(ctx context.Context, home, id string, owner processIdentity) webActivity {
 	started, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", owner.Started, time.Local)
 	if err != nil {
 		return webActivity{}

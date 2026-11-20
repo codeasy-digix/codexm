@@ -184,15 +184,21 @@ func (o *webInputOwner) delivery(ctx context.Context, id string) (webDelivery, e
 	if len(thread.Status.ActiveFlags) != 0 {
 		return webDelivery{State: "waiting"}, nil
 	}
-	var page struct{ Data []cr.Turn }
-	args := map[string]any{"threadId": id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded"}
-	if err := o.client.Call(ctx, "thread/turns/list", args, &page); err != nil {
+	turns, err := recentWebTurns(ctx, o.client, id, 1)
+	if err != nil {
 		return webDelivery{}, err
 	}
-	if len(page.Data) != 1 || page.Data[0].Status != "inProgress" || page.Data[0].ID == "" {
+	if len(turns) != 1 || turns[0].Status != "inProgress" || turns[0].ID == "" {
 		return webDelivery{State: "unavailable"}, nil
 	}
-	return webDelivery{State: "ready", TurnID: page.Data[0].ID}, nil
+	return webDelivery{State: "ready", TurnID: turns[0].ID}, nil
+}
+
+func recentWebTurns(ctx context.Context, client *cr.Client, id string, limit int) ([]cr.Turn, error) {
+	var page struct{ Data []cr.Turn }
+	args := map[string]any{"threadId": id, "limit": limit, "sortDirection": "desc", "itemsView": "notLoaded"}
+	err := client.Call(ctx, "thread/turns/list", args, &page)
+	return page.Data, err
 }
 
 func (w *WebChat) verifyInputOwner(ctx context.Context, owner *webInputOwner, id string, allowFree bool) error {

@@ -273,7 +273,7 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 	return w.sendToWriter(ctx, c, r, p, c.process.PID)
 }
 
-func (w *WebChat) startWebTurn(ctx context.Context, owner *webInputOwner, selected *webConnection, r Request, p webParams) (any, error) {
+func (w *WebChat) startWebTurn(ctx context.Context, owner *webInputOwner, selected *webConnection, r Request, p webParams) (map[string]any, error) {
 	args := map[string]any{"threadId": p.Thread, "clientUserMessageId": r.Operation, "input": promptInput(p)}
 	if owner.web != nil && sameWebLogin(owner.web, selected) && (p.Model != "" || p.Effort != "") {
 		if p.Model == "" {

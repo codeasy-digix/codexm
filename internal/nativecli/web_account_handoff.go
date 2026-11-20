@@ -149,6 +149,7 @@ func (w *WebChat) webDraftAccount(ctx context.Context, target *webConnection, id
 type webAcquire struct {
 	prepare, interrupt, external bool
 	objective                    string
+	beforeInterrupt              func(context.Context, string) error
 }
 
 func webHandoffWriters(ctx context.Context, home, id string) ([]int, error) {
@@ -185,7 +186,7 @@ func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id 
 			if !request.external || !request.interrupt || !request.prepare {
 				return nil, errWebOtherOwner
 			}
-			if err := w.releaseTrackedCLI(ctx, target, id, pids[0], request.objective); err != nil {
+			if err := w.releaseTrackedCLI(ctx, target, id, pids[0], request); err != nil {
 				return nil, err
 			}
 			break
@@ -217,7 +218,7 @@ func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id 
 				return nil, err
 			}
 		}
-		restore, err := w.releaseWebChat(ctx, source, id, request.interrupt && !same)
+		restore, err := w.releaseWebChat(ctx, source, id, request.interrupt && !same, request.beforeInterrupt)
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +248,7 @@ func (w *WebChat) acquireWebChat(ctx context.Context, target *webConnection, id 
 
 // The browser can stop a CLI CodexM itself launched only for an explicit
 // account change on its one verified chat. Other processes need owner RPC.
-func (w *WebChat) releaseTrackedCLI(ctx context.Context, target *webConnection, id string, pid int, objective string) error {
+func (w *WebChat) releaseTrackedCLI(ctx context.Context, target *webConnection, id string, pid int, request webAcquire) error {
 	source, err := readLast(w.c, id)
 	if err != nil || source.Owner.PID != pid || source.AuthKey == "" {
 		return errWebOtherOwner
@@ -259,8 +260,8 @@ func (w *WebChat) releaseTrackedCLI(ctx context.Context, target *webConnection, 
 	if err != nil || key == source.AuthKey {
 		return errors.New("기존 터미널과 다른 로그인 계정을 선택해 주세요.")
 	}
-	if objective != "" {
-		if _, err := readGoalForChange(ctx, target.client, id, objective); err != nil {
+	if request.objective != "" {
+		if _, err := readGoalForChange(ctx, target.client, id, request.objective); err != nil {
 			return err
 		}
 	}
@@ -270,13 +271,29 @@ func (w *WebChat) releaseTrackedCLI(ctx context.Context, target *webConnection, 
 	if err := verifyOwnedCLI(ctx, w.c, source); err != nil {
 		return errWebOtherOwner
 	}
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	if request.beforeInterrupt != nil {
+		activity := readWebProcessActivity(ctx, home, id, *source.Owner)
+		switch activity.State {
+		case "running":
+			if err := request.beforeInterrupt(ctx, activity.TurnID); err != nil {
+				return err
+			}
+			if err := verifyOwnedCLI(ctx, w.c, source); err != nil {
+				return errWebOtherOwner
+			}
+		case "idle":
+		default:
+			return errors.New("원래 터미널의 작업 상태를 확인할 수 없어 인계를 보류했습니다.")
+		}
+	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return err
 	}
 	wait, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	owner := execOwner{Process: *source.Owner, Key: source.OwnerKey}
-	return waitExecRelease(wait, config.Expand(w.c.Runtime.SharedCodexHome), id, owner)
+	return waitExecRelease(wait, home, id, owner)
 }
 
 func (w *WebChat) verifyWebTransferTarget(ctx context.Context, target *webConnection) error {
@@ -296,7 +313,7 @@ func (w *WebChat) verifyWebTransferTarget(ctx context.Context, target *webConnec
 	return nil
 }
 
-func (w *WebChat) releaseWebChat(ctx context.Context, source *webInputOwner, id string, interrupt bool) (bool, error) {
+func (w *WebChat) releaseWebChat(ctx context.Context, source *webInputOwner, id string, interrupt bool, beforeInterrupt func(context.Context, string) error) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	archive := source.web == nil
@@ -308,7 +325,7 @@ func (w *WebChat) releaseWebChat(ctx context.Context, source *webInputOwner, id 
 		}
 	}
 	args := map[string]any{"threadId": id}
-	if err := w.settleWebTurn(ctx, source, id, interrupt); err != nil {
+	if err := w.settleWebTurn(ctx, source, id, interrupt, beforeInterrupt); err != nil {
 		return false, err
 	}
 	home := config.Expand(w.c.Runtime.SharedCodexHome)
@@ -341,7 +358,7 @@ func (w *WebChat) releaseWebChat(ctx context.Context, source *webInputOwner, id 
 	return true, w.waitWebRelease(ctx, source, id)
 }
 
-func (w *WebChat) settleWebTurn(ctx context.Context, source *webInputOwner, id string, interrupt bool) error {
+func (w *WebChat) settleWebTurn(ctx context.Context, source *webInputOwner, id string, interrupt bool, beforeInterrupt func(context.Context, string) error) error {
 	stopped, ended := "", ""
 	for {
 		thread, err := source.client.Read(ctx, id, false)
@@ -358,19 +375,23 @@ func (w *WebChat) settleWebTurn(ctx context.Context, source *webInputOwner, id s
 		default:
 			return errWebAccountBusy
 		}
-		var page struct{ Data []cr.Turn }
-		args := map[string]any{"threadId": id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded"}
-		if err := source.client.Call(ctx, "thread/turns/list", args, &page); err != nil {
+		turns, err := recentWebTurns(ctx, source.client, id, 1)
+		if err != nil {
 			return err
 		}
-		if len(page.Data) == 1 && page.Data[0].Status == "inProgress" && page.Data[0].ID != "" {
-			turn := page.Data[0].ID
-			if stopped != "" && stopped != turn {
-				return errors.New("인계 도중 새 턴이 시작됐습니다. 현재 작업 상태를 확인해 주세요.")
-			}
+		if stopped != "" && len(turns) == 1 && turns[0].ID != stopped {
+			return errors.New("인계 도중 새 턴이 시작됐습니다. 현재 작업 상태를 확인해 주세요.")
+		}
+		if len(turns) == 1 && turns[0].Status == "inProgress" && turns[0].ID != "" {
+			turn := turns[0].ID
 			if stopped == "" {
 				if err := w.verifyInputOwner(ctx, source, id, false); err != nil {
 					return err
+				}
+				if beforeInterrupt != nil {
+					if err := beforeInterrupt(ctx, turn); err != nil {
+						return err
+					}
 				}
 				if err := callWebInput(ctx, source.client, "turn/interrupt", map[string]any{"threadId": id, "turnId": turn}, nil); err != nil {
 					return err
@@ -378,16 +399,16 @@ func (w *WebChat) settleWebTurn(ctx context.Context, source *webInputOwner, id s
 				stopped = turn
 			}
 			ended = ""
-		} else if len(page.Data) == 1 {
-			switch page.Data[0].Status {
+		} else if len(turns) == 1 {
+			switch turns[0].Status {
 			case "completed", "failed", "interrupted":
 				// Turn completion and the thread status notification can land
 				// separately, including a quota error. Don't interrupt a
 				// finished turn while waiting for the thread to catch up.
-				if ended != "" && ended == page.Data[0].ID {
+				if ended != "" && ended == turns[0].ID {
 					return nil
 				}
-				ended = page.Data[0].ID
+				ended = turns[0].ID
 			}
 		}
 		select {

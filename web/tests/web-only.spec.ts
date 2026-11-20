@@ -73,18 +73,24 @@ test("an account change only takes effect when a chat input is submitted", async
   await expect(page.getByText("현재 실행 second-browser-login", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(draftAddress);
 
-  const queueMessage = "등록한 계정으로만 실행할 대기 입력";
+  const queueMessage = "이전 작업이 끝난 뒤 실행할 대기 입력";
+  await account.selectOption("first-browser-login");
   await input.fill(queueMessage);
   holdMode = "queue";
   await input.press("ControlOrMeta+Enter");
   await checkLocked(queueMessage, "큐에 추가 중…");
-  await expect(page.getByText("second-browser-login 계정의 입력을 큐에 추가했습니다.")).toBeVisible();
+  await expect(page.getByText("first-browser-login 계정의 입력을 큐에 추가했습니다. 이전 작업을 먼저 이어갑니다.")).toBeVisible();
+  await expect(page.getByText("현재 실행 first-browser-login", { exact: true })).toBeVisible();
+  await expect(page.locator(".user-message").getByText(queueMessage, { exact: true })).toHaveCount(0);
   await page.locator(".queue-preview summary").click();
-  await expect(page.locator(".queue-entry")).toContainText("second-browser-login");
-  await page.locator(".queue-entry").getByRole("button", { name: "수정", exact: true }).click();
+  const continuation = page.locator(".queue-entry").filter({ hasText: "이전 작업 이어가기" });
+  await expect(continuation).toContainText("진행 중");
+  const queued = page.locator(".queue-entry").filter({ has: page.getByRole("button", { name: "수정", exact: true }) });
+  await expect(queued).toContainText("first-browser-login");
+  await queued.getByRole("button", { name: "수정", exact: true }).click();
   await page.getByLabel("대기 메시지 수정").fill("편집 후 대기한 입력");
   await page.getByRole("button", { name: "수정 저장", exact: true }).click();
-  await expect(page.locator(".queue-entry")).toContainText("편집 후 대기한 입력");
+  await expect(queued).toContainText("편집 후 대기한 입력");
   await page.goto("about:blank");
   writeFileSync(join(fixture!, "release-model"), "continue only isolated fixtures", { mode: 0o600 });
   // Verify dispatch with no browser connected before restoring the page.
@@ -94,6 +100,7 @@ test("an account change only takes effect when a chat input is submitted", async
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0; throw error; }
   }).toBe(0);
   await page.goto(draftAddress);
-  await expect(account).toHaveValue("second-browser-login");
+  await expect(account).toHaveValue("first-browser-login");
+  await expect(page.locator(".user-message").getByText(/^이 채팅에서 진행하던 미완료 작업을 계속 진행하세요/)).toHaveCount(1);
   await expect(page.getByText("편집 후 대기한 입력", { exact: true })).toHaveCount(1);
 });

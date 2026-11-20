@@ -19,14 +19,17 @@ import (
 // A native queue can be consumed by whichever account loads the chat. Keep
 // web-only submissions private until the intended account can start them.
 type webQueuedInput struct {
-	ID       string     `json:"id"`
-	Text     string     `json:"text"`
-	Account  string     `json:"account"`
-	Identity string     `json:"identity"`
-	State    string     `json:"state"`
-	Detail   string     `json:"detail,omitempty"`
-	Skills   []webSkill `json:"skills,omitempty"`
-	Goal     bool       `json:"goal,omitempty"`
+	ID          string      `json:"id"`
+	Text        string      `json:"text"`
+	Account     string      `json:"account"`
+	Identity    string      `json:"identity"`
+	State       string      `json:"state"`
+	Detail      string      `json:"detail,omitempty"`
+	Skills      []webSkill  `json:"skills,omitempty"`
+	Goal        bool        `json:"goal,omitempty"`
+	ResumeFrom  string      `json:"resumeFrom,omitempty"`
+	ResumedTurn string      `json:"resumedTurn,omitempty"`
+	ResumeGoal  *webGoalRef `json:"resumeGoal,omitempty"`
 }
 
 const webQueueID = "web-"
@@ -116,28 +119,79 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 	}
 	// The user's current submit can interrupt an old account. An automatic
 	// dispatch after a browser/service disconnect never interrupts a turn.
+	staged := false
 	owner, err := w.acquireWebChat(ctx, target, p.Thread, webAcquire{
-		prepare: true, interrupt: true, external: p.SwitchAccount, objective: goalObjective(p.Text, p.Goal),
-	})
-	if err == nil {
-		defer owner.release()
-		if p.SwitchAccount {
-			if waitErr := w.pinQueueToAccount(p.Thread, q, owner.web); waitErr != nil {
-				result["handoffError"] = cr.SafeText(waitErr.Error())
-				return result, nil
+		prepare: true, interrupt: true, external: p.SwitchAccount,
+		beforeInterrupt: func(ctx context.Context, turn string) error {
+			updated, err := w.stageQueueContinuation(ctx, target, p.Thread, turn, queued, q)
+			if err == nil {
+				q, staged = updated, true
 			}
+			return err
+		},
+	})
+	if err != nil {
+		index := len(q) - 1
+		if staged {
+			index = 0
+		} else if errors.Is(err, errWebInputUnconfirmed) {
+			q[index].State = "blocked"
 		}
-		if len(q) == 1 || p.SwitchAccount {
-			_ = w.startQueuedInput(ctx, owner, p.Thread, q)
+		_ = w.noteQueueWait(p.Thread, q, index, err)
+		result["handoffError"] = q[index].Detail
+		return result, nil
+	}
+	defer owner.release()
+	if p.SwitchAccount || staged {
+		if err := w.pinQueueToAccount(p.Thread, q, owner.web); err != nil {
+			result["handoffError"] = cr.SafeText(err.Error())
+			return result, nil
 		}
-	} else {
-		if errors.Is(err, errWebInputUnconfirmed) {
-			q[len(q)-1].State = "blocked"
+	}
+	if staged {
+		q[0].State, q[0].Detail = "pending", ""
+		if err := w.saveOwnedQueue(p.Thread, q); err != nil {
+			result["handoffError"] = cr.SafeText(err.Error())
+			return result, nil
 		}
-		_ = w.noteQueueWait(p.Thread, q, len(q)-1, err)
-		result["handoffError"] = q[len(q)-1].Detail
+	}
+	if len(q) == 1 || p.SwitchAccount || staged {
+		if err := w.startQueuedInput(ctx, owner, p.Thread, q); err != nil {
+			result["handoffError"] = cr.SafeText(err.Error())
+		} else if staged && q[0].ResumeFrom != "" {
+			result["continuationStarted"] = q[0].State == "running" && q[0].Detail == ""
+			result["handoffError"] = q[0].Detail
+		}
 	}
 	return result, nil
+}
+
+// Save a queue head before stopping the old turn. An unfinished handoff must
+// hold the following input, including across a bridge restart.
+func (w *WebChat) stageQueueContinuation(ctx context.Context, target *webConnection, id, turn string, queued webQueuedInput, q []webQueuedInput) ([]webQueuedInput, error) {
+	goal, err := target.client.Goal(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	continuation := webQueuedInput{ID: webQueueID + "continue:" + strings.TrimPrefix(queued.ID, webQueueID),
+		Text: ContinuePrompt, Account: queued.Account, Identity: queued.Identity, ResumeFrom: turn,
+		State: "blocked", Detail: "이전 작업의 인계 결과를 확인해 주세요."}
+	if goal != nil && goal.Status == "active" {
+		continuation.ResumeGoal = &webGoalRef{Objective: goal.Objective, CreatedAt: goal.CreatedAt}
+	}
+	updated := append([]webQueuedInput{continuation}, q...)
+	if i := slices.IndexFunc(q, func(input webQueuedInput) bool { return input.ResumeFrom != "" }); i >= 0 {
+		sameGoal := continuation.ResumeGoal != nil && q[i].ResumeGoal != nil && q[i].ResumeGoal.matches(goal)
+		if q[i].State != "running" || (q[i].ResumedTurn != turn && !sameGoal) {
+			return nil, errors.New("이전에 중단한 작업의 이어가기 상태를 먼저 확인해 주세요.")
+		}
+		// The running continuation is itself the turn being handed over.
+		updated = slices.Delete(updated, i+1, i+2)
+	}
+	if err := w.saveOwnedQueue(id, updated); err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 // An explicit change must not jump back to the depleted login when an earlier
@@ -219,7 +273,7 @@ func (w *WebChat) advanceOwnedQueue(ctx context.Context, id string) error {
 	defer unlock()
 	q, err := w.readOwnedQueue(id)
 	index := nextWebQueuedInput(q)
-	if err != nil || index < 0 || q[index].State != "pending" {
+	if err != nil || index < 0 || (q[index].State != "pending" && q[index].State != "running") {
 		return err
 	}
 	next := q[index]
@@ -241,6 +295,12 @@ func (w *WebChat) advanceOwnedQueue(ctx context.Context, id string) error {
 	if target.hasActiveQueueTurn(ctx, id) {
 		return w.noteQueueWait(id, q, index, nil)
 	}
+	if next.State == "running" {
+		if next.ResumeGoal != nil {
+			return w.checkQueuedGoal(ctx, target, id, q, index)
+		}
+		return w.checkQueueContinuation(ctx, target, id, q, index)
+	}
 	owner, err := w.acquireWebChat(ctx, target, id, webAcquire{prepare: true, objective: goalObjective(next.Text, next.Goal)})
 	if err != nil {
 		return w.noteQueueWait(id, q, index, err)
@@ -256,6 +316,57 @@ func (c *webConnection) hasActiveQueueTurn(ctx context.Context, id string) bool 
 	return err == nil && thread.ID == id && thread.Status.Type == "active"
 }
 
+func (w *WebChat) checkQueueContinuation(ctx context.Context, target *webConnection, id string, q []webQueuedInput, index int) error {
+	turns, err := recentWebTurns(ctx, target.client, id, 8)
+	if err != nil {
+		return w.noteQueueWait(id, q, index, err)
+	}
+	for _, turn := range turns {
+		if turn.ID != q[index].ResumedTurn {
+			continue
+		}
+		switch turn.Status {
+		case "inProgress":
+			return nil
+		case "completed":
+			return w.saveOwnedQueue(id, slices.Delete(q, index, index+1))
+		case "failed", "interrupted":
+			return w.blockQueueContinuation(id, q, index, "이어가던 작업이 중단됐습니다. 다음 입력은 대기 중입니다.")
+		}
+	}
+	return w.blockQueueContinuation(id, q, index, "이어가던 작업의 완료 상태를 확인할 수 없습니다. 채팅을 확인해 주세요.")
+}
+
+func (w *WebChat) blockQueueContinuation(id string, q []webQueuedInput, index int, detail string) error {
+	q[index].State, q[index].Detail = "blocked", detail
+	return w.saveOwnedQueue(id, q)
+}
+
+// A resumed native goal can start its own turns. Keep its queue gate until
+// the goal completes, including idle gaps between those turns.
+func (w *WebChat) checkQueuedGoal(ctx context.Context, target *webConnection, id string, q []webQueuedInput, index int) error {
+	next := &q[index]
+	goal, err := target.client.Goal(ctx, id)
+	if err != nil {
+		return w.noteQueueWait(id, q, index, err)
+	}
+	if !next.ResumeGoal.matches(goal) {
+		return w.blockQueueContinuation(id, q, index, "이어가던 목표가 바뀌었습니다. 채팅을 확인해 주세요.")
+	}
+	if goal.Status == "complete" {
+		return w.saveOwnedQueue(id, slices.Delete(q, index, index+1))
+	}
+	detail := ""
+	if goal.Status != "active" {
+		detail = "목표가 완료되기를 기다리고 있습니다. 현재 목표 상태를 확인해 주세요."
+	}
+	if next.State == "running" && next.Detail == detail {
+		return nil
+	}
+	next.State, next.Detail = "running", detail
+	return w.saveOwnedQueue(id, q)
+}
+
 func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id string, q []webQueuedInput) error {
 	index := nextWebQueuedInput(q)
 	if index < 0 {
@@ -264,6 +375,19 @@ func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id
 	next := &q[index]
 	if next.State != "pending" || next.Identity != queueLoginKey(owner.web) {
 		return nil
+	}
+	if next.ResumeGoal != nil {
+		if err := w.verifyLogin(ctx, owner.web); err != nil {
+			return w.noteQueueWait(id, q, index, err)
+		}
+		if err := w.verifyInputOwner(ctx, owner, id, false); err != nil {
+			return w.noteQueueWait(id, q, index, err)
+		}
+		err := w.checkQueuedGoal(ctx, owner.web, id, q, index)
+		if err == nil && next.ResumeGoal != nil && next.State == "running" && next.Detail == "" {
+			w.rememberAccount(id, owner.web.account)
+		}
+		return err
 	}
 	delivery, err := owner.delivery(ctx, id)
 	if err != nil {
@@ -275,6 +399,24 @@ func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id
 	if err := w.verifyLogin(ctx, owner.web); err != nil {
 		return w.noteQueueWait(id, q, index, err)
 	}
+	if next.ResumeFrom != "" {
+		turns, err := recentWebTurns(ctx, owner.client, id, 1)
+		if err != nil {
+			return w.noteQueueWait(id, q, index, err)
+		}
+		if len(turns) != 1 || turns[0].ID != next.ResumeFrom {
+			return w.blockQueueContinuation(id, q, index, "이어갈 작업이 바뀌었습니다. 채팅을 확인해 주세요.")
+		}
+		switch turns[0].Status {
+		case "completed":
+			return w.saveOwnedQueue(id, slices.Delete(q, index, index+1))
+		case "interrupted":
+		case "inProgress":
+			return w.noteQueueWait(id, q, index, errors.New("이전 작업의 중단이 이력에 반영되기를 기다리고 있습니다."))
+		default:
+			return w.blockQueueContinuation(id, q, index, "이전 작업의 중단 결과를 확인해 주세요.")
+		}
+	}
 	// Previously queued native items stay in their original queue. If the
 	// interruption left that queue idle, finish its earlier head first.
 	native, err := readWebQueue(ctx, owner.client, id)
@@ -282,6 +424,9 @@ func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id
 		return w.noteQueueWait(id, q, index, err)
 	}
 	if len(native.Data) > 0 {
+		if next.ResumeFrom != "" {
+			return w.blockQueueContinuation(id, q, index, "원래 창의 Codex 대기 입력을 먼저 확인해 주세요.")
+		}
 		return w.startEarlierNativeInput(ctx, owner, id, q, index, native.Data[0])
 	}
 	if err := w.verifyInputOwner(ctx, owner, id, true); err != nil {
@@ -302,7 +447,12 @@ func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id
 	if p.Goal {
 		_, err = w.deliverGoal(ctx, owner, owner.web, r, p)
 	} else {
-		_, err = w.startWebTurn(ctx, owner, owner.web, r, p)
+		var reply map[string]any
+		reply, err = w.startWebTurn(ctx, owner, owner.web, r, p)
+		if err == nil && next.ResumeFrom != "" {
+			next.State, next.ResumedTurn = "running", reply["turn_id"].(string)
+			return w.saveOwnedQueue(id, q)
+		}
 	}
 	if err != nil {
 		if errors.Is(err, errWebInputUnconfirmed) {
@@ -347,7 +497,7 @@ func (w *WebChat) ownedQueueDisplay(id string) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, 0, len(q))
 	for _, input := range q {
 		b, err := json.Marshal(map[string]any{"id": input.ID, "input": cr.TextInput(input.Text), "account": input.Account,
-			"state": input.State, "detail": input.Detail, "skills": input.Skills, "goal": input.Goal})
+			"state": input.State, "detail": input.Detail, "skills": input.Skills, "goal": input.Goal, "continuation": input.ResumeFrom != ""})
 		if err != nil {
 			return nil, err
 		}
@@ -367,6 +517,10 @@ func (w *WebChat) changeOwnedQueue(method string, p webParams) (any, error) {
 	}
 	if p.ExpectedText == nil || q[index].Text != *p.ExpectedText {
 		return nil, errWebQueueChanged
+	}
+	entry := q[index]
+	if entry.ResumeFrom != "" && (method != "web.queueCancel" || entry.State == "pending" || entry.State == "running" && entry.Detail == "") {
+		return nil, errors.New("이전 작업의 이어가기 상태는 채팅에서 확인해 주세요.")
 	}
 	result := map[string]any{"queued_id": p.Queued}
 	if method == "web.queueCancel" {

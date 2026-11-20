@@ -66,8 +66,9 @@ export type QueuedInput = {
   id: string;
   input: Array<{ type: string; text?: string; text_elements?: unknown[] }>;
   account?: string;
-  state?: "pending" | "sending" | "blocked" | "held";
+  state?: "pending" | "sending" | "running" | "blocked" | "held";
   detail?: string;
+  continuation?: boolean;
   skills?: ChatSkill[];
   goal?: boolean;
 };

@@ -126,7 +126,8 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     if (!recalled) save({ ...sent, pending: operation });
     try {
       const result = await call<{ mode: "start" | "steer" | "queue" | "relay" | "goal"; relay_id?: string; account?: string;
-        thread_id?: string; goal_activation_unconfirmed?: boolean; handoffError?: string }>("web.send", parameters, operation);
+        thread_id?: string; goal_activation_unconfirmed?: boolean; handoffError?: string;
+        continuationStarted?: boolean }>("web.send", parameters, operation);
       if (result.mode === "relay" && result.relay_id) {
         relayText.current = sent.text;
         relayOperation.current = operation;
@@ -139,6 +140,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
         const label = result.account === "default" ? "기본 계정" : result.account;
         const queuedNotice = label ? `${label} 계정의 입력을 큐에 추가했습니다.` : "큐에 추가했습니다.";
         setNotice(result.handoffError ? queuedNotice + " " + result.handoffError :
+          result.continuationStarted ? queuedNotice + " 이전 작업을 먼저 이어갑니다." :
           hasOverride ? queuedNotice + " 이 입력은 채팅의 실행 설정으로 처리됩니다." : queuedNotice);
       } else if (result.mode === "queue") {
         setNotice("새 작업 요청을 전달했습니다.");
@@ -188,7 +190,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
       ? "전송 시 이 채팅의 실행을 선택한 계정으로 인계합니다."
       : "다른 앱이 이 채팅을 열고 있습니다. 이 창에서 이어가려면 실행 계정을 선택해 주세요."}</p>}
     {external && !history?.webOnly && delivery?.state !== "unavailable" && <p className="owner-note">{guiRelay ? "GUI 채팅에 해당 창의 계정으로 전달합니다." : "이 채팅을 열어 둔 창의 계정으로 전달합니다."}</p>}
-    {pendingAccountChange && <p className="owner-note">{active ? "전송하거나 큐에 추가하면 현재 작업을 중단하고 선택한 계정으로 전환합니다." : "다음 입력부터 선택한 계정으로 전환합니다."}</p>}
+    {pendingAccountChange && <p className="owner-note">{active ? "보내면 현재 작업을 중단하고 새 요청을 시작합니다. 큐에 추가하면 새 계정에서 현재 작업을 먼저 이어갑니다." : "다음 입력부터 선택한 계정으로 전환합니다."}</p>}
     {draining && <p className="owner-note" role="status">기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.</p>}
     {error && <p role="alert" className="inline-error">{error}</p>}
     {uncertain && <p className="inline-error">대화나 큐에서 이전 전송 결과를 확인하세요. <button type="button"

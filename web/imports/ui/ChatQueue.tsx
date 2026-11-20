@@ -43,7 +43,8 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
   const inFlight = useRef(false);
   const locked = busy || pending || uncertain;
   const head = items.find(item => item.state !== "held");
-  const next = !head?.state || head.state === "pending" ? head : undefined;
+  const next = !head?.continuation && (!head?.state || head.state === "pending") ? head : undefined;
+  const waitingCount = items.filter(item => !item.continuation).length;
   const queued = draft?.kind === "editing" ? items.find(item => item.id === draft.id) : undefined;
   const changed = draft?.kind === "editing" && (!queued || editableText(queued) !== draft.original);
 
@@ -67,7 +68,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
     const draftToRecall: RecalledDraft = { kind: "recalled", text: recalled, skills: item?.skills ?? [], goal: !!item?.goal,
       checkHistory: false, unconfirmed: true };
     // Keep the text if the tab disconnects after Codex removes the item.
-    if (remove) keep(draftToRecall);
+    if (remove && !item?.continuation) keep(draftToRecall);
     const params = { thread_id: thread, account, queued_id: id, expected_text: original,
       ...(remove ? {} : { text }) };
     try {
@@ -77,7 +78,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
         throw new Error("큐 변경 결과를 확인하지 못했습니다.");
       }
       if (remove) {
-        keep({ ...draftToRecall, checkHistory: result.check_history === true, unconfirmed: false });
+        if (!item?.continuation) keep({ ...draftToRecall, checkHistory: result.check_history === true, unconfirmed: false });
         setNotice("대기열에서 뺐습니다.");
       } else {
         keep();
@@ -117,29 +118,30 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
 
   return <>
     {items.length > 0 && <details className="queue-preview">
-      <summary><strong>대기 중인 입력 {items.length}개</strong>
+      <summary><strong>{waitingCount ? `대기 중인 입력 ${waitingCount}개` : "이전 작업 이어가기"}</strong>
         {next
           ? <span className="queue-next" title={inputText(next.input)}>{inputText(next.input)}</span>
-          : <span className="queue-next">{head?.state === "sending" ? "전송 결과 확인 필요" : "실행 보류"}</span>}
+          : <span className="queue-next">{head?.state === "running" && !head.detail ? "이전 작업 진행 중" : head?.state === "pending" ? "이전 작업 시작 대기" : head?.state === "sending" ? "전송 결과 확인 필요" : "실행 보류"}</span>}
       </summary>
       <ul className="queue-entries">
         {items.map(item => {
           const original = editableText(item);
           const selected = draft?.kind === "editing" && draft.id === item.id;
+          const canRemove = !item.continuation || (item.state !== "pending" && (item.state !== "running" || !!item.detail));
           return <li key={item.id} className="queue-entry">
             <div className="queue-entry-meta">
-              <span>{item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" || item.state === "held" ? "실행 보류" : item.id === next?.id ? "다음 입력" : "대기 중"}</span>
+              <span>{item.state === "running" ? item.detail ? "실행 보류" : "진행 중" : item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" || item.state === "held" ? "실행 보류" : item.id === next?.id ? "다음 입력" : "대기 중"}</span>
               {item.account && <small>{item.account === "default" ? "기본 계정" : item.account}</small>}
               {item.goal && <small>/goal</small>}
               {item.skills?.map(skill => <small key={skill.id}>{skill.name}</small>)}
             </div>
-            <p>{inputText(item.input)}</p>
+            <p>{item.continuation ? "이전 작업 이어가기" : inputText(item.input)}</p>
             {item.detail && <small className="muted">{item.detail}</small>}
-            {original !== undefined && <div className="queue-actions">
-              <button type="button" disabled={locked || !!draft || item.state === "sending"} onClick={() => {
+            {original !== undefined && canRemove && <div className="queue-actions">
+              {!item.continuation && <button type="button" disabled={locked || !!draft || item.state === "sending"} onClick={() => {
                 setError("");setNotice("");
                 keep({ kind: "editing", id: item.id, original, text: original });
-              }}>수정</button>
+              }}>수정</button>}
               <button type="button" disabled={locked || (!!draft && (!selected || changed))}
                 onClick={() => void changeQueue(item.id, original)}>대기 취소</button>
             </div>}
