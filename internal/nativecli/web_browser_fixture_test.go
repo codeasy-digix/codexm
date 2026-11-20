@@ -2,6 +2,8 @@ package nativecli
 
 import (
 	"context"
+	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +16,9 @@ import (
 	"github.com/codeasy-digix/codexm/internal/config"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
+
+//go:embed testdata/web-artifact.mp4
+var webArtifactVideo []byte
 
 // Opt-in browser fixture kept alive only while the external Playwright job
 // runs. It uses the real official runtime and a local model, never user chats.
@@ -64,14 +69,47 @@ func TestWebChatBrowserFixture(t *testing.T) {
 	if err := os.WriteFile(comparison, []byte("<!doctype html><h1>Browser artifact fixture</h1><script>window.__unsafe=true</script>"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	previewPNG, err := base64.StdEncoding.DecodeString(artifactPreviewPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{
+		"workspace-image.png": previewPNG, "attached-image.png": previewPNG, "workspace-video.mp4": webArtifactVideo,
+		"plain-report.txt": []byte("plain file reference"), "manual-report.txt": []byte("manual registration"),
+	} {
+		if err := os.WriteFile(filepath.Join(f.cmd.Dir, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	generated := filepath.Join(f.c.Runtime.SharedCodexHome, "generated_images", first.Thread.ID)
+	if err := os.MkdirAll(generated, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generated, "generated-image.png"), previewPNG, 0600); err != nil {
+		t.Fatal(err)
+	}
+	accountGenerated := filepath.Join(f.c.Runtime.AccountsDir, "first-browser-login", "generated_images", first.Thread.ID)
+	if err := os.MkdirAll(accountGenerated, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(accountGenerated, "account-image.png"), previewPNG, 0600); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 26; i++ {
+		prompt := fmt.Sprintf("페이지 이력 %02d", i)
 		if i == 26 {
 			payload, _ := json.Marshal(map[string]string{"path": comparison, "mode": "wide"})
 			f.mu.Lock()
-			f.responseText += "\n\nvisualize" + string(payload) + "\n\n![작업 폴더 이미지](./workspace-image.png)"
+			f.responseText += "\n\nvisualize" + string(payload) + "\n\n![작업 폴더 이미지](./workspace-image.png)" +
+				"\n\n[발표 영상](./workspace-video.mp4)\n\n추가 자료 ./plain-report.txt"
 			f.mu.Unlock()
+			input := append(cr.TextInput(prompt), map[string]any{"type": "localImage", "path": filepath.Join(f.cmd.Dir, "attached-image.png")})
+			if err := f.client.Call(f.ctx, "turn/start", map[string]any{"threadId": first.Thread.ID, "input": input}, nil); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			f.start(first.Thread.ID, prompt)
 		}
-		f.start(first.Thread.ID, fmt.Sprintf("페이지 이력 %02d", i))
 		f.completed(first.Thread.ID, i)
 	}
 	f.mu.Lock()

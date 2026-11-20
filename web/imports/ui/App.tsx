@@ -336,7 +336,7 @@ export function App() {
           {chatState.error&&<p role="alert" className="inline-error">{chatState.error}</p>}
           {(!!turns.length || !!history?.relayedInputs?.length) && <ChatMessages thread={selected.id} turns={turns} account={account}
             external={history?.thread.externalOwner} liveTurnId={liveTurnId}
-            relayedInputs={history?.relayedInputs} hasOlder={!!history?.nextCursor} cwd={selected.cwd} files={fileState.files}/>}
+            relayedInputs={history?.relayedInputs} hasOlder={!!history?.nextCursor} cwd={selected.cwd} files={fileState.files} refs={fileState.refs}/>}
           {history&&!turns.length&&!history.relayedInputs?.length&&<div className="empty-conversation"><h2>{isArchived?"보관된 대화입니다":"표시할 메시지가 없습니다"}</h2><p>{isArchived?"현재 Codex 원본에서 조회되는 메시지가 없습니다.":"요청을 입력하면 이 대화에서 작업을 이어갑니다."}</p></div>}
         </div>:path !== "/" ? <div className="message-inner">
           {(openError || !threadId)

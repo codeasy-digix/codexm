@@ -1,28 +1,35 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../../client/data";
-import { artifactURL, inlineArtifact, type ChatArtifact, type ChatTurn } from "../contracts/web";
+import { artifactPreview, artifactURL, type ChatArtifact, type ChatTurn } from "../contracts/web";
 import { Modal } from "./Modal";
 
 const emptyFiles: ChatArtifact[] = [];
+const emptyRefs = new Map<string, string>();
 
 export function useChatFiles(ready: boolean, online: boolean, thread: string, turns: ChatTurn[] | undefined, open: boolean) {
   const [seen, setSeen] = useState(() => new Map<string, ChatArtifact[]>());
   const [result, setResult] = useState<{ thread: string; error?: string }>();
   const attempt = useRef(0);
   const signature = useMemo(() => {
-    if (!turns) return;
-    for (let i = turns.length - 1; i >= 0; i--) {
-      const turn = turns[i];
-      const refs = turn.items.flatMap(item => {
-        if (item.type === "agentMessage" && !item.streaming)
-          return item.text?.match(/visualize[^]*|\]\([^)]+\)/g) ?? [];
-        if (item.type === "userMessage")
-          return item.content?.filter(part => part.type === "localImage").map(part => String(part.path ?? "")) ?? [];
-        return [];
-      });
-      if (refs.length) return JSON.stringify([turn.id, refs]);
+    for (let i = (turns?.length ?? 0) - 1; i >= 0; i--) {
+      const turn = turns![i];
+      if (turn.artifacts?.length || turn.items.some(item => item.type === "fileOutput")) {
+        return `${turn.id}:${turn.artifacts?.length ?? 0}`;
+      }
     }
   }, [turns]);
+  const listed = seen.get(thread);
+  const { files, refs } = useMemo(() => {
+    if (!ready) return { files: emptyFiles, refs: emptyRefs };
+    const byID = new Map<string, ChatArtifact>();
+    const refs = new Map<string, string>();
+    for (const turn of turns ?? []) {
+      for (const file of turn.artifacts ?? []) byID.set(file.id, file);
+      for (const [path, id] of Object.entries(turn.fileRefs ?? {})) refs.set(path, id);
+    }
+    for (const file of listed ?? []) byID.set(file.id, file);
+    return { files: [...byID.values()], refs };
+  }, [ready, turns, listed]);
 
   function save(id: string, files: ChatArtifact[]) {
     setSeen(previous => {
@@ -36,7 +43,7 @@ export function useChatFiles(ready: boolean, online: boolean, thread: string, tu
   }
 
   useEffect(() => {
-    if (!ready) { setSeen(new Map()); setResult(undefined); }
+    if (!ready) { setSeen(new Map()); setResult(undefined); return; }
     if (!online || !thread || (!open && !signature)) return;
     const token = ++attempt.current;
     setResult(undefined);
@@ -51,7 +58,7 @@ export function useChatFiles(ready: boolean, online: boolean, thread: string, tu
   }, [ready, online, thread, open, signature]);
 
   return {
-    files: ready ? seen.get(thread) ?? emptyFiles : emptyFiles,
+    files, refs,
     loading: open && online && result?.thread !== thread,
     error: result?.thread === thread ? result.error : undefined,
     registered(files: ChatArtifact[]) {
@@ -62,12 +69,20 @@ export function useChatFiles(ready: boolean, online: boolean, thread: string, tu
   };
 }
 
-export function FileLink({ thread, file, preview = false }: { thread: string; file: ChatArtifact; preview?: boolean }) {
+export function FileLink({ thread, file, preview = false, label, alt }: {
+  thread: string; file: ChatArtifact; preview?: boolean; label?: React.ReactNode; alt?: string;
+}) {
   const href = artifactURL(thread, file.id);
-  return <a className="chat-file-link" href={href} download={file.name}>
-    {preview && inlineArtifact(file.mime) && <img key={file.version} src={href} alt={file.name} loading="lazy" />}
-    <span>{file.name}</span>
+  const kind = preview && artifactPreview(file.mime);
+  const link = <a className="chat-file-link" href={href} download={file.name}>
+    {kind === "image" && <img key={file.version} src={href} alt={alt || file.name} loading="lazy" />}
+    <span>{label || file.name}</span>
   </a>;
+  if (kind !== "video") return link;
+  return <span className="chat-file-video">
+    <video key={file.version} controls playsInline preload="metadata" src={href} aria-label={alt || file.name} />
+    {link}
+  </span>;
 }
 
 export function ChatFiles({ thread, files, loading, error: loadError, onRegistered, onClose }: {
@@ -90,12 +105,12 @@ export function ChatFiles({ thread, files, loading, error: loadError, onRegister
     finally { setBusy(false); }
   }
   return <Modal title="채팅 파일" onClose={() => { if (!busy) onClose(); }}>
-    {loading ? <p role="status">파일을 찾는 중…</p> : files.length ? <ul className="chat-files">
+    {files.length ? <ul className="chat-files">
       {files.map(file => <li key={file.id}>
         <FileLink thread={thread} file={file} />
-        <small>{file.source === "visualization" ? "Codex 생성" : file.path}</small>
+        <small>{file.source === "workspace" ? file.path : file.source === "attachment" ? "첨부 파일" : "Codex 생성"}</small>
       </li>)}
-    </ul> : loadError ? null : <p className="muted">등록된 파일이 없습니다.</p>}
+    </ul> : loading ? <p role="status">파일을 찾는 중…</p> : loadError ? null : <p className="muted">등록된 파일이 없습니다.</p>}
     {loadError && <p role="alert" className="inline-error">{loadError}</p>}
     <form className="dialog-form" onSubmit={event => void register(event)}>
       <label>작업 폴더 기준 파일 경로

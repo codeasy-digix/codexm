@@ -42,8 +42,10 @@ export const bridgeContract = {
   ],
 };
 
-export type ChatItem = { id: string; type: string; text?: string; phase?: string; content?: Array<{ type: string; text?: string; [key: string]: unknown }>; [key: string]: unknown };
-export type ChatTurn = { id: string; status: string; items: ChatItem[]; itemsView?: string; startedAt?: number; completedAt?: number; error?: { message: string } | null };
+export type ChatItem = { id: string; type: string; text?: string; phase?: string; artifactIds?: string[];
+  content?: Array<{ type: string; text?: string; path?: string; url?: string; artifactId?: string; [key: string]: unknown }>; [key: string]: unknown };
+export type ChatTurn = { id: string; status: string; items: ChatItem[]; itemsView?: string; startedAt?: number; completedAt?: number;
+  error?: { message: string } | null; artifacts?: ChatArtifact[]; fileRefs?: Record<string, string> };
 export type ChatThread = { id: string; name?: string; preview?: string; cwd: string; projectId?: string; status: { type: string }; updatedAt: number; recencyAt?: number; pinned?: boolean; archived?: boolean; externalOwner?: boolean; model?: string; reasoningEffort?: string; account?:string };
 export type Project = { id: string; name: string; roots: Array<{ path: string }>; nativeId?:string };
 export type Catalog = { threads: ChatThread[]; projects: Project[]; otherProjects?:Project[]; pinned: ChatThread[]; nextCursor?: string | null; accounts: Array<{ name: string; default?: boolean }>; defaultAccount?: string; guiQuitAvailable?: boolean; defaultCwd: string; total?:number };
@@ -90,7 +92,7 @@ export type ChatSkill = { id: string; name: string; description?: string; scope?
 export type ChatArtifact = {
   id: string;
   name: string;
-  source: "visualization" | "workspace";
+  source: "visualization" | "workspace" | "generated" | "account-generated" | "attachment";
   path: string;
   mime: string;
   size: number;
@@ -101,8 +103,9 @@ export function artifactURL(thread: string, id: string) {
   return "/artifacts/" + encodeURIComponent(thread) + "/" + encodeURIComponent(id);
 }
 
-export function inlineArtifact(mime: string) {
-  return ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mime);
+export function artifactPreview(mime: string): "image" | "video" | undefined {
+  if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mime)) return "image";
+  if (mime === "video/mp4" || mime === "video/webm") return "video";
 }
 export type ThreadGoal = {
   objective: string;

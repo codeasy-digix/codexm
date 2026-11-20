@@ -29,6 +29,8 @@ type WebTurn struct {
 	Items       []json.RawMessage `json:"items"`
 	ItemsView   string            `json:"itemsView"`
 	Error       json.RawMessage   `json:"error,omitempty"`
+	Artifacts   []storedArtifact  `json:"artifacts,omitempty"`
+	FileRefs    map[string]string `json:"fileRefs,omitempty"`
 }
 
 // Read the native index and file identity without loading or parsing a rollout.
@@ -119,7 +121,7 @@ func webHistoryRevision(home string, entry catalog.Entry, projection string) str
 	if rollout == "" && projection == "" {
 		return ""
 	}
-	key := fmt.Sprintf("%s\x00%s\x00%t:%d\x00%s:%s", home, entry.ID, entry.Archived, entry.ModifiedAt, rollout, projection)
+	key := fmt.Sprintf("media-v1\x00%s\x00%s\x00%t:%d\x00%s:%s", home, entry.ID, entry.Archived, entry.ModifiedAt, rollout, projection)
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 }
 
@@ -189,7 +191,15 @@ func (w *WebChat) readHistoryPage(ctx context.Context, c *webConnection, p webPa
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	revision, err := w.historyVersion(ctx, p.Thread)
+	home := config.Expand(w.c.Runtime.SharedCodexHome)
+	entry, err := catalog.Lookup(ctx, home, p.Thread)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	revision, err := webHistoryEntryRevision(ctx, home, entry)
 	if err != nil || revision == "" || revision != p.HistoryRevision {
 		return nil, err
 	}
@@ -201,7 +211,7 @@ func (w *WebChat) readHistoryPage(ctx context.Context, c *webConnection, p webPa
 			return nil, err
 		}
 	}
-	turns, next, complete, err := w.historyPage(ctx, c, p, limit)
+	turns, next, complete, err := w.historyPage(ctx, c, p, limit, entry.Cwd)
 	if err != nil || !complete {
 		return nil, err
 	}
@@ -335,7 +345,7 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 		result["historyUnchanged"] = true
 		return result, nil
 	}
-	page, next, stable, err := w.historyPage(ctx, c, p, limit)
+	page, next, stable, err := w.historyPage(ctx, c, p, limit, entry.Cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +358,7 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	return result, nil
 }
 
-func (w *WebChat) historyPage(ctx context.Context, c *webConnection, p webParams, limit int) ([]WebTurn, *string, bool, error) {
+func (w *WebChat) historyPage(ctx context.Context, c *webConnection, p webParams, limit int, cwd string) ([]WebTurn, *string, bool, error) {
 	var page struct {
 		Data       []WebTurn `json:"data"`
 		NextCursor *string   `json:"nextCursor"`
@@ -378,11 +388,12 @@ func (w *WebChat) historyPage(ctx context.Context, c *webConnection, p webParams
 		turn.Items = messages
 		stable = stable && turn.Status != "inProgress"
 	}
+	w.projectWebArtifacts(ctx, p.Thread, cwd, page.Data)
 	return page.Data, page.NextCursor, stable, nil
 }
 
 // Keep every displayed user and agent message in order, including input steered
-// into older turns. Tool output continues to load through the existing details API.
+// into older turns. Selected native file outputs are projected into small links.
 func webTurnMessages(ctx context.Context, c *webConnection, thread, turn string) ([]json.RawMessage, error) {
 	args := map[string]any{
 		"threadId": thread, "turnId": turn, "limit": 50, "sortDirection": "asc",
@@ -406,7 +417,8 @@ func webTurnMessages(ctx context.Context, c *webConnection, thread, turn string)
 			if err := json.Unmarshal(entry.Item, &item); err != nil {
 				return nil, err
 			}
-			if item.Type == "userMessage" || item.Type == "agentMessage" && (item.Moderation == nil || !item.Moderation.Moderated) {
+			if item.Type == "userMessage" || item.Type == "agentMessage" && (item.Moderation == nil || !item.Moderation.Moderated) ||
+				webArtifactMessageType(entry.Item, item.Type) {
 				messages = append(messages, entry.Item)
 			}
 		}

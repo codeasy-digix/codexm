@@ -82,27 +82,49 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   expect(await artifact.text()).toContain("<h1>Browser artifact fixture</h1>");
   expect((await fetch(new URL(artifactPath, url!))).status).toBe(401);
   expect((await page.request.get(new URL(artifactPath.replace(f.thread, f.second), url!).href)).status()).toBe(404);
-  writeFileSync(join(f.home, "workspace-image.png"), Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aEioAAAAASUVORK5CYII=", "base64"));
+  const rendered = page.locator(".assistant-message img[alt='작업 폴더 이미지']");
+  await expect(rendered).toBeVisible();
+  await expect.poll(() => rendered.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBe(1);
+  const attached = page.locator(".user-message img");
+  await expect(attached).toBeVisible();
+  await expect.poll(() => attached.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBe(1);
+
+  const video = page.locator(".assistant-message video");
+  await expect(video).toBeVisible();
+  await expect.poll(() => video.evaluate(element => (element as HTMLVideoElement).duration)).toBe(1.5);
+  await video.evaluate(element => { (element as HTMLVideoElement).currentTime = 0.75; });
+  await expect.poll(() => video.evaluate(element => {
+    const media = element as HTMLVideoElement;
+    return media.seeking ? -1 : media.currentTime;
+  })).toBe(0.75);
+  const videoURL = new URL((await page.getByRole("link", { name: "발표 영상", exact: true }).getAttribute("href"))!, url!).href;
+  const part = await page.request.get(videoURL, { headers: { Range: "bytes=2-9" } });
+  expect(part.status()).toBe(206);
+  expect(part.headers()["content-type"]).toBe("video/mp4");
+  const original = readFileSync(join(f.home, "workspace-video.mp4"));
+  expect(part.headers()["content-range"]).toBe(`bytes 2-9/${original.length}`);
+  expect(await part.body()).toEqual(original.subarray(2, 10));
+  const outOfRange = await page.request.get(videoURL, { headers: { Range: "bytes=999999-" } });
+  expect(outOfRange.status()).toBe(416);
+  expect(outOfRange.headers()["content-range"]).toBe(`bytes */${original.length}`);
+
+  const [report] = await Promise.all([
+    page.waitForEvent("download"), page.getByRole("link", { name: "./plain-report.txt", exact: true }).click(),
+  ]);
+  expect(report.suggestedFilename()).toBe("plain-report.txt");
   await page.getByRole("button", { name: "채팅 메뉴" }).click();
   await page.getByRole("menuitem", { name: "채팅 파일" }).click();
   const files = page.getByRole("dialog", { name: "채팅 파일" });
+  await expect(files.getByRole("link", { name: "generated-image.png", exact: true })).toBeVisible();
+  await expect(files.getByRole("link", { name: "account-image.png", exact: true })).toBeVisible();
+  await expect(files.getByRole("link", { name: "workspace-image.png", exact: true })).toBeVisible();
   await files.getByLabel("작업 폴더 기준 파일 경로").fill("../workspace-image.png");
   await files.getByRole("button", { name: "파일 등록" }).click();
   await expect(files.getByRole("alert")).toContainText("작업 폴더 기준");
-  await files.getByLabel("작업 폴더 기준 파일 경로").fill("./workspace-image.png");
+  await files.getByLabel("작업 폴더 기준 파일 경로").fill("./manual-report.txt");
   await files.getByRole("button", { name: "파일 등록" }).click();
-  const image = files.getByRole("link", { name: "workspace-image.png", exact: true });
-  await expect(image).toBeVisible();
-  const imagePath = (await image.getAttribute("href"))!;
-  const inline = await page.request.head(new URL(imagePath, url!).href);
-  expect(inline.ok()).toBe(true);
-  expect(inline.headers()["content-type"]).toBe("image/png");
-  expect(inline.headers()["content-disposition"]).toMatch(/^inline;/);
+  await expect(files.getByRole("link", { name: "manual-report.txt", exact: true })).toBeVisible();
   await files.getByRole("button", { name: "닫기", exact: true }).last().click();
-  const rendered = page.locator(".assistant-message img[alt='workspace-image.png']");
-  await expect(rendered).toBeVisible();
-  await expect.poll(() => rendered.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBe(1);
 
   const composer = page.getByRole("textbox", { name: "메시지", exact: true });
   const sourceTurnId = await page.locator(".turn").last().getAttribute("data-turn-id");

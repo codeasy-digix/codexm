@@ -42,7 +42,8 @@ type webArtifact struct {
 
 type storedArtifact struct {
 	webArtifact
-	Version string `json:"version"`
+	Version  string `json:"version"`
+	Deferred bool   `json:"deferred,omitempty"`
 }
 
 func (a storedArtifact) snapshot() string { return a.ID + "-" + a.Version }
@@ -103,50 +104,56 @@ func loadArtifacts(dir string) ([]storedArtifact, error) {
 	return files, nil
 }
 
-func registerArtifact(dir, root, source, path string, files *[]storedArtifact) error {
-	file, info, err := openArtifactSource(root, path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+func artifactVersion(info os.FileInfo) string {
 	stat := info.Sys().(*syscall.Stat_t)
-	id := fmt.Sprintf("%x", sha256.Sum256([]byte(source+"\x00"+path)))
 	identity := fmt.Sprintf("%d:%d:%d:%d", stat.Dev, stat.Ino, info.Size(), info.ModTime().UnixNano())
-	version := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
-	entry := storedArtifact{webArtifact: webArtifact{
-		ID: id, Name: filepath.Base(path), Source: source, Path: path, Size: info.Size(),
-	}, Version: version}
-	index := len(*files)
-	var size int64 = info.Size()
-	var previous string
-	for i, saved := range *files {
-		if saved.ID == id {
-			index, previous = i, saved.snapshot()
-		} else {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
+}
+
+func artifactKey(source, path string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(source+"\x00"+path)))
+}
+
+func artifactMIME(head []byte) string {
+	switch kind := http.DetectContentType(head); kind {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "video/mp4", "video/webm":
+		return kind
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func describeArtifact(file *os.File, info os.FileInfo, source, path string) (storedArtifact, error) {
+	var head [512]byte
+	n, err := file.ReadAt(head[:], 0)
+	if err != nil && err != io.EOF {
+		return storedArtifact{}, errors.New("파일을 읽지 못했습니다.")
+	}
+	return storedArtifact{webArtifact: webArtifact{
+		ID: artifactKey(source, path), Name: filepath.Base(path), Source: source, Path: path, Size: info.Size(), MIME: artifactMIME(head[:n]),
+	}, Version: artifactVersion(info)}, nil
+}
+
+func artifactFits(files []storedArtifact, entry storedArtifact) bool {
+	count, size := 1, entry.Size
+	for _, saved := range files {
+		if saved.ID != entry.ID {
+			count++
 			size += saved.Size
 		}
 	}
-	if previous == entry.snapshot() {
-		if existing, err := os.Stat(filepath.Join(dir, previous)); err == nil && existing.Mode().IsRegular() && existing.Size() == info.Size() {
-			return nil
-		}
+	return count <= artifactCount && size <= artifactChatLimit
+}
+
+func saveArtifacts(dir string, files []storedArtifact) error {
+	encoded, err := json.Marshal(files)
+	if err != nil || config.AtomicWrite(filepath.Join(dir, "files.json"), encoded, 0600) != nil {
+		return errors.New("등록한 파일 목록을 저장하지 못했습니다.")
 	}
-	if (index == len(*files) && len(*files) >= artifactCount) || size > artifactChatLimit {
-		return errors.New("이 채팅의 파일 등록 한도에 도달했습니다.")
-	}
-	head := make([]byte, 512)
-	n, err := io.ReadFull(file, head)
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return errors.New("파일을 읽지 못했습니다.")
-	}
-	entry.MIME = "application/octet-stream"
-	switch kind := http.DetectContentType(head[:n]); kind {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
-		entry.MIME = kind
-	}
-	if _, err = file.Seek(0, io.SeekStart); err != nil {
-		return errors.New("파일을 읽지 못했습니다.")
-	}
+	return nil
+}
+
+func writeArtifactSnapshot(ctx context.Context, dir string, file *os.File, entry storedArtifact) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return errors.New("파일 저장소를 만들지 못했습니다.")
 	}
@@ -155,9 +162,9 @@ func registerArtifact(dir, root, source, path string, files *[]storedArtifact) e
 		return errors.New("파일 복사본을 만들지 못했습니다.")
 	}
 	defer os.Remove(output.Name())
-	written, copyErr := io.Copy(output, io.LimitReader(file, info.Size()+1))
+	written, copyErr := io.Copy(output, io.LimitReader(file, entry.Size+1))
 	infoAfter, statErr := file.Stat()
-	if copyErr != nil || written != info.Size() || statErr != nil || infoAfter.ModTime() != info.ModTime() {
+	if ctx.Err() != nil || copyErr != nil || written != entry.Size || statErr != nil || artifactVersion(infoAfter) != entry.Version {
 		_ = output.Close()
 		return errors.New("파일이 바뀌었습니다. 저장이 끝나면 다시 등록해 주세요.")
 	}
@@ -166,18 +173,46 @@ func registerArtifact(dir, root, source, path string, files *[]storedArtifact) e
 	if syncErr != nil || closeErr != nil || os.Rename(output.Name(), destination) != nil {
 		return errors.New("파일 복사본을 저장하지 못했습니다.")
 	}
+	return nil
+}
+
+func registerArtifact(ctx context.Context, dir, root, source, path string, files *[]storedArtifact) error {
+	file, info, err := openArtifactSource(root, path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	entry, err := describeArtifact(file, info, source, path)
+	if err != nil {
+		return err
+	}
+	index := len(*files)
+	var previous string
+	if i := slices.IndexFunc(*files, func(saved storedArtifact) bool { return saved.ID == entry.ID }); i >= 0 {
+		index, previous = i, (*files)[i].snapshot()
+		if previous == entry.snapshot() && !(*files)[i].Deferred && (*files)[i].MIME == entry.MIME {
+			if existing, err := os.Stat(filepath.Join(dir, previous)); err == nil && existing.Mode().IsRegular() && existing.Size() == entry.Size {
+				return nil
+			}
+		}
+	}
+	if !artifactFits(*files, entry) {
+		return errors.New("이 채팅의 파일 등록 한도에 도달했습니다.")
+	}
+	if err := writeArtifactSnapshot(ctx, dir, file, entry); err != nil {
+		return err
+	}
 	next := slices.Clone(*files)
 	if index == len(next) {
 		next = append(next, entry)
 	} else {
 		next[index] = entry
 	}
-	encoded, err := json.Marshal(next)
-	if err != nil || config.AtomicWrite(filepath.Join(dir, "files.json"), encoded, 0600) != nil {
+	if err := saveArtifacts(dir, next); err != nil {
 		if entry.snapshot() != previous {
-			_ = os.Remove(destination)
+			_ = os.Remove(filepath.Join(dir, entry.snapshot()))
 		}
-		return errors.New("등록한 파일 목록을 저장하지 못했습니다.")
+		return err
 	}
 	*files = next
 	if previous != "" && previous != entry.snapshot() {
@@ -186,7 +221,7 @@ func registerArtifact(dir, root, source, path string, files *[]storedArtifact) e
 	return nil
 }
 
-func scanVisualizations(ctx context.Context, root, thread, dir string, files *[]storedArtifact) {
+func scanVisualizations(ctx context.Context, root, thread string, visit func(string) bool) {
 	source, err := os.OpenRoot(root)
 	if err != nil {
 		return
@@ -198,7 +233,7 @@ func scanVisualizations(ctx context.Context, root, thread, dir string, files *[]
 	}
 	for _, folder := range dates {
 		_ = fs.WalkDir(source.FS(), folder, func(path string, entry fs.DirEntry, err error) error {
-			if ctx.Err() != nil || len(*files) >= artifactCount {
+			if ctx.Err() != nil {
 				return fs.SkipAll
 			}
 			if err != nil {
@@ -207,12 +242,31 @@ func scanVisualizations(ctx context.Context, root, thread, dir string, files *[]
 			if entry.IsDir() && strings.HasPrefix(entry.Name(), ".") {
 				return fs.SkipDir
 			}
-			if entry.Type().IsRegular() {
-				_ = registerArtifact(dir, root, "visualization", path, files)
+			if entry.Type().IsRegular() && !visit(path) {
+				return fs.SkipAll
 			}
 			return nil
 		})
 	}
+}
+
+// A discovered path is checked and indexed during history reads. Copy its
+// bytes only when a browser requests it. Reopening must match the observed file.
+func materializeArtifact(ctx context.Context, dir, root string, files []storedArtifact, index int) error {
+	entry := files[index]
+	file, info, err := openArtifactSource(root, entry.Path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if artifactVersion(info) != entry.Version {
+		return errors.New("등록한 파일이 변경되었습니다.")
+	}
+	if err := writeArtifactSnapshot(ctx, dir, file, entry); err != nil {
+		return err
+	}
+	files[index].Deferred = false
+	return saveArtifacts(dir, files)
 }
 
 func (w *WebChat) artifacts(ctx context.Context, method string, p webParams) (any, error) {
@@ -238,31 +292,58 @@ func (w *WebChat) artifacts(ctx context.Context, method string, p webParams) (an
 		return nil, errors.New("파일이 속한 채팅을 확인할 수 없습니다.")
 	}
 	dir := filepath.Join(w.c.StateDir(), "web", "artifacts-v1", p.Thread)
-	files, err := loadArtifacts(dir)
-	if err != nil {
-		return nil, err
+	batch := webArtifactBatch{dir: dir, home: home, accounts: config.Expand(w.c.Runtime.AccountsDir), cwd: entry.Cwd, thread: p.Thread}
+	if !batch.load() {
+		return nil, batch.err
 	}
 	switch method {
 	case "web.artifacts":
-		scanVisualizations(ctx, filepath.Join(home, "visualizations"), p.Thread, dir, &files)
+		scanVisualizations(ctx, filepath.Join(home, "visualizations"), p.Thread, func(path string) bool {
+			batch.capturePath("visualization", path)
+			return len(batch.files) < artifactCount
+		})
+		for _, directory := range batch.generatedDirectories() {
+			path := filepath.Join(directory.root, directory.path)
+			if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+				continue
+			}
+			entries, _ := os.ReadDir(path)
+			for _, entry := range entries {
+				if ctx.Err() != nil || len(batch.files) >= artifactCount {
+					break
+				}
+				if entry.Type().IsRegular() {
+					batch.capturePath(directory.source, filepath.Join(directory.path, entry.Name()))
+				}
+			}
+		}
+		if err := batch.save(); err != nil {
+			return nil, err
+		}
 	case "web.artifactRegister":
 		path := strings.TrimSpace(p.FilePath)
 		if !filepath.IsAbs(entry.Cwd) || !artifactPath(path) {
 			return nil, errors.New("작업 폴더 기준의 파일 경로를 입력해 주세요.")
 		}
-		if err := registerArtifact(dir, entry.Cwd, "workspace", filepath.Clean(path), &files); err != nil {
+		if err := registerArtifact(ctx, dir, entry.Cwd, "workspace", filepath.Clean(path), &batch.files); err != nil {
 			return nil, err
 		}
 	case "web.artifact":
 		if !artifactID.MatchString(p.Artifact) {
 			return nil, nil
 		}
-		for _, file := range files {
+		for index, file := range batch.files {
 			if file.ID == p.Artifact && artifactID.MatchString(file.Version) {
-				return file, nil
+				if file.Deferred {
+					root := batch.root(file.Source, file.Path)
+					if root == "" || materializeArtifact(ctx, dir, root, batch.files, index) != nil {
+						return nil, nil
+					}
+				}
+				return batch.files[index], nil
 			}
 		}
 		return nil, nil
 	}
-	return files, nil
+	return batch.files, nil
 }
