@@ -64,7 +64,7 @@ func (w *WebChat) sendWebOnly(ctx context.Context, target *webConnection, r Requ
 	if err := w.preparePrompt(ctx, target, &p); err != nil {
 		return nil, err
 	}
-	if p.Mode == "queue" {
+	if p.Mode == "queue" || p.Plan {
 		return w.enqueueWebInput(ctx, target, r, p)
 	}
 	var owner *webInputOwner

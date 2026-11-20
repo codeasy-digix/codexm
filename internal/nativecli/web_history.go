@@ -121,7 +121,7 @@ func webHistoryRevision(home string, entry catalog.Entry, projection string) str
 	if rollout == "" && projection == "" {
 		return ""
 	}
-	key := fmt.Sprintf("media-v1\x00%s\x00%s\x00%t:%d\x00%s:%s", home, entry.ID, entry.Archived, entry.ModifiedAt, rollout, projection)
+	key := fmt.Sprintf("commands-v1\x00%s\x00%s\x00%t:%d\x00%s:%s", home, entry.ID, entry.Archived, entry.ModifiedAt, rollout, projection)
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 }
 
@@ -418,6 +418,7 @@ func webTurnMessages(ctx context.Context, c *webConnection, thread, turn string)
 				return nil, err
 			}
 			if item.Type == "userMessage" || item.Type == "agentMessage" && (item.Moderation == nil || !item.Moderation.Moderated) ||
+				item.Type == "plan" || item.Type == "exitedReviewMode" || item.Type == "contextCompaction" ||
 				webArtifactMessageType(entry.Item, item.Type) {
 				messages = append(messages, entry.Item)
 			}

@@ -196,7 +196,8 @@ export function ChatMessages({thread,turns,account,external,liveTurnId,relayedIn
     }
   }
   return <div className="turns">{turns.map(turn => {
-    const messages = turn.items.filter(item => item.type === "fileOutput" || item.type === "agentMessage" && item.text);
+    const messages = turn.items.filter(item => item.type === "fileOutput" || item.type === "contextCompaction" ||
+      item.type === "exitedReviewMode" || (item.type === "agentMessage" || item.type === "plan") && item.text);
     const ordered = [...messages.filter(item => item.phase === "commentary"), ...messages.filter(item => item.phase !== "commentary")];
     const linked = new Set(Object.values(turn.fileRefs ?? {}));
     return <article className="turn" key={turn.id} data-turn-id={turn.id}>
@@ -222,6 +223,10 @@ export function ChatMessages({thread,turns,account,external,liveTurnId,relayedIn
       {relayedByTurn.get(turn.id)?.map(input=><UserMessage key={input.id} text={input.text}/>)}
       <div className="assistant-message">
         {ordered.map(item => {
+          if (item.type === "contextCompaction") {
+            return <p className="muted" key={item.id}>{turn.status === "completed" ? "컨텍스트를 압축했습니다." :
+              turn.status === "inProgress" ? "컨텍스트를 압축하고 있습니다…" : "컨텍스트 압축 작업"}</p>;
+          }
           if (item.type === "fileOutput") {
             const ids = item.artifactIds ?? [];
             const output = ids.filter(id => !linked.has(id)).flatMap(id => media.byID.get(id) ?? []);
@@ -230,9 +235,13 @@ export function ChatMessages({thread,turns,account,external,liveTurnId,relayedIn
               ? output.map(file => <FileLink key={file.id} thread={thread} file={file} preview />)
               : <small className="muted">첨부 파일 · 원본을 확인할 수 없습니다.</small>}</div>;
           }
+          const label = item.type === "plan" ? "계획" : item.type === "exitedReviewMode" ? "리뷰 결과" : "";
+          const body = typeof item.review === "string" ? item.review : item.text || "";
+          if (!body) return null;
           const classes = `${item.streaming ? "live-message" : "markdown"}${item.phase === "commentary" ? " commentary-message" : ""}`;
           return <div className={classes} key={item.id}>
-            {item.streaming ? item.text : <MessageMarkdown body={item.text || ""} media={media} />}
+            {label && <strong className="chat-command-result">{label}</strong>}
+            {item.streaming ? body : <MessageMarkdown body={body} media={media} />}
           </div>;
         })}
         {turn.error&&<p role="alert" className="inline-error">{turn.error.message}</p>}

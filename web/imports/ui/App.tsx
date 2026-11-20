@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { authenticate, call, exchange, login, reconnect, useAccess, useStateData } from "../../client/data";
-import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type Catalog, type ChatActivity, type ChatThread, type TurnSelection } from "../contracts/web";
+import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type Catalog, type ChatActivity, type ChatCommand, type ChatThread, type TurnSelection } from "../contracts/web";
 import { AccountLimits } from "./AccountLimits";
 import { ChatActivityLabel } from "./ChatActivity";
 import { ChatMessages } from "./ChatMessages";
+import { ChatCommandDialog } from "./ChatCommandDialog";
 import { ChatFiles, useChatFiles } from "./ChatFiles";
 import { ChatRequest } from "./ChatRequest";
 import { Composer } from "./Composer";
@@ -20,7 +21,8 @@ import { useTheme } from "./theme";
 import "./styles/native.css";
 import "./styles/workspace.css";
 
-type Dialog = {kind:"new"|"project"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete"|"files";chat:ChatThread};
+type Dialog = {kind:"new"|"project"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete"|"files";chat:ChatThread}
+  | {kind:"command"; command:ChatCommand; chat:ChatThread; account:string};
 type Section = "chats"|"pinned"|"archived";
 
 export function App() {
@@ -365,6 +367,7 @@ export function App() {
         suggestion={suggestion}
         models={modelState.models}
         selection={selection}
+        onCommand={command => openDialog({ kind: "command", chat, command, account })}
         onSent={id => {
           setAccountChoice(undefined);
           stick.current = true;
@@ -378,7 +381,15 @@ export function App() {
       />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
     </main>
-    {dialog?.kind === "files" ? dialog.chat.id === selected?.id && <ChatFiles
+    {dialog?.kind === "command" ? dialog.chat.id === selected?.id && <ChatCommandDialog
+      command={dialog.command} chat={dialog.chat} account={dialog.account} history={history} online={access.online}
+      activity={openActivity} known={activity.writersKnown} usage={activity.contextUsage} onClose={() => setDialog(null)}
+      onDone={(message, name) => {
+        if (name) setOpened(current => current?.id === dialog.chat.id ? { ...current, name } : current);
+        setDialog(null); setNotice(message);
+        void chatState.refresh(); void catalogState.refresh();
+      }} />
+      : dialog?.kind === "files" ? dialog.chat.id === selected?.id && <ChatFiles
       key={dialog.chat.id} thread={dialog.chat.id} files={fileState.files} loading={fileState.loading}
       error={fileState.error} onRegistered={fileState.registered} onClose={() => setDialog(null)} />
       : dialog?.kind === "gui-quit" ? <GUIQuitDialog onClose={() => setDialog(null)} onStopped={() => {

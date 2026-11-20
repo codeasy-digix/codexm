@@ -27,6 +27,9 @@ type webQueuedInput struct {
 	Detail      string      `json:"detail,omitempty"`
 	Skills      []webSkill  `json:"skills,omitempty"`
 	Goal        bool        `json:"goal,omitempty"`
+	Plan        bool        `json:"plan,omitempty"`
+	Model       string      `json:"model,omitempty"`
+	Effort      string      `json:"effort,omitempty"`
 	ResumeFrom  string      `json:"resumeFrom,omitempty"`
 	ResumedTurn string      `json:"resumedTurn,omitempty"`
 	ResumeGoal  *webGoalRef `json:"resumeGoal,omitempty"`
@@ -106,14 +109,15 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 		}
 	}
 	queued := webQueuedInput{ID: webQueueID + r.Operation, Text: p.Text, Account: account,
-		Identity: queueLoginKey(target), State: "pending", Skills: p.selectedSkills, Goal: p.Goal}
+		Identity: queueLoginKey(target), State: "pending", Skills: p.selectedSkills, Goal: p.Goal, Plan: p.Plan,
+		Model: p.Model, Effort: p.Effort}
 	q = append(q, queued)
 	if err := w.saveOwnedQueue(p.Thread, q); err != nil {
 		return nil, err
 	}
 	result := map[string]any{"thread_id": p.Thread, "mode": "queue", "queued_id": queued.ID, "status": "accepted",
-		"account": queued.Account, "handoffError": ""}
-	if !p.SwitchAccount && target.hasActiveQueueTurn(ctx, p.Thread) {
+		"account": queued.Account, "handoffError": "", "plan": p.Plan}
+	if (!p.SwitchAccount || p.Plan) && target.hasActiveQueueTurn(ctx, p.Thread) {
 		// The saved input can wait for the turn already running on this login.
 		return result, nil
 	}
@@ -121,7 +125,7 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 	// dispatch after a browser/service disconnect never interrupts a turn.
 	staged := false
 	owner, err := w.acquireWebChat(ctx, target, p.Thread, webAcquire{
-		prepare: true, interrupt: true, external: p.SwitchAccount,
+		prepare: true, interrupt: !p.Plan, external: p.SwitchAccount && !p.Plan,
 		beforeInterrupt: func(ctx context.Context, turn string) error {
 			updated, err := w.stageQueueContinuation(ctx, target, p.Thread, turn, queued, q)
 			if err == nil {
@@ -142,7 +146,7 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 		return result, nil
 	}
 	defer owner.release()
-	if p.SwitchAccount || staged {
+	if !p.Plan && (p.SwitchAccount || staged) {
 		if err := w.pinQueueToAccount(p.Thread, q, owner.web); err != nil {
 			result["handoffError"] = cr.SafeText(err.Error())
 			return result, nil
@@ -155,7 +159,7 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 			return result, nil
 		}
 	}
-	if len(q) == 1 || p.SwitchAccount || staged {
+	if len(q) == 1 || !p.Plan && (p.SwitchAccount || staged) {
 		if err := w.startQueuedInput(ctx, owner, p.Thread, q); err != nil {
 			result["handoffError"] = cr.SafeText(err.Error())
 		} else if staged && q[0].ResumeFrom != "" {
@@ -432,7 +436,7 @@ func (w *WebChat) startQueuedInput(ctx context.Context, owner *webInputOwner, id
 	if err := w.verifyInputOwner(ctx, owner, id, true); err != nil {
 		return w.noteQueueWait(id, q, index, err)
 	}
-	p := webParams{Thread: id, Text: next.Text, Goal: next.Goal, Mode: "immediate"}
+	p := webParams{Thread: id, Text: next.Text, Goal: next.Goal, Plan: next.Plan, Model: next.Model, Effort: next.Effort, Mode: "immediate"}
 	for _, skill := range next.Skills {
 		p.SkillIDs = append(p.SkillIDs, skill.ID)
 	}
@@ -497,7 +501,7 @@ func (w *WebChat) ownedQueueDisplay(id string) ([]json.RawMessage, error) {
 	items := make([]json.RawMessage, 0, len(q))
 	for _, input := range q {
 		b, err := json.Marshal(map[string]any{"id": input.ID, "input": cr.TextInput(input.Text), "account": input.Account,
-			"state": input.State, "detail": input.Detail, "skills": input.Skills, "goal": input.Goal, "continuation": input.ResumeFrom != ""})
+			"state": input.State, "detail": input.Detail, "skills": input.Skills, "goal": input.Goal, "plan": input.Plan, "continuation": input.ResumeFrom != ""})
 		if err != nil {
 			return nil, err
 		}
@@ -530,11 +534,11 @@ func (w *WebChat) changeOwnedQueue(method string, p webParams) (any, error) {
 		if q[index].State == "sending" {
 			return nil, errWebQueueUncertain
 		}
-		p.Goal = q[index].Goal
+		p.Goal, p.Plan = q[index].Goal, q[index].Plan
 		if err := normalizeWebPrompt(&p); err != nil {
 			return nil, err
 		}
-		q[index].Text, q[index].Goal = p.Text, p.Goal
+		q[index].Text, q[index].Goal, q[index].Plan = p.Text, p.Goal, p.Plan
 		if q[index].State != "held" {
 			q[index].State, q[index].Detail = "pending", ""
 		}

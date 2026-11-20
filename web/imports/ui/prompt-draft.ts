@@ -1,6 +1,6 @@
 import type { ChatSkill } from "../contracts/web";
 
-export type PromptDraft = { text: string; skills: ChatSkill[]; goal: boolean; pending?: string };
+export type PromptDraft = { text: string; skills: ChatSkill[]; goal: boolean; plan?: boolean; pending?: string };
 export const emptyPromptDraft: PromptDraft = { text: "", skills: [], goal: false };
 const prefix = "codexm.promptDraft.";
 
@@ -11,6 +11,7 @@ export function readPromptDraft(thread: string): PromptDraft {
     return {
       text: value.text,
       goal: value.goal === true,
+      plan: value.plan === true,
       skills: Array.isArray(value.skills) ? value.skills.filter((skill: ChatSkill) =>
         skill && typeof skill.name === "string" && typeof skill.id === "string").slice(0, 16) : [],
       pending: typeof value.pending === "string" ? value.pending : undefined,
@@ -20,7 +21,7 @@ export function readPromptDraft(thread: string): PromptDraft {
 
 export function writePromptDraft(thread: string, value: PromptDraft) {
   try {
-    if (value.text || value.skills.length || value.goal) localStorage.setItem(prefix + thread, JSON.stringify(value));
+    if (value.text || value.skills.length || value.goal || value.plan) localStorage.setItem(prefix + thread, JSON.stringify(value));
     else localStorage.removeItem(prefix + thread);
   } catch { /* Leave the current editor usable if browser storage is disabled. */ }
 }
@@ -31,11 +32,9 @@ export function settleStoredPrompt(thread: string, operation: string, accepted: 
   writePromptDraft(thread, accepted ? emptyPromptDraft : { ...saved, pending: undefined });
 }
 
-export function slashRange(text: string, caret: number) {
-  if (caret <= 0) return;
-  const start = text.lastIndexOf("/", caret - 1);
-  if (start < 0 || text[start - 1] === "/" || text[start - 1] === ":") return;
-  const search = text.slice(start + 1, caret);
-  if (!/^[\p{L}\p{N}_.:-]{0,48}$/u.test(search)) return;
-  return { start, end: caret, search: search.toLowerCase() };
+export function promptMenuRange(text: string, caret: number) {
+  const match = /(?:^|[\s([{])([/$])([\p{L}\p{N}_.:-]{0,48})$/u.exec(text.slice(0, caret));
+  if (!match) return;
+  const [, prefix, search] = match;
+  return { prefix, start: caret - search.length - 1, end: caret, search: search.toLowerCase() };
 }

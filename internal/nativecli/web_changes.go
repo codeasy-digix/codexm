@@ -94,6 +94,12 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 	if r.Method == "web.goalChange" {
 		return w.changeGoal(ctx, c, p)
 	}
+	switch r.Method {
+	case "web.rename":
+		return w.renameWebChat(ctx, c, p)
+	case "web.review", "web.compact":
+		return w.runWebCommand(ctx, c, r.Method, p)
+	}
 	if r.Method == "web.queueUpdate" || r.Method == "web.queueCancel" {
 		return w.changeQueue(ctx, c, r.Method, p)
 	}
@@ -232,6 +238,9 @@ func (w *WebChat) send(ctx context.Context, c *webConnection, r Request, p webPa
 	if p.Mode != "immediate" && p.Mode != "steer" && p.Mode != "queue" {
 		return nil, errors.New("choose immediate or queue delivery")
 	}
+	if p.Plan && (!w.webOnly || p.Mode == "steer" || p.Turn != "") {
+		return nil, errors.New("계획 모드는 웹 전용 연결의 새 턴에서 시작할 수 있습니다.")
+	}
 	if p.Model != "" || p.Effort != "" {
 		if p.Mode != "immediate" || p.Turn != "" {
 			return nil, errors.New("모델과 effort는 새 턴을 시작할 때 선택할 수 있습니다.")
@@ -287,6 +296,14 @@ func (w *WebChat) startWebTurn(ctx context.Context, owner *webInputOwner, select
 			args["effort"] = p.Effort
 		}
 	}
+	changedMode := owner.web != nil && (p.Plan || owner.web.inPlanMode(p.Thread))
+	if changedMode {
+		mode, err := webTurnMode(ctx, owner.client, p.Thread, args, p.Plan)
+		if err != nil {
+			return nil, err
+		}
+		args["collaborationMode"] = mode
+	}
 	// A draft loaded on the selected connection may not have a writer file yet.
 	if err := w.verifyInputOwner(ctx, owner, p.Thread, owner.web == selected); err != nil {
 		return nil, err
@@ -300,7 +317,13 @@ func (w *WebChat) startWebTurn(ctx context.Context, owner *webInputOwner, select
 		} `json:"turn"`
 	}
 	if err := callWebInput(ctx, owner.client, "turn/start", args, &reply); err != nil {
+		if changedMode && p.Plan && errors.Is(err, errWebInputUnconfirmed) {
+			owner.web.setPlanMode(p.Thread, true)
+		}
 		return nil, err
+	}
+	if changedMode {
+		owner.web.setPlanMode(p.Thread, p.Plan)
 	}
 	if reply.Turn.ID == "" {
 		return nil, errWebInputUnconfirmed

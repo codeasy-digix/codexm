@@ -13,7 +13,7 @@ import (
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
-var leadingGoal = regexp.MustCompile(`^/goal(?:[\t\r\n ]+|$)`)
+var leadingPromptMode = regexp.MustCompile(`^/(goal|plan)(?:[\t\r\n ]+|$)`)
 
 type webSkill struct {
 	ID          string `json:"id"`
@@ -102,13 +102,20 @@ func promptInput(p webParams) []map[string]any {
 }
 
 func normalizeWebPrompt(p *webParams) error {
-	if leadingGoal.MatchString(p.Text) {
-		p.Goal = true
-		p.Text = strings.TrimSpace(leadingGoal.ReplaceAllString(p.Text, ""))
+	if match := leadingPromptMode.FindStringSubmatch(p.Text); match != nil {
+		p.Goal = p.Goal || match[1] == "goal"
+		p.Plan = p.Plan || match[1] == "plan"
+		p.Text = strings.TrimSpace(p.Text[len(match[0]):])
+	}
+	if p.Goal && p.Plan {
+		return errors.New("한 입력에서 목표와 계획 모드를 함께 시작할 수 없습니다.")
 	}
 	if strings.TrimSpace(p.Text) == "" {
 		if p.Goal {
 			return errors.New("목표로 진행할 내용을 입력해 주세요.")
+		}
+		if p.Plan {
+			return errors.New("계획할 내용을 입력해 주세요.")
 		}
 		return errors.New("enter a message")
 	}
@@ -153,7 +160,14 @@ func (w *WebChat) deliverGoal(ctx context.Context, owner *webInputOwner, selecte
 	if err != nil {
 		return nil, err
 	}
-	extraInput := len(p.SkillIDs) != 0 || p.Model != "" || p.Effort != ""
+	wasPlanning := owner.web.inPlanMode(p.Thread)
+	if wasPlanning {
+		delivery, err := owner.delivery(ctx, p.Thread)
+		if err != nil || delivery.State != "idle" {
+			return nil, errWebAccountBusy
+		}
+	}
+	extraInput := len(p.SkillIDs) != 0 || p.Model != "" || p.Effort != "" || wasPlanning
 	status := "active"
 	if extraInput && (current == nil || current.Status != "active") {
 		status = "paused"

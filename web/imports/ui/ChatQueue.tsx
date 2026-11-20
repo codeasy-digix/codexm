@@ -18,7 +18,7 @@ function readRecalledDraft(key: string): RecalledDraft | undefined {
   try {
     const stored = JSON.parse(sessionStorage.getItem(key) || "null");
     if (typeof stored?.text === "string") {
-      return { kind: "recalled", text: stored.text, skills: stored.skills ?? [], goal: stored.goal === true,
+      return { kind: "recalled", text: stored.text, skills: stored.skills ?? [], goal: stored.goal === true, plan: stored.plan === true,
         checkHistory: stored.checkHistory === true, unconfirmed: stored.unconfirmed === true };
     }
   } catch { /* Storage may be disabled. The current editor still works. */ }
@@ -65,7 +65,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
     const remove = text === undefined;
     const recalled = draft?.kind === "editing" && draft.id === id ? draft.text : original;
     const item = items.find(item => item.id === id);
-    const draftToRecall: RecalledDraft = { kind: "recalled", text: recalled, skills: item?.skills ?? [], goal: !!item?.goal,
+    const draftToRecall: RecalledDraft = { kind: "recalled", text: recalled, skills: item?.skills ?? [], goal: !!item?.goal, plan: !!item?.plan,
       checkHistory: false, unconfirmed: true };
     // Keep the text if the tab disconnects after Codex removes the item.
     if (remove && !item?.continuation) keep(draftToRecall);
@@ -133,6 +133,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
               <span>{item.state === "running" ? item.detail ? "실행 보류" : "진행 중" : item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" || item.state === "held" ? "실행 보류" : item.id === next?.id ? "다음 입력" : "대기 중"}</span>
               {item.account && <small>{item.account === "default" ? "기본 계정" : item.account}</small>}
               {item.goal && <small>/goal</small>}
+              {item.plan && <small>/plan</small>}
               {item.skills?.map(skill => <small key={skill.id}>{skill.name}</small>)}
             </div>
             <p>{item.continuation ? "이전 작업 이어가기" : inputText(item.input)}</p>

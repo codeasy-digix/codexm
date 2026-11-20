@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MongoClient } from "mongodb";
 
@@ -204,6 +204,13 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await page.getByLabel("프로젝트 필터").selectOption("");
 
   const input = page.getByRole("textbox", { name: "메시지", exact: true });
+  await input.fill("/");
+  const options = page.getByRole("listbox", { name: "명령과 스킬" }).getByRole("option");
+  await expect(options.locator("strong")).toHaveText(["/goal", "/plan", "/status", "/rename", "/review", "/compact"]);
+  await input.fill("$");
+  const skills = page.getByRole("listbox", { name: "스킬", exact: true });
+  await expect(skills.getByRole("option", { name: /^\$fixture-proof/ })).toBeVisible();
+  await expect(skills.getByRole("option", { name: /^\/goal/ })).toHaveCount(0);
   const draft = "GUI_FIXTURE_ACTIVE_BROWSER_WORKSPACE 목표 진행 확인";
   await input.fill(draft);
   async function insertCommand(command: string) {
@@ -219,7 +226,7 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await input.press("Tab");
   await expect(input).toHaveValue(draft);
   await insertCommand("/fixture");
-  await page.getByRole("option", { name: /^\/fixture-proof/ }).click();
+  await page.getByRole("option", { name: /^\$fixture-proof/ }).click();
   await expect(input).toHaveValue(draft);
   await expect(page.getByRole("button", { name: "목표 지정 제거" })).toBeVisible();
   await expect(page.getByRole("button", { name: "fixture-proof 스킬 제거" })).toBeVisible();
@@ -323,4 +330,70 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await deleteGoal.getByRole("button", { name: "목표 삭제", exact: true }).click();
   await expect(goal).toHaveCount(0);
   await expect(reopened.getByText("페이지 이력 26", { exact: true })).toHaveCount(1);
+});
+
+test("the composer runs native status, rename, review, compact and plan commands", async ({ page }) => {
+  const f = JSON.parse(readFileSync(join(fixture!, "fixture.json"), "utf8"));
+  const cwd = mkdtempSync(join(f.home, "browser-commands-"));
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd });
+  execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false",
+    "commit", "-qm", "synthetic base", "--allow-empty"], { cwd });
+  writeFileSync(join(cwd, "fixture-source.txt"), "test-only working tree change\n");
+  execFileSync(binary!, ["--config", f.config, "web", "--no-open"], { stdio: "pipe", env: { ...process.env, HOME: f.home } });
+  await page.goto(url!);
+  await page.getByLabel("로컬 접속 코드", { exact: true }).fill(readFileSync(join(f.state, "access"), "utf8").trim());
+  await page.getByRole("button", { name: "연결", exact: true }).click();
+  await page.getByRole("button", { name: "새 채팅", exact: true }).click();
+  await page.getByLabel("이 머신의 작업 폴더").fill(cwd);
+  await page.getByRole("button", { name: "채팅 만들기", exact: true }).click();
+  await expect(page).toHaveURL(/\/chat\/[a-f0-9-]+$/);
+  const id = new URL(page.url()).pathname.split("/").at(-1)!;
+  const input = page.getByRole("textbox", { name: "메시지", exact: true });
+  const send = page.getByRole("button", { name: "보내기", exact: true });
+  const currentStatus = page.getByRole("status", { name: "현재 작업 상태" });
+  await input.fill("리뷰하기 전 채팅을 저장합니다.");
+  await send.click();
+  await expect(currentStatus).toHaveText("작업 완료");
+
+  async function open(command: string, title: string) {
+    await input.fill("/" + command);
+    await input.press("Enter");
+    const dialog = page.getByRole("dialog", { name: title, exact: true });
+    await expect(dialog).toBeVisible();
+    return dialog;
+  }
+  const status = await open("status", "채팅 상태");
+  await expect(status).toContainText(id);
+  await expect(status).toContainText(realpathSync(cwd));
+  await expect(status).toContainText("작업 완료");
+  await expect(status).toContainText("실행 계정");
+  await expect(status).toContainText("최근 턴 컨텍스트");
+  await page.keyboard.press("Escape");
+
+  const rename = await open("rename", "채팅 이름 변경");
+  const title = "웹 내장 명령 검증";
+  await rename.getByLabel("채팅 이름", { exact: true }).fill(title);
+  await rename.getByRole("button", { name: "저장", exact: true }).click();
+  await expect(page.locator(".chat-heading h1")).toHaveText(title);
+  await expect(row(page, title)).toBeVisible();
+
+  const review = await open("review", "코드 리뷰");
+  await review.getByLabel("리뷰 대상").selectOption("base");
+  await review.getByRole("textbox", { name: "기준 브랜치", exact: true }).fill("main");
+  await review.getByRole("button", { name: "리뷰 시작", exact: true }).click();
+  await expect(page.getByText("리뷰 결과", { exact: true })).toBeVisible();
+  await expect(currentStatus).toHaveText("작업 완료");
+
+  const compact = await open("compact", "컨텍스트 압축");
+  await compact.getByRole("button", { name: "압축 시작", exact: true }).click();
+  await expect(page.getByText("컨텍스트를 압축했습니다.", { exact: true })).toBeVisible();
+  await input.fill("/plan");
+  await input.press("Tab");
+  await expect(page.getByRole("button", { name: "계획 모드 제거" })).toBeVisible();
+  await input.fill("WEB_COMMANDS_BROWSER_PROPOSE_PLAN");
+  await send.click();
+  await expect(page.getByRole("heading", { name: "브라우저 계획 검증" })).toBeVisible();
+  await page.reload();
+  await expect(page.locator(".chat-heading h1")).toHaveText(title);
+  await expect(page.getByRole("heading", { name: "브라우저 계획 검증" })).toBeVisible();
 });

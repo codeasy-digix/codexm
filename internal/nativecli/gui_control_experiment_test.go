@@ -83,6 +83,11 @@ func newGUIControlFixtureDuration(t *testing.T, transport string, timeout time.D
 		quotaFailure := f.quotaFailure
 		quotaAccount := f.quotaAccount
 		f.mu.Unlock()
+		if strings.Contains(string(body), "WEB_COMMANDS_BROWSER_PROPOSE_PLAN") {
+			responseText = "<proposed_plan>\n## 브라우저 계획 검증\n\n계획 본문입니다.\n</proposed_plan>"
+		} else if strings.Contains(string(body), `"overall_correctness"`) {
+			responseText = `{"findings":[],"overall_correctness":"patch is correct","overall_explanation":"Synthetic browser review completed","overall_confidence_score":0.95}`
+		}
 		if quotaFailure != nil && strings.Contains(string(body), "WEB_FIXTURE_QUOTA_429") && fixtureLoginName(r.Header.Get("Authorization")) == quotaAccount {
 			select {
 			case <-quotaFailure:

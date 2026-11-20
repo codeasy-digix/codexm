@@ -5,7 +5,7 @@ import { PromptEditor } from "./PromptEditor";
 import { emptyPromptDraft, readPromptDraft, settleStoredPrompt, writePromptDraft, type PromptDraft } from "./prompt-draft";
 import {
   composerAction, queueModifierForPlatform, resolveTurnSelection,
-  type ChatHistory, type ChatModel, type ChatThread, type LiveTurn, type TurnSelection,
+  type ChatCommand, type ChatHistory, type ChatModel, type ChatThread, type LiveTurn, type TurnSelection,
 } from "../contracts/web";
 
 type Props = {
@@ -19,10 +19,11 @@ type Props = {
   liveTurn?: Pick<LiveTurn, "id" | "status">;
   models: ChatModel[];
   selection: TurnSelection;
+  onCommand: (command: ChatCommand) => void;
   onSent: (id?: string) => void;
 };
 
-export function Composer({ chat, online, account, history, liveTurn, models, selection, onSent, pendingAccountChange, switchAccount, suggestion }: Props) {
+export function Composer({ chat, online, account, history, liveTurn, models, selection, onCommand, onSent, pendingAccountChange, switchAccount, suggestion }: Props) {
   const queueModifier = queueModifierForPlatform(navigator.platform);
   const queueShortcut = queueModifier === "Meta" ? "⌘Enter" : "Ctrl+Enter";
   const [draft, setDraft] = useState(() => readPromptDraft(chat.id));
@@ -111,7 +112,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     if (!online || !sent.text.trim() || inFlight.current || uncertain) return "rejected";
     if (relayID && (mode === "immediate" || sent.text === relayText.current)) return "rejected";
     const parameters: Record<string, unknown> = { thread_id: chat.id, account, text: sent.text, mode,
-      skills: sent.skills.map(skill => skill.id), goal: sent.goal, switch_account: switchAccount };
+      skills: sent.skills.map(skill => skill.id), goal: sent.goal, plan: !!sent.plan, switch_account: switchAccount };
     if (mode === "immediate" && hasOverride) {
       const model = selection.model || selectedModel?.model;
       const effort = selection.effort || inheritedEffort;
@@ -127,7 +128,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     try {
       const result = await call<{ mode: "start" | "steer" | "queue" | "relay" | "goal"; relay_id?: string; account?: string;
         thread_id?: string; goal_activation_unconfirmed?: boolean; handoffError?: string;
-        continuationStarted?: boolean }>("web.send", parameters, operation);
+        continuationStarted?: boolean; plan?: boolean }>("web.send", parameters, operation);
       if (result.mode === "relay" && result.relay_id) {
         relayText.current = sent.text;
         relayOperation.current = operation;
@@ -136,7 +137,9 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
         return "accepted";
       }
       if (!recalled) settle(operation, true);
-      if (mode === "queue") {
+      if (result.plan) {
+        setNotice(result.handoffError || "다음 턴을 계획 모드로 시작하도록 요청했습니다.");
+      } else if (mode === "queue") {
         const label = result.account === "default" ? "기본 계정" : result.account;
         const queuedNotice = label ? `${label} 계정의 입력을 큐에 추가했습니다.` : "큐에 추가했습니다.";
         setNotice(result.handoffError ? queuedNotice + " " + result.handoffError :
@@ -190,7 +193,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
       ? "전송 시 이 채팅의 실행을 선택한 계정으로 인계합니다."
       : "다른 앱이 이 채팅을 열고 있습니다. 이 창에서 이어가려면 실행 계정을 선택해 주세요."}</p>}
     {external && !history?.webOnly && delivery?.state !== "unavailable" && <p className="owner-note">{guiRelay ? "GUI 채팅에 해당 창의 계정으로 전달합니다." : "이 채팅을 열어 둔 창의 계정으로 전달합니다."}</p>}
-    {pendingAccountChange && <p className="owner-note">{active ? "보내면 현재 작업을 중단하고 새 요청을 시작합니다. 큐에 추가하면 새 계정에서 현재 작업을 먼저 이어갑니다." : "다음 입력부터 선택한 계정으로 전환합니다."}</p>}
+    {pendingAccountChange && <p className="owner-note">{active && !draft.plan ? "보내면 현재 작업을 중단하고 새 요청을 시작합니다. 큐에 추가하면 새 계정에서 현재 작업을 먼저 이어갑니다." : "다음 입력부터 선택한 계정으로 전환합니다."}</p>}
     {draining && <p className="owner-note" role="status">기존 작업과 대기 입력이 끝나면 변경된 웹 계정이 자동 적용됩니다.</p>}
     {error && <p role="alert" className="inline-error">{error}</p>}
     {uncertain && <p className="inline-error">대화나 큐에서 이전 전송 결과를 확인하세요. <button type="button"
@@ -198,6 +201,7 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     <div className="composer">
       <PromptEditor thread={chat.id} account={account} draft={draft} disabled={busy}
         onChange={next => { if (!inFlight.current) save(next); }} suggestion={active || relayID ? undefined : suggestion}
+        onCommand={onCommand}
         placeholder={active ? "현재 작업에 개입하거나 다음 요청을 큐에 추가하세요" : "Codex에게 요청하세요"}
         onKeyDown={event => {
           const mode = composerAction(event.nativeEvent, queueModifier);

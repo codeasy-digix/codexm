@@ -39,6 +39,9 @@ export const bridgeContract = {
     { name: "web.artifactRegister", mutation: true, model: false },
     { name: "web.artifact", mutation: false, model: false },
     { name: "web.goalChange", mutation: true, model: true },
+    { name: "web.rename", mutation: true, model: false },
+    { name: "web.review", mutation: true, model: true },
+    { name: "web.compact", mutation: true, model: true },
   ],
 };
 
@@ -73,6 +76,7 @@ export type QueuedInput = {
   continuation?: boolean;
   skills?: ChatSkill[];
   goal?: boolean;
+  plan?: boolean;
 };
 export type RelayedInput = { id: string; text: string; observedTurnId?: string; sentAt: number; acceptedAt: number };
 export type ChatHistory = ChatHistoryPage & {
@@ -89,6 +93,8 @@ export type ChatHistory = ChatHistoryPage & {
 };
 export type ChatHistoryUpdate = Omit<ChatHistory, "turns"> & { turns?: ChatTurn[] };
 export type ChatSkill = { id: string; name: string; description?: string; scope?: string };
+export type ChatCommand = "status" | "rename" | "review" | "compact";
+export type ContextUsage = { tokens: number; window?: number };
 export type ChatArtifact = {
   id: string;
   name: string;
@@ -134,11 +140,12 @@ export type ChatActivity = {
 export type LiveTurn = {
   id: string;
   status: string;
-  items: Array<{ id: string; phase?: string; text: string; streaming: boolean }>;
+  items: Array<{ id: string; type?: string; phase?: string; text: string; streaming: boolean }>;
 };
 export type ChatActivitySnapshot = {
   writersKnown: boolean; threads: Record<string, ChatActivity>; turn?: LiveTurn; accountTurn?: boolean;
   pending?: PendingRequest[]; prediction?: { sourceTurnId: string; text: string };
+  contextUsage?: ContextUsage;
 };
 
 export function workingActivity(activity?: ChatActivity) {
@@ -157,7 +164,7 @@ export function mergeLiveTurn(turns: ChatTurn[], live?: LiveTurn): ChatTurn[] {
     if (!items.has(item.id) && saved?.items.some(other =>
       other.type === "agentMessage" && other.phase === item.phase && other.text === item.text
     )) continue;
-    items.set(item.id, { ...item, type: "agentMessage", streaming: !finished && item.streaming });
+    items.set(item.id, { ...item, type: item.type ?? "agentMessage", streaming: !finished && item.streaming });
   }
   if (finished && items.size === saved.items.length) return turns;
   const updated: ChatTurn = { ...saved, id: live.id, status: finished ? saved.status : live.status, items: [...items.values()] };

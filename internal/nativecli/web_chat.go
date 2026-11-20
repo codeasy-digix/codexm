@@ -42,6 +42,7 @@ var WebMethods = []Method{
 	{"web.skills", false, false},
 	{"web.artifacts", false, false}, {"web.artifactRegister", true, false}, {"web.artifact", false, false},
 	{"web.goalChange", true, true},
+	{"web.rename", true, false}, {"web.review", true, true}, {"web.compact", true, true},
 }
 
 func webSharedMethod(name string) bool {
@@ -84,6 +85,8 @@ type webParams struct {
 	HistoryRevision string          `json:"history_revision"`
 	SkillIDs        []string        `json:"skills"`
 	Goal            bool            `json:"goal"`
+	Plan            bool            `json:"plan"`
+	Branch          string          `json:"branch"`
 	SwitchAccount   bool            `json:"switch_account"`
 	ExpectedGoal    *webGoalRef     `json:"expected_goal"`
 	FilePath        string          `json:"file_path"`
@@ -109,6 +112,8 @@ type webConnection struct {
 	modelsAt    time.Time
 	live        map[string]*webLiveEntry
 	predictions map[string]webPrediction
+	planMode    map[string]bool
+	contextUse  map[string]webContextUsage
 }
 
 type WebChat struct {
@@ -387,13 +392,17 @@ func (w *WebChat) prepare(ctx context.Context, c *webConnection, id string) erro
 	if _, found := loaded[id]; found {
 		return nil
 	}
-	var resumed struct{ Thread struct{ ID string } }
+	var resumed struct {
+		Thread            struct{ ID string }
+		CollaborationMode struct{ Mode string }
+	}
 	if err := c.client.Call(ctx, "thread/resume", map[string]any{"threadId": id, "excludeTurns": true}, &resumed); err != nil {
 		return err
 	}
 	if resumed.Thread.ID != id {
 		return errors.New("official resume returned a different thread")
 	}
+	c.setPlanMode(id, resumed.CollaborationMode.Mode == "plan")
 	return w.verifyOwner(ctx, c, id, true)
 }
 

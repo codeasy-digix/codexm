@@ -19,6 +19,7 @@ type webActivity struct {
 
 type webLiveItem struct {
 	ID        string `json:"id"`
+	Type      string `json:"type,omitempty"`
 	Phase     string `json:"phase,omitempty"`
 	Text      string `json:"text"`
 	Streaming bool   `json:"streaming"`
@@ -37,6 +38,12 @@ type webActivityReply struct {
 	AccountTurn  bool                   `json:"accountTurn,omitempty"`
 	Pending      []webPendingRequest    `json:"pending"`
 	Prediction   *webPrediction         `json:"prediction,omitempty"`
+	ContextUsage *webContextUsage       `json:"contextUsage,omitempty"`
+}
+
+type webContextUsage struct {
+	Tokens int64 `json:"tokens"`
+	Window int64 `json:"window,omitempty"`
 }
 
 type webPrediction struct {
@@ -59,8 +66,11 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 	case "thread/prediction/updated":
 		c.observePrediction(event.Params)
 		return
+	case "thread/tokenUsage/updated":
+		c.observeContextUsage(event.Params)
+		return
 	case "thread/status/changed", "thread/closed", "turn/started", "turn/completed",
-		"item/started", "item/completed", "item/agentMessage/delta":
+		"item/started", "item/completed", "item/agentMessage/delta", "item/plan/delta":
 	default:
 		return
 	}
@@ -81,6 +91,7 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 			ID         string
 			Type       string
 			Text       string
+			Review     string
 			Phase      string
 			Moderation *struct{ Moderated bool }
 		}
@@ -92,6 +103,8 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 	defer c.mu.Unlock()
 	if event.Method == "thread/closed" || p.Status.Type == "notLoaded" {
 		delete(c.live, p.ThreadID)
+		delete(c.contextUse, p.ThreadID)
+		delete(c.planMode, p.ThreadID)
 		return
 	}
 	if event.Method == "turn/started" {
@@ -146,7 +159,8 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 			entry.turn.Items[i].Streaming = false
 		}
 	case "item/started", "item/completed":
-		if entry.turn.ID == "" || p.TurnID != entry.turn.ID || p.Item.Type != "agentMessage" || p.Item.ID == "" || len(p.Item.ID) > 256 {
+		if entry.turn.ID == "" || p.TurnID != entry.turn.ID || p.Item.ID == "" || len(p.Item.ID) > 256 ||
+			(p.Item.Type != "agentMessage" && p.Item.Type != "plan" && p.Item.Type != "exitedReviewMode") {
 			return
 		}
 		index := slices.IndexFunc(entry.turn.Items, func(item webLiveItem) bool { return item.ID == p.Item.ID })
@@ -156,13 +170,17 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 			}
 			return
 		}
-		item := webLiveItem{ID: p.Item.ID, Phase: p.Item.Phase, Text: limitLiveText(p.Item.Text), Streaming: event.Method == "item/started"}
+		body := p.Item.Text
+		if p.Item.Type == "exitedReviewMode" {
+			body = p.Item.Review
+		}
+		item := webLiveItem{ID: p.Item.ID, Type: p.Item.Type, Phase: p.Item.Phase, Text: limitLiveText(body), Streaming: event.Method == "item/started"}
 		if index >= 0 {
 			entry.turn.Items[index] = item
 		} else if len(entry.turn.Items) < 12 {
 			entry.turn.Items = append(entry.turn.Items, item)
 		}
-	case "item/agentMessage/delta":
+	case "item/agentMessage/delta", "item/plan/delta":
 		if entry.turn.ID == "" || p.TurnID != entry.turn.ID || entry.turn.Status != "inProgress" {
 			return
 		}
@@ -175,6 +193,32 @@ func (c *webConnection) observeLiveEvent(event cr.Message) {
 		}
 	}
 	entry.touched = now
+}
+
+func (c *webConnection) observeContextUsage(raw json.RawMessage) {
+	var event struct {
+		ThreadID   string
+		TokenUsage struct {
+			Last               *struct{ TotalTokens int64 }
+			ModelContextWindow int64
+		}
+	}
+	if json.Unmarshal(raw, &event) != nil || !threadID.MatchString(event.ThreadID) || event.TokenUsage.Last == nil ||
+		event.TokenUsage.Last.TotalTokens < 0 || event.TokenUsage.ModelContextWindow < 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.contextUse == nil {
+		c.contextUse = make(map[string]webContextUsage)
+	}
+	if _, exists := c.contextUse[event.ThreadID]; !exists && len(c.contextUse) >= 128 {
+		for id := range c.contextUse {
+			delete(c.contextUse, id)
+			break
+		}
+	}
+	c.contextUse[event.ThreadID] = webContextUsage{Tokens: event.TokenUsage.Last.TotalTokens, Window: event.TokenUsage.ModelContextWindow}
 }
 
 // Keep only results emitted by the official runtime for its own thread.
@@ -252,6 +296,11 @@ func (w *WebChat) activity(selected, account string) webActivityReply {
 			}
 		}
 		c.mu.Lock()
+		if writer, observed := writers[selected]; known && observed && writer.pid == c.process.PID {
+			if usage, exists := c.contextUse[selected]; exists {
+				result.ContextUsage = &usage
+			}
+		}
 		if writer, observed := writers[selected]; selected != "" && (!observed || writer.pid == c.process.PID) {
 			result.Pending = append(result.Pending, c.pendingForThread(selected)...)
 			if prediction, ok := c.predictions[selected]; ok && c.account == account && !w.loginChanged(c) {

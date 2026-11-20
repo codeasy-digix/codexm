@@ -41,7 +41,7 @@ const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
 const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage",
   "web.dispatchQueued", "web.catalogIndex", "web.artifact"]);
-const catalogMutations = new Set(["web.pin", "web.move", "web.archive", "web.delete", "web.projectCreate",
+const catalogMutations = new Set(["web.pin", "web.move", "web.archive", "web.delete", "web.projectCreate", "web.rename",
   "accounts.remove", "accounts.setDefault"]);
 // The bridge bounds sign-in attempts. Keep a matching in-memory record so
 // polling the same completed login invalidates the catalog only once.
