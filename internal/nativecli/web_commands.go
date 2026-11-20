@@ -97,6 +97,50 @@ func (w *WebChat) renameWebChat(ctx context.Context, selected *webConnection, p 
 	return map[string]any{"thread_id": p.Thread, "name": name}, nil
 }
 
+func (w *WebChat) forkWebChat(ctx context.Context, c *webConnection, id string) (any, error) {
+	if strings.EqualFold(id, w.c.Runtime.WebGUIRelay) {
+		return nil, errors.New("복제할 채팅을 찾을 수 없습니다.")
+	}
+	source, err := w.thread(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if source == nil {
+		return nil, errors.New("복제할 채팅을 찾을 수 없습니다.")
+	}
+	if w.loginChanged(c) {
+		return nil, errWebLoginDraining
+	}
+	// Fork reads the saved source history and creates a new native thread. It
+	// needs neither the source writer nor a turn/start call.
+	var result struct {
+		Thread struct {
+			WebThread
+			ForkedFrom string `json:"forkedFromId"`
+		} `json:"thread"`
+		Model  string `json:"model"`
+		Effort string `json:"reasoningEffort"`
+	}
+	args := map[string]any{"threadId": id, "excludeTurns": true}
+	if err := callWebInput(ctx, c.client, "thread/fork", args, &result); err != nil {
+		return nil, err
+	}
+	thread := result.Thread.WebThread
+	if !threadID.MatchString(thread.ID) || strings.EqualFold(thread.ID, id) ||
+		(result.Thread.ForkedFrom != "" && result.Thread.ForkedFrom != id) {
+		return nil, errWebInputUnconfirmed
+	}
+	w.rememberAccount(thread.ID, c.account)
+	thread.Account, thread.Project = c.account, source.Project
+	if thread.Model == "" {
+		thread.Model = result.Model
+	}
+	if thread.Effort == "" {
+		thread.Effort = result.Effort
+	}
+	return map[string]any{"thread": thread, "status": "accepted"}, nil
+}
+
 func webReviewTarget(ctx context.Context, cwd, branch string) (map[string]string, error) {
 	if !filepath.IsAbs(cwd) {
 		return nil, errors.New("코드 리뷰를 실행할 작업 폴더를 확인할 수 없습니다.")

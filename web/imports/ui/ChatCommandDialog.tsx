@@ -4,11 +4,11 @@ import { chatTitle, type ChatActivity, type ChatCommand, type ChatHistory, type 
 import { ChatActivityLabel } from "./ChatActivity";
 import { Modal } from "./Modal";
 
-const titles = { status: "채팅 상태", rename: "채팅 이름 변경", review: "코드 리뷰", compact: "컨텍스트 압축" };
-const accepted = { rename: "채팅 이름을 변경했습니다.", review: "코드 리뷰를 시작했습니다.", compact: "컨텍스트 압축을 요청했습니다." };
+const titles = { status: "채팅 상태", rename: "채팅 이름 변경", review: "코드 리뷰", compact: "컨텍스트 압축", fork: "채팅 복제 (Fork)" };
+const accepted = { rename: "채팅 이름을 변경했습니다.", review: "코드 리뷰를 시작했습니다.", compact: "컨텍스트 압축을 요청했습니다.", fork: "채팅을 복제했습니다." };
 
 export function ChatCommandDialog({ command, chat, account, history, activity, known, usage, online, onClose, onDone }: {
-  command: ChatCommand;
+  command: ChatCommand | "fork";
   chat: ChatThread;
   account: string;
   history?: ChatHistory;
@@ -17,7 +17,7 @@ export function ChatCommandDialog({ command, chat, account, history, activity, k
   usage?: ContextUsage;
   online: boolean;
   onClose: () => void;
-  onDone: (notice: string, name?: string) => void;
+  onDone: (notice: string, name?: string, fork?: ChatThread) => void;
 }) {
   const [name, setName] = useState(() => chatTitle(chat));
   const [target, setTarget] = useState("changes");
@@ -40,11 +40,14 @@ export function ChatCommandDialog({ command, chat, account, history, activity, k
     try {
       const params = { thread_id: chat.id, account, ...(command === "rename" ? { name: name.trim() } : {}),
         ...(command === "review" && target === "base" ? { branch: branch.trim() } : {}) };
-      const result = await call<{ name?: string; status?: string }>(`web.${command}`, params, crypto.randomUUID());
-      if (command === "rename" ? !result.name : result.status !== "accepted") {
-        throw new Error("명령 결과를 확인하지 못했습니다. 채팅에서 실행 여부를 확인해 주세요.");
+      const result = await call<{ name?: string; status?: string; thread?: ChatThread }>(`web.${command}`, params, crypto.randomUUID());
+      if (command === "rename" ? !result.name : result.status !== "accepted" ||
+          command === "fork" && (!result.thread?.id || result.thread.id === chat.id)) {
+        setUnconfirmed(true);
+        setError("명령 결과를 확인하지 못했습니다. 채팅 목록에서 실행 여부를 확인해 주세요.");
+        return;
       }
-      onDone(accepted[command], result.name);
+      onDone(accepted[command], result.name, result.thread);
     } catch (reason) {
       const message = (reason as Error).message;
       setError(message);
@@ -75,13 +78,14 @@ export function ChatCommandDialog({ command, chat, account, history, activity, k
           onChange={event => setBranch(event.target.value)} placeholder="main" /></label>}
       </>}
       {command === "compact" && <p>Codex가 다음 작업에 사용할 대화 컨텍스트를 요약합니다.</p>}
+      {command === "fork" && <p>‘{chatTitle(chat)}’의 저장된 대화를 복제해 새 채팅으로 엽니다.</p>}
       {externallyOwned ? <p>이 채팅을 열어 둔 Codex 앱이나 CLI에서 실행해 주세요.</p> : waiting && <p>현재 작업이 끝나면 실행할 수 있습니다.</p>}
       {error && <p role="alert" className="inline-error">{error}</p>}
       <div className="button-row">
-        <button type="button" disabled={busy} autoFocus={executable} onClick={onClose}>취소</button>
+        <button type="button" disabled={busy} autoFocus={executable || command === "fork"} onClick={onClose}>취소</button>
         <button type="submit" className="primary" disabled={!online || busy || waiting || externallyOwned || unconfirmed ||
           command === "rename" && !name.trim() || command === "review" && target === "base" && !branch.trim()}>
-          {busy ? "처리 중…" : command === "rename" ? "저장" : command === "review" ? "리뷰 시작" : "압축 시작"}
+          {busy ? "처리 중…" : command === "rename" ? "저장" : command === "review" ? "리뷰 시작" : command === "fork" ? "복제" : "압축 시작"}
         </button>
       </div>
     </form>}

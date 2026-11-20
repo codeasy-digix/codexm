@@ -100,16 +100,35 @@ test("an account change only takes effect when a chat input is submitted", async
   await page.getByLabel("대기 메시지 수정").fill("편집 후 대기한 입력");
   await page.getByRole("button", { name: "수정 저장", exact: true }).click();
   await expect(queued).toContainText("편집 후 대기한 입력");
+
+  await page.getByRole("button", { name: "현재 턴 중지", exact: true }).click();
+  const paused = page.getByText("대기열 일시 중지", { exact: true });
+  await expect(paused).toBeVisible();
+  await expect(page.getByRole("button", { name: "현재 턴 중지", exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(paused).toBeVisible();
+  const later = "일시 중지 중에 등록한 입력";
+  await input.fill(later);
+  await page.getByRole("button", { name: "큐에 추가", exact: true }).click();
+  await expect(input).toHaveValue("");
+  await expect(page.getByText("대기 중인 입력 2개", { exact: true })).toBeVisible();
   await page.goto("about:blank");
   writeFileSync(join(fixture!, "release-model"), "continue only isolated fixtures", { mode: 0o600 });
-  // Verify dispatch with no browser connected before restoring the page.
   const queueFile = join(config.state, "..", "web-chat", "queue", thread + ".json");
-  await expect.poll(() => {
-    try { return JSON.parse(readFileSync(queueFile, "utf8")).length; }
+  const pendingCount = () => {
+    try { return JSON.parse(readFileSync(queueFile, "utf8")).filter((entry: {state: string}) => entry.state !== "held").length; }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0; throw error; }
-  }).toBe(0);
+  };
+  // Let the detached worker poll while the queue is paused.
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  expect(pendingCount()).toBe(2);
   await page.goto(draftAddress);
+  await expect(paused).toBeVisible();
   await expect(account).toHaveValue("first-browser-login");
+  await page.getByRole("button", { name: "대기열 재개", exact: true }).click();
+  await expect(paused).toHaveCount(0);
+  await expect.poll(pendingCount).toBe(0);
   await expect(page.locator(".user-message").getByText(/^이 채팅에서 진행하던 미완료 작업을 계속 진행하세요/)).toHaveCount(1);
-  await expect(page.getByText("편집 후 대기한 입력", { exact: true })).toHaveCount(1);
+  await expect(page.locator(".user-message p").filter({ hasText: /편집 후 대기한 입력|일시 중지 중에 등록한 입력/ }))
+    .toHaveText(["편집 후 대기한 입력", later]);
 });

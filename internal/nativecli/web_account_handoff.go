@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"syscall"
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
+	"github.com/codeasy-digix/codexm/internal/jobs"
 	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
@@ -22,7 +24,7 @@ func sameWebLogin(a, b *webConnection) bool {
 	return a == b || (a.login.Key != "" && a.login.Key == b.login.Key)
 }
 
-func (w *WebChat) interruptWebThread(ctx context.Context, p webParams) (any, error) {
+func (w *WebChat) interruptWebThread(ctx context.Context, operation string, p webParams) (any, error) {
 	if p.Turn == "" {
 		return nil, errWebNoActiveTurn
 	}
@@ -38,10 +40,65 @@ func (w *WebChat) interruptWebThread(ctx context.Context, p webParams) (any, err
 	if err := w.verifyInputOwner(ctx, owner, p.Thread, false); err != nil {
 		return nil, err
 	}
-	if err := owner.client.Call(ctx, "turn/interrupt", map[string]any{"threadId": p.Thread, "turnId": p.Turn}, nil); err != nil {
+	turns, err := recentWebTurns(ctx, owner.client, p.Thread, 1)
+	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"thread_id": p.Thread, "interrupted": true}, nil
+	if len(turns) != 1 || turns[0].ID != p.Turn {
+		return nil, errWebNoActiveTurn
+	}
+	// Set the durable barrier under the same lock used for enqueue and the
+	// worker, before the native turn can become idle.
+	if err := config.AtomicWrite(w.queuePausePath(p.Thread), []byte(operation), 0600); err != nil {
+		return nil, err
+	}
+	interrupted := turns[0].Status == "inProgress"
+	if interrupted {
+		goal, err := pauseWebGoalForStop(ctx, owner.client, p.Thread)
+		if err != nil {
+			return nil, err
+		}
+		if err := callWebInput(ctx, owner.client, "turn/interrupt", map[string]any{"threadId": p.Thread, "turnId": p.Turn}, nil); err != nil {
+			return nil, err
+		}
+		if err := w.holdStoppedContinuation(p.Thread, p.Turn, goal); err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{"thread_id": p.Thread, "interrupted": interrupted, "queue_pause": operation}, nil
+}
+
+func pauseWebGoalForStop(ctx context.Context, client *cr.Client, id string) (*jobs.Goal, error) {
+	goal, err := client.Goal(ctx, id)
+	if err != nil || goal == nil || goal.Status != "active" {
+		return goal, err
+	}
+	var reply struct{ Goal *jobs.Goal }
+	args := map[string]any{"threadId": id, "status": "paused", "origin": "user"}
+	if err := callWebInput(ctx, client, "thread/goal/set", args, &reply); err != nil {
+		return nil, err
+	}
+	ref := webGoalRef{Objective: goal.Objective, CreatedAt: goal.CreatedAt}
+	if !ref.matches(reply.Goal) || reply.Goal.Status != "paused" {
+		return nil, errWebInputUnconfirmed
+	}
+	return reply.Goal, nil
+}
+
+func (w *WebChat) holdStoppedContinuation(id, turn string, goal *jobs.Goal) error {
+	q, err := w.readOwnedQueue(id)
+	if err != nil {
+		return err
+	}
+	index := slices.IndexFunc(q, func(input webQueuedInput) bool {
+		return input.State == "running" && input.ResumeFrom != "" && (input.ResumedTurn == turn ||
+			(input.ResumeGoal != nil && input.ResumeGoal.matches(goal)))
+	})
+	if index < 0 {
+		return nil
+	}
+	q[index].State, q[index].Detail = "held", "사용자가 이전 작업을 중지했습니다."
+	return w.saveOwnedQueue(id, q)
 }
 
 func (w *WebChat) sendWebOnly(ctx context.Context, target *webConnection, r Request, p webParams) (any, error) {
@@ -66,6 +123,19 @@ func (w *WebChat) sendWebOnly(ctx context.Context, target *webConnection, r Requ
 	}
 	if p.Mode == "queue" || p.Plan {
 		return w.enqueueWebInput(ctx, target, r, p)
+	}
+	if paused, err := w.readQueuePause(p.Thread); err != nil {
+		return nil, err
+	} else if paused != "" {
+		// Starting a regular turn would also release a native queue when it
+		// finishes. Preserve those older submissions until explicit resume.
+		queue, err := readWebQueue(ctx, target.client, p.Thread)
+		if err != nil {
+			return nil, err
+		}
+		if len(queue.Data) > 0 {
+			return nil, errors.New("Codex 기본 대기열이 일시 중지돼 있습니다. 대기열을 재개한 뒤 전송해 주세요.")
+		}
 	}
 	var owner *webInputOwner
 	if !p.SwitchAccount {

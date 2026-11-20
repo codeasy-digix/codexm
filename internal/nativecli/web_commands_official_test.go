@@ -160,6 +160,22 @@ func TestWebOnlyOfficialRenameReviewAndCompact(t *testing.T) {
 	if saved, err := w.thread(f.ctx, id); err != nil || saved == nil || saved.Name != name {
 		t.Fatal("the original metadata did not reflect the new title", err)
 	}
+	modelCalls := f.requests()
+	forked, err := call("web.fork", map[string]any{"thread_id": id, "account": "alpha"})
+	if err != nil || forked["status"] != "accepted" {
+		t.Fatal("native fork was not confirmed", forked, err)
+	}
+	forkID := forked["thread"].(map[string]any)["id"].(string)
+	if forkID == id || !threadID.MatchString(forkID) {
+		t.Fatal("fork reused the original chat ID")
+	}
+	copyHistory, err := call("web.history", map[string]any{"thread_id": forkID, "account": "alpha"})
+	if err != nil || !hasWebCommandItem(copyHistory, "userMessage") || f.requests() != modelCalls {
+		t.Fatal("fork did not retain the source conversation without a new model request", err)
+	}
+	if saved, err := w.thread(f.ctx, id); err != nil || saved == nil || saved.Name != name || saved.Archived {
+		t.Fatal("the original changed after fork", err)
+	}
 
 	f.mu.Lock()
 	f.responseText = `{"findings":[],"overall_correctness":"patch is correct","overall_explanation":"Synthetic review completed","overall_confidence_score":0.95}`

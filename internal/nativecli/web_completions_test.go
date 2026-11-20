@@ -2,6 +2,8 @@ package nativecli
 
 import (
 	"encoding/json"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,4 +62,38 @@ func TestWebChatOfficialCompletionReadNeedsNoWebWriter(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("actual official runtime completion was not observed from disk")
+}
+
+func TestWebChatOfficialExecCompletionSurvivesArchive(t *testing.T) {
+	f := newGUIControlFixture(t, "stdio")
+	after := time.Now().Add(-time.Second).UnixMilli()
+	cmd := exec.CommandContext(f.ctx, f.binary, "--no-daemon", "exec", "--json", "--skip-git-repo-check", "WEB_EXEC_COMPLETION_FIXTURE")
+	cmd.Dir, cmd.Env = f.cmd.Dir, f.cmd.Env
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatal("isolated Codex CLI exec failed", err)
+	}
+	id := ""
+	for _, line := range strings.Split(string(output), "\n") {
+		var row struct {
+			Type string
+			ID   string `json:"thread_id"`
+		}
+		if json.Unmarshal([]byte(line), &row) == nil && row.Type == "thread.started" {
+			id = row.ID
+			break
+		}
+	}
+	if !threadID.MatchString(id) {
+		t.Fatal("official CLI did not report its chat ID")
+	}
+	if err := f.client.Call(f.ctx, "thread/archive", map[string]any{"threadId": id}, nil); err != nil {
+		t.Fatal("isolated CLI chat archive failed", err)
+	}
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	rows, err := w.readCompletions(f.ctx, after)
+	if err != nil || len(rows) != 1 || rows[0].Thread != id || !threadID.MatchString(rows[0].Turn) || len(w.connections) != 0 {
+		t.Fatalf("archived exec completion was not read passively: %+v (%v)", rows, err)
+	}
 }

@@ -51,22 +51,27 @@ func (w *WebChat) readCompletions(ctx context.Context, after int64) ([]webComple
 	}
 	// The paginated history index provides status. The rollout also supplies
 	// precise event times and covers older chats with legacy history.
-	if sessionDir, err := filepath.EvalSymlinks(filepath.Join(home, "sessions")); err == nil {
-		if root, err := os.OpenRoot(sessionDir); err == nil {
-			defer root.Close()
-			for _, rollout := range rollouts {
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
-				}
-				if rollout.ID == w.c.Runtime.WebGUIRelay || !threadID.MatchString(rollout.ID) {
-					continue
-				}
-				for _, event := range rolloutCompletions(root, rollout, after) {
-					status, known := projected[event.webCompletionID]
-					if !known || status.Status == "completed" {
-						projected[event.webCompletionID] = projectedCompletion{event.At, "completed"}
-					}
-				}
+	roots := make(map[bool]*os.Root, 2)
+	for archived, directory := range map[bool]string{false: "sessions", true: "archived_sessions"} {
+		if path, err := filepath.EvalSymlinks(filepath.Join(home, directory)); err == nil {
+			if root, err := os.OpenRoot(path); err == nil {
+				defer root.Close()
+				roots[archived] = root
+			}
+		}
+	}
+	for _, rollout := range rollouts {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		root := roots[rollout.Archived]
+		if root == nil || rollout.ID == w.c.Runtime.WebGUIRelay || !threadID.MatchString(rollout.ID) {
+			continue
+		}
+		for _, event := range rolloutCompletions(root, rollout, after) {
+			status, known := projected[event.webCompletionID]
+			if !known || status.Status == "completed" {
+				projected[event.webCompletionID] = projectedCompletion{event.At, "completed"}
 			}
 		}
 	}

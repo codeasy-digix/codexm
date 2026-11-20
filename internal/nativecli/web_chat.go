@@ -27,6 +27,7 @@ var WebMethods = []Method{
 	{"web.thread", false, false}, {"web.usage", false, false},
 	{"web.create", true, false}, {"web.send", true, true}, {"web.interrupt", true, false},
 	{"web.queueUpdate", true, false}, {"web.queueCancel", true, false},
+	{"web.queueResume", true, true},
 	{"web.pin", true, false}, {"web.move", true, false}, {"web.archive", true, false},
 	{"web.delete", true, false}, {"web.projectCreate", true, false},
 	{"web.pending", false, false}, {"web.respond", true, false},
@@ -42,7 +43,7 @@ var WebMethods = []Method{
 	{"web.skills", false, false},
 	{"web.artifacts", false, false}, {"web.artifactRegister", true, false}, {"web.artifact", false, false},
 	{"web.goalChange", true, true},
-	{"web.rename", true, false}, {"web.review", true, true}, {"web.compact", true, true},
+	{"web.rename", true, false}, {"web.fork", true, false}, {"web.review", true, true}, {"web.compact", true, true},
 }
 
 func webSharedMethod(name string) bool {
@@ -66,6 +67,7 @@ type webParams struct {
 	Turn            string          `json:"turn_id"`
 	Item            string          `json:"item_id"`
 	Queued          string          `json:"queued_id"`
+	QueuePause      string          `json:"queue_pause"`
 	ExpectedText    *string         `json:"expected_text"`
 	Text            string          `json:"text"`
 	Mode            string          `json:"mode"`

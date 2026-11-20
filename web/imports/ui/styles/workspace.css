@@ -134,7 +134,7 @@ button:hover { background: var(--hover); }
   border-radius: 7px;
 }
 .sidebar-chat-row > a[aria-current="page"] strong { font-weight: 650; }
-.sidebar-chat-actions { flex: none; display: flex; align-items: center; gap: 1px; padding: 0 4px 0 0; }
+.sidebar-chat-actions { flex: none; display: grid; grid-template-columns: repeat(2, 26px); gap: 1px; padding: 2px 4px 2px 0; }
 .sidebar-chat-actions :is(button, .pin-mark) {
   display: grid;
   place-items: center;
@@ -144,10 +144,18 @@ button:hover { background: var(--hover); }
   color: var(--muted);
   border-radius: 6px;
   width: 26px;
-  height: 30px;
+  height: 23px;
 }
+.sidebar-chat-actions button[aria-label="이름 변경"] { grid-column: 2; grid-row: 1; }
+.sidebar-chat-actions .row-archive { grid-column: 1; grid-row: 2; }
+.sidebar-chat-actions .row-fork { grid-column: 2; grid-row: 2; }
 .sidebar-chat-actions .pin-mark, .sidebar-chat-actions button[aria-pressed="true"] { color: var(--accent); }
 .sidebar-chat-actions button:hover { background: var(--tint); color: var(--accent); }
+
+@media (min-width: 980px) {
+  .chat-app.sidebar-collapsed > .sidebar { display: none; }
+  .chat-app .chat-header .menu-toggle { display: grid; place-items: center; }
+}
 
 .account-actions-row { align-items: flex-end; gap: 9px; }
 .account-actions-row .account-select { flex: 1 1 112px; min-width: 60px; }
@@ -178,6 +186,45 @@ button:hover { background: var(--hover); }
 .chat-command-status dt { color: var(--muted); }
 .chat-command-status dd { margin: 0; overflow-wrap: anywhere; }
 .chat-command-result { display: block; margin-bottom: 6px; font-size: 13px; }
+.terminal-toggle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: var(--header-control-height);
+  padding: 0;
+}
+.terminal-dock {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 clamp(124px, 31dvh, 270px);
+  min-height: 100px;
+  overflow: hidden;
+  color: #e2e2e8;
+  background: #18181c;
+  border-top: 1px solid var(--field-line);
+}
+.terminal-dock[hidden] { display: none; }
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 9px;
+  flex: none;
+  background: #222226;
+  font-size: 12px;
+}
+.terminal-toolbar small { flex: 1; min-width: 0; color: #c0c0c8; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.terminal-toolbar button, .terminal-keys button { padding: 3px 7px; color: inherit; border-color: #4f4f57; background: transparent; font-size: 11px; }
+.terminal-viewport { flex: 1; min-width: 0; min-height: 0; margin: 4px 8px; overflow: hidden; }
+.terminal-viewport > .xterm { height: 100%; }
+.terminal-keys { display: none; padding: 3px 8px calc(5px + env(safe-area-inset-bottom)); gap: 5px; flex: none; }
+.terminal-error, .terminal-loading { margin: 0; padding: 4px 9px; font-size: 12px; }
+.terminal-error { color: #ffacac; }
+@media (pointer: coarse), (max-width: 740px) {
+  .terminal-keys { display: flex; }
+  .terminal-keys button { min-height: 26px; min-width: 26px; }
+}
 .settings-nav { display: flex; flex-wrap: wrap; gap: 5px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
 .settings-nav button { font-size: 12px; padding: 8px 11px; border-color: transparent; }
 .settings-nav button[aria-pressed="true"] { font-weight: 650; color: var(--accent); background: var(--tint); }
@@ -248,6 +295,9 @@ button:hover { background: var(--hover); }
 .goal-details p { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
 .goal-details small { color: var(--muted); }
 .queue-preview { margin-bottom: 6px; padding: 0; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); }
+.queue-paused { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px;
+  padding: 5px 9px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--panel); font-size: 12px; }
+.queue-paused button { padding: 4px 8px; font-size: inherit; }
 .queue-preview summary { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 6px 10px; list-style: none; }
 .queue-preview summary::before { content: "›"; color: var(--accent); font-size: 17px; }
 .queue-preview[open] summary::before { transform: rotate(90deg); }

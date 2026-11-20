@@ -14,6 +14,7 @@ import (
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/catalog"
+	cr "github.com/codeasy-digix/codexm/internal/runtime"
 )
 
 func TestWebOnlyOfficialAccountHandoff(t *testing.T) {
@@ -175,7 +176,8 @@ func TestWebQueueRetainsInputIfContinuationStops(t *testing.T) {
 	if err != nil || len(q) != 2 || q[0].State != "running" || q[0].ResumedTurn == "" {
 		t.Fatal("the running continuation was not recorded", err)
 	}
-	if _, err := call("web.interrupt", map[string]any{"thread_id": id, "account": "beta", "turn_id": q[0].ResumedTurn}); err != nil {
+	stopped, err := call("web.interrupt", map[string]any{"thread_id": id, "account": "beta", "turn_id": q[0].ResumedTurn})
+	if err != nil || stopped["interrupted"] != true {
 		t.Fatal(err)
 	}
 	waitWebNativeTurn(t, f, w.connections["beta"], id, q[0].ResumedTurn, "interrupted")
@@ -185,9 +187,83 @@ func TestWebQueueRetainsInputIfContinuationStops(t *testing.T) {
 		}
 	}
 	q, err = w.readOwnedQueue(id)
-	if err != nil || len(q) != 2 || q[0].State != "blocked" || q[1].ID != queued["queued_id"] || q[1].State != "pending" {
+	if err != nil || len(q) != 2 || q[0].State != "held" || q[1].ID != queued["queued_id"] || q[1].State != "pending" {
 		t.Fatal("the follow-up must stay queued after the continuation stops", q, err)
 	}
+	w.Close()
+	reopened := NewWebChat(f.ctx, f.c)
+	defer reopened.Close()
+	if err := reopened.dispatchQueued(f.ctx); err != nil || len(reopened.connections) != 0 {
+		t.Fatal("restart dispatched or opened the paused chat", err)
+	}
+	params := map[string]any{"thread_id": id, "account": "beta"}
+	afterRestart := webTestCall(t, reopened, f.ctx)
+	history, err := afterRestart("web.history", params)
+	if err != nil || history["queuePause"] == "" || history["queuePause"] != stopped["queue_pause"] {
+		t.Fatal("pause revision did not survive restart", err)
+	}
+	params["queue_pause"] = "stale"
+	encoded, _ := json.Marshal(params)
+	if _, err := reopened.Dispatch(f.ctx, Request{Version: 1, Owner: "isolated-web-resume-test", Operation: "10000000-0000-4000-8000-000000000070", Method: "web.queueResume", Params: encoded}); err == nil || !strings.Contains(err.Error(), "대기열 상태가 바뀌었습니다") {
+		t.Fatal("stale browser resumed the queue")
+	}
+	// Use a different operation owner from the first bridge fixture.
+	params["queue_pause"] = stopped["queue_pause"]
+	encoded, _ = json.Marshal(params)
+	if _, err := reopened.Dispatch(f.ctx, Request{Version: 1, Owner: "isolated-web-resume-test", Operation: "10000000-0000-4000-8000-000000000071", Method: "web.queueResume", Params: encoded}); err != nil {
+		t.Fatal("explicit queue resume failed", err)
+	}
+	f.once.Do(func() { close(f.release) })
+	if err := reopened.dispatchQueued(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, "WAIT_AFTER_CONTINUATION", "beta")
+}
+
+func TestWebStopPausesGoalAndPreservesNativeQueue(t *testing.T) {
+	f := webOnlyFixture(t)
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	connection := w.connections["alpha"]
+	const objective, budget, waiting = "GUI_FIXTURE_ACTIVE_PAUSE_GOAL", 36000, "NATIVE_INPUT_RETAINS_QUEUE_POSITION"
+	if err := connection.client.Call(f.ctx, "thread/goal/set", map[string]any{
+		"threadId": id, "objective": objective, "status": "active", "origin": "user", "tokenBudget": budget,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, objective, "alpha")
+	turns, err := recentWebTurns(f.ctx, connection.client, id, 1)
+	if err != nil || len(turns) != 1 || turns[0].Status != "inProgress" {
+		t.Fatal("goal did not start", err)
+	}
+	if err := connection.client.Call(f.ctx, "thread/queue/add", map[string]any{
+		"threadId": id, "input": cr.TextInput(waiting), "clientUserMessageId": "10000000-0000-4000-8000-000000000601",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := call("web.interrupt", map[string]any{"thread_id": id, "account": "alpha", "turn_id": turns[0].ID})
+	if err != nil || stopped["interrupted"] != true {
+		t.Fatal("the active goal turn was not stopped", stopped, err)
+	}
+	waitWebNativeTurn(t, f, connection, id, turns[0].ID, "interrupted")
+	goal, err := connection.client.Goal(f.ctx, id)
+	if err != nil || goal == nil || goal.Status != "paused" || goal.TokenBudget == nil || *goal.TokenBudget != budget || goal.Objective != objective {
+		t.Fatal("the paused goal or its budget changed", goal, err)
+	}
+	if queue, err := readWebQueue(f.ctx, connection.client, id); err != nil || len(queue.Data) != 1 || f.requests() != 1 {
+		t.Fatal("native queue was altered by Stop", len(queue.Data), err)
+	}
+	f.once.Do(func() { close(f.release) })
+	if _, err := call("web.queueResume", map[string]any{"thread_id": id, "account": "alpha", "queue_pause": stopped["queue_pause"]}); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, waiting, "alpha")
 }
 
 func TestWebQueueWaitsForTransferredNativeGoal(t *testing.T) {

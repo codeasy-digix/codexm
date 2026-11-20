@@ -43,7 +43,8 @@ export function shortcutFromEvent(event: ShortcutEvent): string | undefined {
   if (!(event.metaKey || event.ctrlKey || event.altKey) || !keyLabel(event.code)) return;
   // `code` stays stable when Shift or Option changes the character produced by the key.
   const pressed = modifiers.filter(modifier => event[modifier.property]).map(modifier => modifier.name);
-  return [...pressed, event.code].join("+");
+  const binding = [...pressed, event.code].join("+");
+  return /^(?:Meta|Control)\+Key[BJ]$/.test(binding) ? undefined : binding;
 }
 
 export function shortcutLabel(shortcut: string): string {

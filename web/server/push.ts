@@ -10,7 +10,8 @@ type State = { devices: Record<string, Device>; sent: Record<string, number> };
 type Deliver = (subscription: PushSubscription, payload: string, options: RequestOptions) => Promise<unknown>;
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
-const lookback = 2 * 60_000;
+// Cover a short restart while allowing for the native read's five-minute limit.
+const lookback = 4 * 60_000 + 30_000;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
 // Only browser push providers are destinations. Neither an authenticated

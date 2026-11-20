@@ -11,6 +11,7 @@ import { ChatHistoryCache } from "./history-cache";
 import { CacheDatabase } from "./cache-database";
 import { ChatCatalogCache } from "./catalog-cache";
 import { deleteArtifacts, serveArtifact } from "./artifacts";
+import { LocalTerminal } from "./local-terminal";
 import { bridgeContract } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
@@ -28,6 +29,11 @@ const bridge = new BridgeClient(
 const database = new CacheDatabase(state);
 const historyCache = new ChatHistoryCache(database);
 const catalogCache = new ChatCatalogCache(database, cursor => bridge.call("web.catalogIndex", { cursor }));
+const terminal = new LocalTerminal(process.env.CODEXM_WEB_TERMINAL_PTY || "", auth,
+  thread => bridge.call("web.thread", { thread_id: thread }), async () => {
+    const catalog = await catalogCache.read({ limit: 1 });
+    return [...catalog.projects, ...(catalog.otherProjects ?? [])];
+  });
 const pushes = (() => {
   try {
     return new ChatPush(state, auth.secure ? origin : "mailto:support@digix.kr", () => auth.notificationScope(),
@@ -41,7 +47,7 @@ const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
 const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage",
   "web.dispatchQueued", "web.catalogIndex", "web.artifact"]);
-const catalogMutations = new Set(["web.pin", "web.move", "web.archive", "web.delete", "web.projectCreate", "web.rename",
+const catalogMutations = new Set(["web.pin", "web.move", "web.archive", "web.delete", "web.projectCreate", "web.rename", "web.fork",
   "accounts.remove", "accounts.setDefault"]);
 // The bridge bounds sign-in attempts. Keep a matching in-memory record so
 // polling the same completed login invalidates the catalog only once.
@@ -147,6 +153,8 @@ async function body(req: import("node:http").IncomingMessage) {
         const result = req.url === "/auth/ticket" ? { ticket: auth.ticket(session) } : {};
         if (cookie) res.setHeader("Set-Cookie", cookie);
         res.end(JSON.stringify(result));
+      } else if (req.url === "/auth/terminal-ticket") {
+        res.end(JSON.stringify(await terminal.ticket(req.headers.cookie, await body(req))));
       } else {
         const session = auth.session(req.headers.cookie);
         if (!session) throw new Error("로그인이 필요합니다.");
@@ -162,6 +170,7 @@ async function body(req: import("node:http").IncomingMessage) {
         else if (req.url === "/auth/logout") {
           const data = await body(req);
           const browser = auth.logout(session);
+          terminal.closeBrowser(session);
           try { pushes?.logout(browser, data?.endpoint); }
           catch { console.error("CodexM push subscription could not be removed"); }
           // Revoke web access immediately; cancel only this browser's owned
@@ -188,9 +197,10 @@ async function body(req: import("node:http").IncomingMessage) {
     }
   },
 );
-WebApp.httpServer.prependListener("upgrade", (req, socket) => {
+WebApp.httpServer.prependListener("upgrade", (req, socket, head) => {
   if (!auth.validRequest(req.headers.host, req.headers.origin, true))
     socket.destroy();
+  else terminal.upgrade(req, socket, head);
 });
 // SockJS filters Origin out of httpHeaders. It was validated on the HTTP
 // upgrade/request; DDP still requires its own single-use ticket below.
@@ -318,7 +328,7 @@ Meteor.publish("codexm.state", function () {
       const caps = await bootstrap(),
         snapshot = await bridge.call("snapshot");
       if (stopped) return;
-      const doc = { capabilities: caps, snapshot, connectionError: "" },
+      const doc = { capabilities: caps, snapshot, terminalAvailable: terminal.available, connectionError: "" },
         serialized = JSON.stringify(doc, (key, value) =>
           key === "observed_at" ? undefined : value,
         );

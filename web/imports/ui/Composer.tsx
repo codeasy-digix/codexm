@@ -175,19 +175,23 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     inFlight.current = true;
     setAction("stop");
     setError("");
+    setNotice("");
     try {
-      await call("web.interrupt", { thread_id: chat.id, account: history?.executionAccount || account, turn_id: turn }, crypto.randomUUID());
-      onSent();
+      const result = await call<{ interrupted: boolean; queue_pause?: string }>("web.interrupt", {
+        thread_id: chat.id, account: history?.executionAccount || account, turn_id: turn,
+      }, crypto.randomUUID());
+      if (result.queue_pause && result.interrupted) setNotice("현재 작업을 중지했습니다.");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       inFlight.current = false;
       setAction(undefined);
+      if (mounted.current) onSent();
     }
   }
 
   return <div className="composer-wrap">
-    <ChatQueue thread={chat.id} account={account} items={queue} busy={busy || !online} sendDisabled={uncertain}
+    <ChatQueue thread={chat.id} account={account} items={queue} pause={history?.queuePause} busy={busy || !online} sendDisabled={uncertain}
       onChanged={onSent} onRequeue={input => send("queue", input)} />
     {external && history?.webOnly && <p className="owner-note">{switchAccount
       ? "전송 시 이 채팅의 실행을 선택한 계정으로 인계합니다."

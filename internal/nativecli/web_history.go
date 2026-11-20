@@ -230,6 +230,13 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	if err != nil {
 		return nil, err
 	}
+	var queuePause string
+	if w.webOnly {
+		queuePause, err = w.readQueuePause(p.Thread)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var read struct {
 		Thread WebThread `json:"thread"`
 	}
@@ -242,7 +249,7 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 					if queueErr != nil {
 						return nil, queueErr
 					}
-					return map[string]any{"thread": draft, "turns": []WebTurn{}, "queue": q, "pending": []webPendingRequest{}, "webOnly": true}, nil
+					return map[string]any{"thread": draft, "turns": []WebTurn{}, "queue": q, "queuePause": queuePause, "pending": []webPendingRequest{}, "webOnly": true}, nil
 				}
 			}
 		}
@@ -321,6 +328,7 @@ func (w *WebChat) history(ctx context.Context, c *webConnection, p webParams) (a
 	}
 	if w.webOnly {
 		result["webOnly"], result["executionAccount"] = true, executionAccount
+		result["queuePause"] = queuePause
 	}
 	if w.webOnly && p.Cursor == "" {
 		check, cancel := context.WithTimeout(ctx, time.Second)

@@ -12,7 +12,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = dirname(root);
 const mode = process.env.CODEXM_WEB_TEST_MODE;
 const quota = mode === "quota";
-const webOnly = mode === "web-only" || mode === "workspace" || mode === "catalog" || quota;
+const webOnly = mode === "web-only" || mode === "workspace" || mode === "catalog" || mode === "terminal" || quota;
 const args = process.argv.slice(2);
 const options = {};
 for (let i = 0; i < args.length; i += 2) {
@@ -48,7 +48,8 @@ function run(program, argv, env = process.env, cwd = source) {
   return { child, done };
 }
 async function waitFile(path) {
-  for (let i = 0; i < 300; i++) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
     try { return JSON.parse(await readFile(path, "utf8")); }
     catch (error) {
       if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
@@ -126,7 +127,8 @@ try {
   }
   if (!webReady) throw new Error("isolated web service did not become ready");
   const suite = quota ? "tests/quota.spec.ts" : mode === "workspace" ? "tests/workspace.spec.ts" :
-    mode === "catalog" ? "tests/catalog-sync.spec.ts" : webOnly ? "tests/web-only.spec.ts" : "tests/chat-gui.spec.ts";
+    mode === "catalog" ? "tests/catalog-sync.spec.ts" : mode === "terminal" ? "tests/terminal.spec.ts" :
+    webOnly ? "tests/web-only.spec.ts" : "tests/chat-gui.spec.ts";
   await run(process.execPath, [join(root, "node_modules/@playwright/test/cli.js"), "test", suite, "--output", join(output, "test-results")], {
     ...process.env, CODEXM_CHAT_GUI_FIXTURE: fixtureDir, CODEXM_CHAT_GUI_BINARY: options.binary,
     CODEXM_WEB_TEST_URL: url, CODEXM_WEB_TEST_MONGO: options.mongod ? "1" : "",
@@ -142,8 +144,8 @@ try {
       } else {
         await run(options.binary, ["--config", manifest.config, "web", "uninstall"], env).done;
       }
-      await writeFile(join(fixtureDir, "stop-fixture"), "isolated web service removed");
     }
+    if (fixture) await writeFile(join(fixtureDir, "stop-fixture"), "isolated web checks finished");
     if (fixtureExit) await fixtureExit;
   } finally {
     if (mongo && mongo.child.exitCode === null) mongo.child.kill("SIGTERM");

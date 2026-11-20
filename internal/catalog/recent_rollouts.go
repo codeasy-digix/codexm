@@ -23,8 +23,9 @@ func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]boo
 }
 
 type RecentRollout struct {
-	ID   string
-	Path string
+	ID       string
+	Path     string
+	Archived bool
 }
 
 // Use the native update index to find recent top-level local chats without
@@ -51,16 +52,17 @@ func RecentLocalRollouts(ctx context.Context, home string, after int64) ([]Recen
 		args = append([]any{after}, args...)
 		order = `updated_at_ms`
 	}
+	archived := "0"
 	if columns["archived"] {
-		where += ` AND COALESCE(archived,0)=0`
+		archived = "COALESCE(archived,0)"
 	}
 	if columns["source"] {
-		where += ` AND source IN ('cli','vscode')`
+		where += ` AND source IN ('cli','vscode','exec','appServer')`
 	}
 	if columns["attached_thread_parent_id"] {
 		where += ` AND COALESCE(attached_thread_parent_id,'')=''`
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id,rollout_path FROM threads WHERE `+where+` ORDER BY `+order+` DESC LIMIT 256`, args...)
+	rows, err := db.QueryContext(ctx, `SELECT id,rollout_path,`+archived+` FROM threads WHERE `+where+` ORDER BY `+order+` DESC LIMIT 256`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +70,7 @@ func RecentLocalRollouts(ctx context.Context, home string, after int64) ([]Recen
 	var results []RecentRollout
 	for rows.Next() {
 		var rollout RecentRollout
-		if err := rows.Scan(&rollout.ID, &rollout.Path); err != nil {
+		if err := rows.Scan(&rollout.ID, &rollout.Path, &rollout.Archived); err != nil {
 			return nil, err
 		}
 		results = append(results, rollout)

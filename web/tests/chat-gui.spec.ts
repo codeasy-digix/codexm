@@ -672,7 +672,8 @@ test("pin, project move, archive, restore and confirmed permanent delete",async(
   await row.getByRole("button",{name:"고정하기",exact:true}).click();
   await expect(page.getByText("채팅을 고정했습니다.")).toBeVisible();
   await page.getByRole("button",{name:"고정",exact:true}).click();await page.getByRole("link",{name:/관리 기능 검증용 채팅/}).click();
-  await row.getByRole("button",{name:"프로젝트로 이동",exact:true}).click();
+  await page.getByRole("button",{name:"채팅 메뉴",exact:true}).click();
+  await page.getByRole("menuitem",{name:"프로젝트로 이동",exact:true}).click();
   dialog=page.getByRole("dialog",{name:"프로젝트로 이동",exact:true});await dialog.getByLabel("프로젝트",{exact:true}).selectOption("");await dialog.getByRole("button",{name:"적용",exact:true}).click();
   await expect(page.getByText("프로젝트를 옮겼습니다.")).toBeVisible();
   await row.getByRole("button",{name:"보관하기",exact:true}).click();

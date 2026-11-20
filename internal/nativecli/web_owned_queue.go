@@ -75,6 +75,86 @@ func (w *WebChat) saveOwnedQueue(id string, q []webQueuedInput) error {
 	return config.AtomicWrite(path, b, 0600)
 }
 
+func (w *WebChat) queuePausePath(id string) string {
+	return filepath.Join(filepath.Dir(w.queuePath(id)), id+".paused")
+}
+
+func (w *WebChat) readQueuePause(id string) (string, error) {
+	b, err := os.ReadFile(w.queuePausePath(id))
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if len(b) == 0 || len(b) > 128 {
+		return "", errors.New("대기열의 일시 중지 상태를 읽을 수 없습니다.")
+	}
+	return string(b), nil
+}
+
+// The caller holds the chat mutation lock. A stale browser must not undo a
+// newer Stop request. Native-only queues retain their original saved inputs.
+func (w *WebChat) resumeWebQueue(ctx context.Context, target *webConnection, p webParams) (any, error) {
+	paused, err := w.readQueuePause(p.Thread)
+	if err != nil {
+		return nil, err
+	}
+	if !w.webOnly || paused == "" || p.QueuePause != paused {
+		return nil, errors.New("대기열 상태가 바뀌었습니다. 갱신된 내용을 확인해 주세요.")
+	}
+	q, err := w.readOwnedQueue(p.Thread)
+	if err != nil {
+		return nil, err
+	}
+	if nextWebQueuedInput(q) < 0 {
+		if err := w.resumeNativeQueue(ctx, target, p.Thread); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.Remove(w.queuePausePath(p.Thread)); err != nil {
+		return nil, err
+	}
+	return map[string]any{"thread_id": p.Thread, "queue_resumed": true}, nil
+}
+
+func (w *WebChat) resumeNativeQueue(ctx context.Context, target *webConnection, id string) error {
+	queue, err := readWebQueue(ctx, target.client, id)
+	if err != nil || len(queue.Data) == 0 {
+		return err
+	}
+	owner, err := w.acquireWebChat(ctx, target, id, webAcquire{prepare: true})
+	if err != nil {
+		return err
+	}
+	defer owner.release()
+	delivery, err := owner.delivery(ctx, id)
+	if err != nil || delivery.State == "ready" || delivery.State == "waiting" {
+		return err
+	}
+	if delivery.State != "idle" {
+		return errWebAccountBusy
+	}
+	if err := w.verifyLogin(ctx, owner.web); err != nil {
+		return err
+	}
+	if err := w.verifyInputOwner(ctx, owner, id, true); err != nil {
+		return err
+	}
+	var entry struct{ ID string }
+	if json.Unmarshal(queue.Data[0], &entry) != nil || !threadID.MatchString(entry.ID) {
+		return errors.New("기존 대기 입력을 확인할 수 없습니다.")
+	}
+	var reply struct{ Turn cr.Turn }
+	if err := callWebInput(ctx, owner.client, "thread/queue/start", map[string]any{"threadId": id, "queuedSubmissionId": entry.ID}, &reply); err != nil {
+		return err
+	}
+	if reply.Turn.ID == "" {
+		return errWebInputUnconfirmed
+	}
+	return nil
+}
+
 func queueLoginKey(c *webConnection) string {
 	if c.login.Key != "" {
 		return c.login.Key
@@ -98,6 +178,10 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 	if err != nil {
 		return nil, err
 	}
+	paused, err := w.readQueuePause(p.Thread)
+	if err != nil {
+		return nil, err
+	}
 	if len(q) >= 100 {
 		return nil, errors.New("이 채팅의 웹 대기열이 가득 찼습니다.")
 	}
@@ -117,6 +201,9 @@ func (w *WebChat) enqueueWebInput(ctx context.Context, target *webConnection, r 
 	}
 	result := map[string]any{"thread_id": p.Thread, "mode": "queue", "queued_id": queued.ID, "status": "accepted",
 		"account": queued.Account, "handoffError": "", "plan": p.Plan}
+	if paused != "" {
+		return result, nil
+	}
 	if (!p.SwitchAccount || p.Plan) && target.hasActiveQueueTurn(ctx, p.Thread) {
 		// The saved input can wait for the turn already running on this login.
 		return result, nil
@@ -275,6 +362,9 @@ func (w *WebChat) advanceOwnedQueue(ctx context.Context, id string) error {
 		return err
 	}
 	defer unlock()
+	if paused, err := w.readQueuePause(id); err != nil || paused != "" {
+		return err
+	}
 	q, err := w.readOwnedQueue(id)
 	index := nextWebQueuedInput(q)
 	if err != nil || index < 0 || (q[index].State != "pending" && q[index].State != "running") {

@@ -451,6 +451,9 @@ func runWeb(ctx context.Context, s Spec, publish func() error) error {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 	cmd.Env = append(os.Environ(), "BIND_IP=127.0.0.1", "ROOT_URL="+s.Origin, "PORT="+port, "CODEXM_BINARY="+s.Binary, "CODEXM_CONFIG="+s.Config, "CODEXM_WEB_STATE="+s.State, "CODEXM_WEB_ONLY="+strconv.FormatBool(s.WebOnly), "DO_NOT_TRACK=1", "RSPACK_DEVSERVER_PORT="+strconv.Itoa(func() int { p, _ := strconv.Atoi(port); return p + 3 }()))
+	if len(s.Args) > 0 && s.Args[0] == "main.js" {
+		cmd.Env = append(cmd.Env, "CODEXM_WEB_TERMINAL_PTY="+filepath.Join(s.Directory, "native", "web-terminal-pty"))
+	}
 	cmd.Stdout = log
 	cmd.Stderr = log
 	if err = cmd.Start(); err != nil {

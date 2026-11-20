@@ -1,6 +1,6 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { authenticate, call, exchange, login, reconnect, useAccess, useStateData } from "../../client/data";
-import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, type Catalog, type ChatActivity, type ChatCommand, type ChatThread, type TurnSelection } from "../contracts/web";
+import { chatIdFromPath, chatPath, chatTitle, inheritTurnSelection, mergeLiveTurn, queueModifierForPlatform, type Catalog, type ChatActivity, type ChatCommand, type ChatThread, type TurnSelection } from "../contracts/web";
 import { AccountLimits } from "./AccountLimits";
 import { ChatActivityLabel } from "./ChatActivity";
 import { ChatMessages } from "./ChatMessages";
@@ -18,12 +18,14 @@ import { WorkspaceSettings } from "./WorkspaceSettings";
 import { FolderPicker } from "./FolderPicker";
 import { GoalIndicator } from "./GoalIndicator";
 import { useTheme } from "./theme";
+import type { TerminalLocation } from "./TerminalPanel";
 import "./styles/native.css";
 import "./styles/workspace.css";
 
 type Dialog = {kind:"new"|"project"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete"|"files";chat:ChatThread}
-  | {kind:"command"; command:ChatCommand; chat:ChatThread; account:string};
+  | {kind:"command"; command:ChatCommand | "fork"; chat:ChatThread; account:string};
 type Section = "chats"|"pinned"|"archived";
+const TerminalPanel = lazy(() => import("./TerminalPanel"));
 
 export function App() {
   const access=useAccess(),data=useStateData();
@@ -38,6 +40,15 @@ export function App() {
   const threadId = chatIdFromPath(path);
   const selected = ready && opened?.id === threadId ? opened : null;
   const [query,setQuery]=useState(""),[sidebar,setSidebar]=useState(false);
+  const [desktop, setDesktop] = useState(() => matchMedia("(min-width: 980px)").matches);
+  const [desktopSidebar, setDesktopSidebar] = useState(true);
+  const sidebarOpen = desktop ? desktopSidebar : sidebar;
+  const [terminal, setTerminal] = useState<{ location: TerminalLocation; visible: boolean }>();
+  const terminalButton = useRef<HTMLButtonElement>(null);
+  const platformModifier = queueModifierForPlatform(navigator.platform);
+  const terminalShortcut = platformModifier === "Meta" ? "⌘J" : "Ctrl+J";
+  const sidebarShortcut = platformModifier === "Meta" ? "⌘B" : "Ctrl+B";
+  const terminalEnabled = data.terminalAvailable === true;
   const searchInput = useRef<HTMLInputElement>(null);
   const [turnSelections, setTurnSelections] = useState<Record<string, TurnSelection>>({});
   const [shortcuts, setShortcuts] = useState(readChatShortcuts);
@@ -96,6 +107,7 @@ export function App() {
   const composerKey = `${selected?.id}:${account}`;
   const selection = turnSelections[composerKey] ?? inheritTurnSelection;
   const isArchived=history?.thread.archived??selected?.archived??false;
+  const terminalProject = threadId ? selected?.projectId ?? history?.thread.projectId ?? "" : project;
   const modelState = useChatModels(ready && ((!!selected && !isArchived) || dialog?.kind === "settings"), account, history?.loginGeneration);
   const displayChats=section==="pinned"?(catalog?.pinned||[]).filter(c=>`${chatTitle(c)} ${c.cwd}`.toLowerCase().includes(query.toLowerCase())):catalog?.threads||[];
 
@@ -103,6 +115,7 @@ export function App() {
     if (access.status === "anonymous") {
       setOpened(null);setOpenError(null);setDialog(null);setQuery("");setSidebar(false);setTurnSelections({});setAccount("default");
       setAccountChoice(undefined);
+      setTerminal(undefined);
     }
     if (!ready) viewed.current.clear();
   },[access.status, ready]);
@@ -163,6 +176,42 @@ export function App() {
   }, [selected]);
   useEffect(()=>{const key=(e:KeyboardEvent)=>{if(e.key==="Escape"){setSidebar(false);setMenu(false);}};window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[]);
 
+  useEffect(() => {
+    const layout = matchMedia("(min-width: 980px)");
+    const change = () => { setDesktop(layout.matches); setSidebar(false); };
+    layout.addEventListener("change", change);
+    return () => layout.removeEventListener("change", change);
+  }, []);
+
+  function toggleSidebar() {
+    if (desktop) setDesktopSidebar(open => !open);
+    else setSidebar(open => !open);
+  }
+
+  function hideTerminal(end = false) {
+    setTerminal(current => end || !current ? undefined : { ...current, visible: false });
+    terminalButton.current?.focus();
+  }
+
+  function toggleTerminal() {
+    if (terminal?.visible) hideTerminal();
+    else if (access.online && (!threadId || selected)) setTerminal({ location: terminal?.location ?? { thread: threadId, project: terminalProject }, visible: true });
+  }
+
+  useEffect(() => {
+    if (!ready || dialog) return;
+    const key = (event: KeyboardEvent) => {
+      const toggleTerm = terminalEnabled && event.code === "KeyJ";
+      if ((!toggleTerm && event.code !== "KeyB") || event.altKey || event.shiftKey || event.isComposing || event.keyCode === 229 ||
+          !(platformModifier === "Meta" ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) (toggleTerm ? toggleTerminal : toggleSidebar)();
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [ready, dialog, terminalEnabled, terminal, platformModifier, access.online, threadId, selected, terminalProject, desktop]);
+
   function navigate(id: string, replace = false) {
     const next = chatPath(id);
     if (location.pathname !== next) window.history[replace ? "replaceState" : "pushState"](null, "", next);
@@ -191,11 +240,13 @@ export function App() {
     e.preventDefault();if(!dialog||formBusy)return;setFormBusy(true);setError("");
     try {
       if(dialog.kind==="new") {
-        const result=await mutate("web.create",{cwd:formPath,project_id:formProject,account:formAccount});choose(result.thread);
+        const result=await mutate("web.create",{cwd:formPath,project_id:formProject,account:formAccount});
+        choose({ ...result.thread, projectId: formProject || "" });
       } else if(dialog.kind==="project") {
         const result=await mutate("web.projectCreate",{name:formName,cwd:formPath});filter("chats",result.project.id);setNotice("프로젝트를 추가했습니다.");
       } else if(dialog.kind==="move") {
         await mutate("web.move",{thread_id:dialog.chat.id,project_id:formProject,account:dialog.chat.account || "default"});
+        setOpened(current => current?.id === dialog.chat.id ? { ...current, projectId: formProject } : current);
         setNotice("프로젝트를 옮겼습니다.");void chatState.refresh();
       } else if(dialog.kind==="archive") {
         await mutate("web.archive",{thread_id:dialog.chat.id,archived:!dialog.chat.archived,account:dialog.chat.account || "default"});
@@ -244,9 +295,9 @@ export function App() {
     <p role={access.status === "unavailable" ? "alert" : "status"}>{access.message || "로그인 상태를 확인하고 있습니다…"}</p>
     {access.status === "unavailable" && <button type="button" onClick={() => void authenticate()}>다시 확인</button>}
   </main>;
-  return <div className="chat-app">
-    {sidebar&&<button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/>}
-    <aside className={`sidebar ${sidebar?"is-open":""}`} aria-label="탐색">
+  return <div className={`chat-app${!sidebarOpen ? " sidebar-collapsed" : ""}`}>
+    {!desktop&&sidebar&&<button className="sidebar-backdrop" aria-label="메뉴 닫기" onClick={()=>setSidebar(false)}/>}
+    <aside id="chat-sidebar" className={`sidebar ${sidebarOpen?"is-open":""}`} aria-label="탐색" inert={!sidebarOpen}>
       <div className="brand">
         <span className="brand-icon">C</span><strong>CodexM</strong>
         {catalog?.guiQuitAvailable && <button className="gui-quit-button" type="button" disabled={!access.online}
@@ -283,7 +334,7 @@ export function App() {
           onOpen={() => chat.id === selected?.id ? setSidebar(false) : choose(chat)}
           onPin={() => void pin(chat)}
           onArchive={() => { setSidebar(false); openDialog({ kind: "archive", chat }); }}
-          onMove={() => { setSidebar(false); openDialog({ kind: "move", chat }); }} />)}
+          onCommand={command => { setSidebar(false); openDialog({ kind: "command", command, chat, account: chat.account || "default" }); }} />)}
         {!displayChats.length&&catalog&&!catalogState.loading&&<p className="muted empty-list">표시할 채팅이 없습니다.</p>}
         {catalogState.error&&<p role="alert" className="inline-error">{catalogState.error}</p>}
         {section!=="pinned"&&catalog?.nextCursor&&<button className="load-more" disabled={catalogState.loading} onClick={()=>void catalogState.refresh(catalog.nextCursor)}>채팅 더 보기</button>}
@@ -291,7 +342,10 @@ export function App() {
       <div className="sidebar-footer"><button onClick={() => { setSidebar(false); openDialog({ kind: "settings" }); }}>설정</button></div>
     </aside>
     <main className="conversation" data-thread-id={selected?.id||""}>
-      <header className="chat-header"><button className="menu-toggle" aria-label="메뉴 열기" onClick={()=>setSidebar(true)}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
+      <header className="chat-header"><button className="menu-toggle" type="button"
+        aria-label={desktop ? (sidebarOpen ? "채팅 목록 접기" : "채팅 목록 열기") : (sidebarOpen ? "메뉴 닫기" : "메뉴 열기")}
+        aria-controls="chat-sidebar" aria-expanded={sidebarOpen} aria-keyshortcuts={`${platformModifier}+B`}
+        title={`채팅 목록 · ${sidebarShortcut}`} onClick={toggleSidebar}>☰</button><div className="chat-heading"><h1>{chat?chatTitle(chat):"새로운 작업"}</h1><small>{chat?.cwd||"로컬 채팅 · 내 프로젝트"}</small></div>
         <div className={`chat-header-controls${chat && !isArchived ? " has-turn-settings" : ""}`}>
           <div className="account-header">
             <div className="account-actions-row">
@@ -317,6 +371,11 @@ export function App() {
             deferred={!!((!pendingAccountChange && (activity.accountTurn?.status === "inProgress" || history?.thread.status.type === "active")) || history?.thread.externalOwner)}
           />}
         </div>
+        {terminalEnabled && <button type="button" ref={terminalButton} className="terminal-toggle" aria-label="터미널"
+          aria-keyshortcuts={`${platformModifier}+J`} aria-expanded={!!terminal?.visible} title={`터미널 · ${terminalShortcut}`}
+          disabled={(!access.online || !!threadId && !selected) && !terminal?.visible} onClick={toggleTerminal}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3m5 0h5"/>
+          </svg></button>}
         {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>openDialog({kind:"files",chat})}>채팅 파일</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
       </header>
       {!access.online && <div className="banner connection-banner" role="status">
@@ -378,11 +437,15 @@ export function App() {
         }}
       />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
+      {terminal && <Suspense fallback={terminal.visible ? <p className="terminal-loading" role="status">터미널을 여는 중…</p> : null}>
+        <TerminalPanel visible={terminal.visible} location={terminal.location} onHide={() => hideTerminal()} onEnd={() => hideTerminal(true)} />
+      </Suspense>}
     </main>
-    {dialog?.kind === "command" ? dialog.chat.id === selected?.id && <ChatCommandDialog
-      command={dialog.command} chat={dialog.chat} account={dialog.account} history={history} online={access.online}
+    {dialog?.kind === "command" ? (dialog.chat.id === selected?.id || dialog.command === "rename" || dialog.command === "fork") && <ChatCommandDialog
+      key={`${dialog.command}:${dialog.chat.id}`} command={dialog.command} chat={dialog.chat} account={dialog.account} history={history} online={access.online}
       activity={openActivity} known={activity.writersKnown} usage={activity.contextUsage} onClose={() => setDialog(null)}
-      onDone={(message, name) => {
+      onDone={(message, name, fork) => {
+        if (fork) { filter("chats"); setQuery(""); choose(fork); }
         if (name) setOpened(current => current?.id === dialog.chat.id ? { ...current, name } : current);
         setDialog(null); setNotice(message);
         void chatState.refresh(); void catalogState.refresh();

@@ -24,10 +24,11 @@ function readRecalledDraft(key: string): RecalledDraft | undefined {
   } catch { /* Storage may be disabled. The current editor still works. */ }
 }
 
-export function ChatQueue({ thread, account, items, busy, sendDisabled, onChanged, onRequeue }:{
+export function ChatQueue({ thread, account, items, pause, busy, sendDisabled, onChanged, onRequeue }:{
   thread: string;
   account: string;
   items: QueuedInput[];
+  pause?: string;
   busy: boolean;
   sendDisabled: boolean;
   onChanged: () => void;
@@ -116,7 +117,34 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
     }
   }
 
+  async function resume() {
+    if (!pause || locked || inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await call<{ queue_resumed?: boolean }>("web.queueResume", {
+        thread_id: thread, account, queue_pause: pause,
+      }, crypto.randomUUID());
+      if (!result.queue_resumed) {
+        setUncertain(true);
+        setError("대기열 재개 결과를 확인할 수 없습니다.");
+      }
+    } catch (reason) {
+      const message = (reason as Error).message;
+      setError(message);
+      if (mutationUnconfirmed(message)) setUncertain(true);
+    } finally {
+      inFlight.current = false;
+      setPending(false);
+      onChanged();
+    }
+  }
+
   return <>
+    {pause && <div className="queue-paused"><span role="status">대기열 일시 중지</span>
+      <button type="button" disabled={locked} onClick={() => void resume()}>대기열 재개</button></div>}
     {items.length > 0 && <details className="queue-preview">
       <summary><strong>{waitingCount ? `대기 중인 입력 ${waitingCount}개` : "이전 작업 이어가기"}</strong>
         {next
@@ -130,7 +158,7 @@ export function ChatQueue({ thread, account, items, busy, sendDisabled, onChange
           const canRemove = !item.continuation || (item.state !== "pending" && (item.state !== "running" || !!item.detail));
           return <li key={item.id} className="queue-entry">
             <div className="queue-entry-meta">
-              <span>{item.state === "running" ? item.detail ? "실행 보류" : "진행 중" : item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" || item.state === "held" ? "실행 보류" : item.id === next?.id ? "다음 입력" : "대기 중"}</span>
+              <span>{item.state === "running" ? item.detail ? "실행 보류" : "진행 중" : item.state === "sending" ? "전송 결과 확인 필요" : item.state === "blocked" || item.state === "held" ? "실행 보류" : !pause && item.id === next?.id ? "다음 입력" : "대기 중"}</span>
               {item.account && <small>{item.account === "default" ? "기본 계정" : item.account}</small>}
               {item.goal && <small>/goal</small>}
               {item.plan && <small>/plan</small>}

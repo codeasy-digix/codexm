@@ -97,6 +97,8 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 	switch r.Method {
 	case "web.rename":
 		return w.renameWebChat(ctx, c, p)
+	case "web.fork":
+		return w.forkWebChat(ctx, c, p.Thread)
 	case "web.review", "web.compact":
 		return w.runWebCommand(ctx, c, r.Method, p)
 	}
@@ -104,7 +106,10 @@ func (w *WebChat) change(ctx context.Context, c *webConnection, r Request, p web
 		return w.changeQueue(ctx, c, r.Method, p)
 	}
 	if w.webOnly && r.Method == "web.interrupt" {
-		return w.interruptWebThread(ctx, p)
+		return w.interruptWebThread(ctx, r.Operation, p)
+	}
+	if r.Method == "web.queueResume" {
+		return w.resumeWebQueue(ctx, c, p)
 	}
 	if w.webOnly && (r.Method == "web.archive" || r.Method == "web.delete" || r.Method == "web.move") {
 		pids, err := webWriterPIDs(ctx, config.Expand(w.c.Runtime.SharedCodexHome), p.Thread)
