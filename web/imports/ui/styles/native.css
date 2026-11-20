@@ -96,7 +96,6 @@
 .account-header { min-width: 0; }
 .account-actions-row { display: flex; align-items: end; gap: 6px; }
 .account-actions-row .account-select { flex: 1; }
-.default-account-name { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .account-limits { display: grid; gap: 3px; margin-top: 5px; }
 .account-limit {
   display: grid;

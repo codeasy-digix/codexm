@@ -80,7 +80,7 @@ export function App() {
   const first=new Date().getHours()<12?"무엇부터 시작할까요?":"어떤 작업을 이어갈까요?";
   const accounts: Catalog["accounts"] = catalog?.accounts || data.snapshot?.accounts || [];
   const defaultAccount = catalog?.defaultAccount || accounts.find((candidate: {name: string; default?: boolean}) => candidate.default)?.name;
-  const defaultLabel = defaultAccount ? `기본 계정 · ${defaultAccount}` : "기본 계정";
+  const defaultLabel = defaultAccount ? `${defaultAccount} (기본)` : "기본 계정";
   const executionAccount = history?.executionAccount;
   const pendingAccountChange = !!executionAccount && executionAccount !== (account === "default" ? defaultAccount || account : account);
   const switchAccount = accountChoice?.thread === selected?.id && accountChoice?.name === account;
@@ -299,11 +299,9 @@ export function App() {
                   const name = e.target.value;
                   setAccountChoice(selected ? { thread: selected.id, name } : undefined);
                   setAccount(name);
-                }}><option value="default">{defaultLabel}</option>{accounts.map((a:any)=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
+                }}><option value="default">{defaultLabel}</option>{accounts.map(a=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
               </label>
             </div>
-            {executionAccount && <small className="default-account-name">현재 실행 {executionAccount === "default" ? "기본 계정" : executionAccount}</small>}
-            {account !== "default" && defaultAccount && <small className="default-account-name" title={defaultLabel}>{defaultLabel}</small>}
           </div>
           {chat && !isArchived && <TurnSettings
             key={composerKey}

@@ -47,7 +47,15 @@ test("an account change only takes effect when a chat input is submitted", async
   await dialog.getByRole("button", { name: "채팅 만들기", exact: true }).click();
   await expect(page).toHaveURL(/\/chat\/[a-f0-9-]+$/);
   const draftAddress = page.url();
+  const thread = new URL(draftAddress).pathname.split("/").at(-1)!;
   const input = page.locator(".composer textarea");
+  const executionAccount = () => page.evaluate(threadId => new Promise<string | undefined>((resolve, reject) => {
+    (window as any).Meteor.apply("codexm.call", ["web.history", { thread_id: threadId, account: "first-browser-login" }, ""],
+      { noRetry: true }, (error: Error | null, history: { executionAccount?: string }) => {
+        if (error) reject(error);
+        else resolve(history.executionAccount);
+      });
+  }), thread);
   async function checkLocked(message: string, label: string) {
     await expect.poll(() => !!release).toBe(true);
     await expect(input).toBeDisabled();
@@ -63,14 +71,15 @@ test("an account change only takes effect when a chat input is submitted", async
   holdMode = "immediate";
   await page.getByRole("button", { name: "보내기", exact: true }).click();
   await checkLocked(firstMessage, "전달 중…");
-  await expect(page.getByText("현재 실행 first-browser-login", { exact: true })).toBeVisible();
+  await expect.poll(executionAccount).toBe("first-browser-login");
   await expect(page.getByRole("button", { name: "현재 턴 중지" })).toBeVisible();
+  await expect(page.locator(".chat-header")).not.toContainText("현재 실행");
   await input.fill("계정 B에서 실행할 지시");
   await account.selectOption("second-browser-login");
   await expect(input).toHaveValue("계정 B에서 실행할 지시");
-  await expect(page.getByText("현재 실행 first-browser-login", { exact: true })).toBeVisible();
+  await expect.poll(executionAccount).toBe("first-browser-login");
   await input.press("Enter");
-  await expect(page.getByText("현재 실행 second-browser-login", { exact: true })).toBeVisible();
+  await expect.poll(executionAccount).toBe("second-browser-login");
   await expect(page).toHaveURL(draftAddress);
 
   const queueMessage = "이전 작업이 끝난 뒤 실행할 대기 입력";
@@ -80,7 +89,7 @@ test("an account change only takes effect when a chat input is submitted", async
   await input.press("ControlOrMeta+Enter");
   await checkLocked(queueMessage, "큐에 추가 중…");
   await expect(page.getByText("first-browser-login 계정의 입력을 큐에 추가했습니다. 이전 작업을 먼저 이어갑니다.")).toBeVisible();
-  await expect(page.getByText("현재 실행 first-browser-login", { exact: true })).toBeVisible();
+  await expect.poll(executionAccount).toBe("first-browser-login");
   await expect(page.locator(".user-message").getByText(queueMessage, { exact: true })).toHaveCount(0);
   await page.locator(".queue-preview summary").click();
   const continuation = page.locator(".queue-entry").filter({ hasText: "이전 작업 이어가기" });
@@ -94,7 +103,7 @@ test("an account change only takes effect when a chat input is submitted", async
   await page.goto("about:blank");
   writeFileSync(join(fixture!, "release-model"), "continue only isolated fixtures", { mode: 0o600 });
   // Verify dispatch with no browser connected before restoring the page.
-  const queueFile = join(config.state, "..", "web-chat", "queue", draftAddress.split("/").at(-1)! + ".json");
+  const queueFile = join(config.state, "..", "web-chat", "queue", thread + ".json");
   await expect.poll(() => {
     try { return JSON.parse(readFileSync(queueFile, "utf8")).length; }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0; throw error; }

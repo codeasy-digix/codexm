@@ -32,7 +32,7 @@ async function authenticate(page:Page, fresh = false){
 
 async function menu(page:Page){if(await page.getByRole("button",{name:"메뉴 열기",exact:true}).isVisible())await page.getByRole("button",{name:"메뉴 열기",exact:true}).click();}
 
-test("the sidebar confirms GUI quit each time and the header shows the configured default", async ({ page }) => {
+test("the sidebar confirms GUI quit each time and the account dropdown marks the default", async ({ page }) => {
   await authenticate(page);
   // Use a synthetic preview with an invalid native ticket. This fixture never
   // requests a real GUI shutdown, even if the client shim fails.
@@ -61,12 +61,17 @@ test("the sidebar confirms GUI quit each time and the header shows the configure
     };
   });
   await page.getByRole("textbox", {name: "채팅 검색", exact: true}).fill("긴 이력");
-  const account = page.getByRole("combobox", {name: "이번에 사용할 계정", exact: true});
-  await expect(account).toHaveAttribute("title", "기본 계정 · first-fixture");
+  const header = page.locator(".chat-header");
+  const account = header.getByRole("combobox", {name: "이번에 사용할 계정", exact: true});
+  const defaultOption = account.locator('option[value="default"]');
+  await expect(defaultOption).toHaveText("first-fixture (기본)");
+  await expect(account).toHaveAttribute("title", "first-fixture (기본)");
   await account.selectOption("second-fixture");
-  await expect(page.locator(".default-account-name")).toHaveText("기본 계정 · first-fixture");
+  await expect(defaultOption).toHaveText("first-fixture (기본)");
+  await expect(account.locator("option:checked")).toHaveText("second-fixture");
+  await expect(header).not.toContainText("기본 계정 · first-fixture");
   const quit = page.locator(".sidebar .brand").getByRole("button", {name: "GUI 종료", exact: true});
-  await expect(page.locator(".chat-header").getByRole("button", {name: "GUI 종료", exact: true})).toHaveCount(0);
+  await expect(header.getByRole("button", {name: "GUI 종료", exact: true})).toHaveCount(0);
   await quit.click();
   const dialog = page.getByRole("dialog", {name: "Codex GUI 전체 종료"});
   await expect(dialog).toContainText("모든 작업이 중단됩니다");

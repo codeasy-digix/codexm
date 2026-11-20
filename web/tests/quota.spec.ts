@@ -41,7 +41,7 @@ test("a real Codex 429 leaves a writer; using another account keeps the same cha
   } else {
     await expect(page.getByText(prompt, { exact: true })).toHaveCount(1);
     await expect(input).toHaveValue("");
-    await expect(page.getByText("현재 실행 " + config.target, { exact: true })).toBeVisible();
+    await expect(account).toHaveValue(config.target);
   }
   await expect(page).toHaveURL(address);
   writeFileSync(join(fixture!, "verify-quota-handoff"), "", { mode: 0o600 });
