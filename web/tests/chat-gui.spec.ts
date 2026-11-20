@@ -735,12 +735,16 @@ for(const viewport of [{width:375,height:667},{width:390,height:844}])test(`mobi
   const modelSelect = header.getByRole("combobox",{name:"모델",exact:true});
   await expect(modelSelect).toBeVisible();
   await expect(header.getByRole("combobox",{name:"Reasoning effort",exact:true})).toBeVisible();
+  await expect(header.locator(".chat-header-controls label")).toHaveCount(0);
   const quota = header.getByRole("group", { name: "선택 계정의 남은 한도" });
   const [limits, account, model] = await Promise.all([quota.boundingBox(), header.getByLabel("이번에 사용할 계정").boundingBox(), modelSelect.boundingBox()]);
   expect(limits).toBeTruthy(); expect(account).toBeTruthy(); expect(model).toBeTruthy();
   expect(limits!.x + limits!.width).toBeLessThan(account!.x);
   expect(limits!.y + limits!.height).toBeCloseTo(account!.y + account!.height, 0);
   expect(model!.y).toBeGreaterThan(limits!.y + limits!.height);
+  expect(model!.height).toBe(28);
+  expect((await header.boundingBox())!.height).toBeLessThanOrEqual(112);
+  await expect(page.getByLabel("메시지", { exact: true })).toHaveCSS("height", "84px");
   const bars = await quota.locator("meter, .limit-track").evaluateAll(items => items.map(item => item.getBoundingClientRect().toJSON()));
   expect(bars).toHaveLength(2);
   expect(bars[1].y).toBeGreaterThan(bars[0].y);

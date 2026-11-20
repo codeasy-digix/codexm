@@ -39,6 +39,7 @@ test("HTTPS password login gates tickets; rejects code bypass and revokes existi
     const pending = auth.ticket(session);
     credentials(dir, "different-password");
     assert.equal(auth.session("codexm_session=" + token), null);
+    assert.throws(() => auth.resume("codexm_session=" + token), { status: 401 });
     assert.throws(() => auth.require("browser"));
     assert.throws(() => auth.authenticate("new", pending, () => {}));
     const stored = readFileSync(join(dir, "sessions.json"), "utf8");
@@ -64,7 +65,9 @@ test("password login has bounded per-client attempts and sessions expire/logout"
     assert.equal(closed, true);
     assert.equal(auth.session("codexm_session=" + token), null);
     const expiring = await auth.login("fixture", "fixture-password", "client");
-    now += 8 * 3600000;
+    now += 9 * 3600000;
+    assert.ok(auth.session("codexm_session=" + expiring));
+    now += 90 * 24 * 3600000;
     assert.equal(auth.session("codexm_session=" + expiring), null);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

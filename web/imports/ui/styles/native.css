@@ -8,17 +8,17 @@
 
 .sidebar{overflow:hidden}.chat-list{min-height:0}.sidebar-footer{flex-shrink:0}
 @media(max-height:850px){.sidebar{padding-top:14px}.brand{margin-bottom:14px}.sidebar-search{margin:12px 0 8px}.sections{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px}.sections button{padding:8px 7px;font-size:12px;gap:7px}.list-heading{padding:12px 12px 8px}.sidebar-footer{margin-top:8px;padding-top:9px}}
-.chat-header{flex-shrink:0}
-.chat-header-controls{display:grid;gap:6px 8px;align-items:start;min-width:0}
+.chat-header{--header-control-height:28px;flex-shrink:0;min-height:48px;padding:5px clamp(12px,2vw,24px)}
+.chat-heading h1{margin-bottom:3px}
+.chat-header-controls{display:grid;gap:4px 8px;align-items:center;min-width:0}
 .chat-header-controls.has-turn-settings{grid-template-columns:105px minmax(0,190px) minmax(0,132px)}
-.chat-header-controls label{min-width:0;gap:3px;color:var(--muted);font-size:11px}
-.chat-header-controls select{width:100%;max-width:none;min-height:32px;color:#242b29;font-size:12px;text-overflow:ellipsis}
+.chat-header-controls select{width:100%;max-width:none;height:var(--header-control-height);padding:3px 7px;font-size:12px;text-overflow:ellipsis}
 .chat-header-controls:not(.has-turn-settings) .account-select{max-width:120px}
 .turn-settings-note{grid-column:1/-1;margin:0;color:var(--muted);font-size:11px}
 .turn-settings-note.inline-error{color:var(--danger);padding:4px 8px}
 .turn-settings-note button{font-size:inherit;padding:0 4px}
 @media(max-width:740px){
-  .chat-header{flex-wrap:wrap;row-gap:7px}
+  .chat-header{flex-wrap:wrap;row-gap:4px}
   .chat-header-controls.has-turn-settings{order:1;flex:0 0 100%;grid-template-columns:minmax(0,1fr) minmax(0,1.55fr) minmax(0,1.15fr)}
 }
 .shortcut-settings>p{font-size:13px}

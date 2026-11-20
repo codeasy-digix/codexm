@@ -142,12 +142,15 @@ async function body(req: import("node:http").IncomingMessage) {
           auth.cookie(cookie),
         );
         res.end("{}");
+      } else if (req.url === "/auth/ticket" || req.url === "/auth/renew") {
+        const { session, cookie } = auth.resume(req.headers.cookie);
+        const result = req.url === "/auth/ticket" ? { ticket: auth.ticket(session) } : {};
+        if (cookie) res.setHeader("Set-Cookie", cookie);
+        res.end(JSON.stringify(result));
       } else {
         const session = auth.session(req.headers.cookie);
         if (!session) throw new Error("로그인이 필요합니다.");
-        if (req.url === "/auth/ticket")
-          res.end(JSON.stringify({ ticket: auth.ticket(session) }));
-        else if (req.url === "/auth/push") {
+        if (req.url === "/auth/push") {
           if (!pushes) throw new LoginError("서버 알림 설정을 읽을 수 없습니다.", 503);
           const data = await body(req);
           try { res.end(JSON.stringify(await pushes.action(auth.notificationOwner(session), data))); }

@@ -59,6 +59,8 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(page.locator(".user-message p").last()).toHaveCSS("border-top-width", "1px");
   const header = page.locator(".chat-header");
   const quota = header.getByRole("group", { name: "선택 계정의 남은 한도" });
+  await expect(header.locator(".chat-header-controls select")).toHaveCount(3);
+  await expect(header.locator(".chat-header-controls label")).toHaveCount(0);
   const [account, limits, model] = await Promise.all([header.getByLabel("이번에 사용할 계정").boundingBox(),
     quota.boundingBox(),
     header.getByRole("combobox", { name: "모델", exact: true }).boundingBox()]);
@@ -66,6 +68,8 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   expect(limits!.x + limits!.width).toBeLessThan(account!.x);
   expect(limits!.y + limits!.height).toBeCloseTo(account!.y + account!.height, 0);
   expect(model!.y).toBeCloseTo(account!.y, 0);
+  expect(model!.height).toBe(28);
+  expect((await header.boundingBox())!.height).toBeLessThanOrEqual(52);
   const bars = await quota.locator("meter, .limit-track").evaluateAll(items => items.map(item => item.getBoundingClientRect().toJSON()));
   expect(bars).toHaveLength(2);
   expect(bars[1].y).toBeGreaterThan(bars[0].y);
@@ -204,6 +208,8 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await page.getByLabel("프로젝트 필터").selectOption("");
 
   const input = page.getByRole("textbox", { name: "메시지", exact: true });
+  await expect(input).toHaveCSS("height", "84px");
+  await expect(input).toHaveCSS("resize", "vertical");
   await input.fill("/");
   const options = page.getByRole("listbox", { name: "명령과 스킬" }).getByRole("option");
   await expect(options.locator("strong")).toHaveText(["/goal", "/plan", "/status", "/rename", "/review", "/compact"]);

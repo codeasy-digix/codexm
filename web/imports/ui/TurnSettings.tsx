@@ -62,22 +62,18 @@ export function TurnSettings({ chat, models, loading, modelError, retryModels, s
   }
 
   return <>
-    <label className="model-select">모델
-      <select value={selection.model} disabled={!models.length} onChange={event => pickModel(event.target.value)}>
-        <option value="">{loading ? "불러오는 중…" : inheritedModel ? `${inheritedModel} (채팅 설정)` : "채팅 설정"}</option>
-        {selection.model && !selectedModel && <option value={selection.model}>{selection.model} (선택 불가)</option>}
-        {models.map(model => <option key={model.model} value={model.model}>
-          {model.displayName || model.model}{bindingHint("model", model.model)}
-        </option>)}
-      </select>
-    </label>
-    <label className="effort-select"><span aria-hidden="true">Effort</span>
-      <select aria-label="Reasoning effort" value={selection.effort} disabled={!efforts.length} onChange={event => pickEffort(event.target.value)}>
-        <option value="">{inheritedEffort ? `${effortLabel(inheritedEffort)} (기본값)` : changedModel ? "모델 기본값" : "채팅 설정"}</option>
-        {selection.effort && !efforts.includes(selection.effort) && <option value={selection.effort}>{effortLabel(selection.effort)} (선택 불가)</option>}
-        {efforts.map(effort => <option key={effort} value={effort}>{effortLabel(effort)}{bindingHint("effort", effort)}</option>)}
-      </select>
-    </label>
+    <select aria-label="모델" value={selection.model} disabled={!models.length} onChange={event => pickModel(event.target.value)}>
+      <option value="">{loading ? "불러오는 중…" : inheritedModel ? `${inheritedModel} (채팅 설정)` : "채팅 설정"}</option>
+      {selection.model && !selectedModel && <option value={selection.model}>{selection.model} (선택 불가)</option>}
+      {models.map(model => <option key={model.model} value={model.model}>
+        {model.displayName || model.model}{bindingHint("model", model.model)}
+      </option>)}
+    </select>
+    <select aria-label="Reasoning effort" value={selection.effort} disabled={!efforts.length} onChange={event => pickEffort(event.target.value)}>
+      <option value="">{inheritedEffort ? `${effortLabel(inheritedEffort)} (기본값)` : changedModel ? "모델 기본값" : "채팅 설정"}</option>
+      {selection.effort && !efforts.includes(selection.effort) && <option value={selection.effort}>{effortLabel(selection.effort)} (선택 불가)</option>}
+      {efforts.map(effort => <option key={effort} value={effort}>{effortLabel(effort)}{bindingHint("effort", effort)}</option>)}
+    </select>
     {error && <p className="turn-settings-note inline-error" role="alert">{error}</p>}
     {modelError && <p className="turn-settings-note" role="status">모델 목록을 불러오지 못했습니다. <button type="button" className="text-button" onClick={retryModels}>다시 시도</button></p>}
     {deferred && (selection.model || selection.effort) && <p className="turn-settings-note">선택한 모델과 effort는 다음 새 턴에 적용됩니다.</p>}

@@ -85,12 +85,16 @@ let authEpoch = 0;
 let checking: Promise<void> | undefined;
 let authRetry: ReturnType<typeof setTimeout> | undefined;
 let retryDelay = 1000;
+const renewalInterval = 24 * 60 * 60 * 1000;
+let renewAt = 0;
+let renewing = false;
 
 function resetConnection() {
   authEpoch++;
   checking = undefined;
   clearTimeout(authRetry);
   retryDelay = 1000;
+  renewAt = 0;
   subscription?.stop();
   subscription = undefined;
 }
@@ -118,6 +122,7 @@ function retryAuthentication(epoch: number, message: string) {
 export function reconnect() {
   if (!Meteor.status().connected) { Meteor.reconnect(); return; }
   if (!access.online && access.status !== "anonymous") void authenticate();
+  else void renewVisibleSession();
 }
 
 function authPost(endpoint: string, data: Record<string, string> = {}) {
@@ -127,6 +132,20 @@ function authPost(endpoint: string, data: Record<string, string> = {}) {
     body: JSON.stringify(data),
     signal: AbortSignal.timeout(12_000),
   });
+}
+
+async function renewVisibleSession() {
+  if (document.visibilityState !== "visible" || !connectionAvailable() || renewing || Date.now() < renewAt) return;
+  const epoch = authEpoch;
+  renewing = true;
+  renewAt = Date.now() + 60_000;
+  try {
+    const response = await authPost("renew");
+    if (epoch !== authEpoch) return;
+    if (response.ok) renewAt = Date.now() + renewalInterval;
+    else if (response.status === 401) void authenticate();
+  } catch { /* A temporary HTTP failure leaves the existing DDP session usable. */ }
+  finally { renewing = false; }
 }
 
 // LocalAuth uses the existing HttpOnly cookie and a one-time DDP ticket.
@@ -166,6 +185,7 @@ export function authenticate(message?: string): Promise<void> {
         },
       });
       retryDelay = 1000;
+      renewAt = Date.now() + renewalInterval;
       setAccess("authenticated");
     } catch (error) {
       retryAuthentication(epoch, (error as Error).message);
@@ -236,5 +256,6 @@ async function startAccess() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") reconnect();
   });
+  setInterval(() => void renewVisibleSession(), 60 * 60_000);
 }
 Meteor.startup(() => { void startAccess(); });

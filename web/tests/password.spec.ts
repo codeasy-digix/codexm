@@ -38,9 +38,25 @@ test("HTTPS login denies anonymous/incorrect/foreign-origin requests and uses a 
   await expect(page.getByLabel("채팅 검색")).toBeVisible();
   const cookie = (await context.cookies()).find(c => c.name === "codexm_session")!;
   expect(cookie.httpOnly).toBe(true); expect(cookie.secure).toBe(true); expect(cookie.sameSite).toBe("Strict");
-  await page.getByRole("button", { name: "설정", exact: true }).click();
-  const settings = page.getByRole("dialog", { name: "설정", exact: true });
-  await settings.getByRole("button", { name: "계정 관리", exact: true }).click();
-  await settings.getByRole("button", { name: "로그아웃", exact: true }).click();
-  await expect(page.getByLabel("채팅 검색")).toHaveCount(0);
+  expect(cookie.expires - Date.now() / 1000).toBeGreaterThan(89 * 24 * 3600);
+  const reopened = await context.browser()!.newContext({ ignoreHTTPSErrors: true, storageState: { cookies: [cookie], origins: [] } });
+  try {
+    const resumed = await reopened.newPage();
+    await resumed.goto(url);
+    await expect(resumed.getByLabel("채팅 검색")).toBeVisible();
+    await expect(resumed.getByLabel("아이디", { exact: true })).toHaveCount(0);
+    const renew = () => resumed.evaluate(() => fetch("/auth/renew", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }).then(response => response.status));
+    expect(await renew()).toBe(200);
+    await page.getByRole("button", { name: "설정", exact: true }).click();
+    const settings = page.getByRole("dialog", { name: "설정", exact: true });
+    await settings.getByRole("button", { name: "계정 관리", exact: true }).click();
+    await settings.getByRole("button", { name: "로그아웃", exact: true }).click();
+    await expect(page.getByLabel("채팅 검색")).toHaveCount(0);
+    expect(await renew()).toBe(401);
+    await expect(resumed.getByLabel("아이디", { exact: true })).toBeVisible();
+  } finally {
+    await reopened.close();
+  }
 });

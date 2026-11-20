@@ -131,7 +131,7 @@ export function PromptEditor({ thread, account, draft, disabled, placeholder, su
       aria-description={predicted ? "Tab을 눌러 Codex의 다음 입력 제안을 작성창에 넣습니다." : undefined}
       aria-autocomplete="list" aria-controls={!disabled && range ? menuID : undefined}
       aria-activedescendant={!disabled && range && entries.length ? `${menuID}-${position}` : undefined}
-      rows={3} enterKeyHint="send" onBlur={() => setRange(undefined)}
+      rows={2} enterKeyHint="send" onBlur={() => setRange(undefined)}
       onCompositionStart={() => { composing.current = true; setRange(undefined); }}
       onCompositionEnd={event => {
         composing.current = false;

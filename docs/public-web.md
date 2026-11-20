@@ -134,9 +134,10 @@ launchctl bootout gui/$(id -u)/org.codeasy.codexm.https
 ## 인증 데이터
 
 `<state_dir>/web/login.json`은 mode 0600으로 PBKDF2-SHA256 600,000회·임의 salt를
-사용한 비밀번호 해시만 보관한다. 브라우저 세션은 8시간이며 HttpOnly·SameSite=Strict,
-외부 HTTPS에서는 Secure 쿠키를 사용한다. 비밀번호를 다시 설정하면 이전 세션과
-DDP ticket은 무효가 된다. 로그아웃하면 해당 세션의 DDP 연결도 닫힌다.
+사용한 비밀번호 해시만 보관한다. 브라우저를 닫거나 DDP가 재연결되어도 저장된
+HttpOnly·SameSite=Strict 쿠키로 로그인을 복원한다. 외부 HTTPS에서는 Secure를 적용한다.
+세션은 90일 동안 유효하며 브라우저 사용 시 하루에 한 번까지 갱신된다. 비밀번호를
+다시 설정하면 이전 세션과 DDP ticket이 무효가 된다. 로그아웃하면 해당 세션의 DDP 연결도 닫힌다.
 
 로그인은 클라이언트별·전체 요청 빈도와 동시 해시 계산 수를 제한한다. Caddy는
 `X-Codexm-Client-IP`를 직접 설정하며, 인터넷 클라이언트가 보낸 값을 신뢰하지 않는다.

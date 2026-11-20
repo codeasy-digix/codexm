@@ -296,13 +296,11 @@ export function App() {
           <div className="account-header">
             <div className="account-actions-row">
               {(!threadId || selected) && <AccountLimits key={account} account={account} />}
-              <label className="account-select">계정
-                <select aria-label="이번에 사용할 계정" title={account === "default" ? defaultLabel : account} value={account} disabled={!!threadId && !selected} onChange={e => {
-                  const name = e.target.value;
-                  setAccountChoice(selected ? { thread: selected.id, name } : undefined);
-                  setAccount(name);
-                }}><option value="default">{defaultLabel}</option>{accounts.map(a=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
-              </label>
+              <select className="account-select" aria-label="이번에 사용할 계정" title={account === "default" ? defaultLabel : account} value={account} disabled={!!threadId && !selected} onChange={e => {
+                const name = e.target.value;
+                setAccountChoice(selected ? { thread: selected.id, name } : undefined);
+                setAccount(name);
+              }}><option value="default">{defaultLabel}</option>{accounts.map(a=><option key={a.name} value={a.name}>{a.name}</option>)}</select>
             </div>
           </div>
           {chat && !isArchived && <TurnSettings
