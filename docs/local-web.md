@@ -128,6 +128,24 @@ codexm web uninstall
 소유한 서비스 등록만 제거하고 채팅·계정·웹 데이터를 보존한다. Linux의 실제 서비스
 실행은 지원되는 사용자 systemd 세션이 필요하다.
 
+### macOS 웹 서비스의 파일 권한
+
+고정된 **CodexM Web.app**이 launchd 작업의 부모로 실행되면 macOS는 그 앱에 웹 서비스의
+파일 접근 권한을 부여할 수 있다. 웹에서 시작한 Codex와 터미널이 다운로드 폴더 등 보호된
+경로를 사용해야 하는 Mac에서는 앱을 한 번 준비하고 시스템 설정의 **개인정보 보호 및 보안 →
+전체 디스크 접근 권한**에서 승인한다.
+
+```sh
+./apps/macos/scripts/install-web-host.sh prepare
+./apps/macos/scripts/install-web-host.sh activate
+```
+
+`prepare`는 설치 경로에 앱을 만들고 기존 앱의 서명을 확인해 재사용한다. 작업과 웹 터미널이
+모두 종료된 뒤 `activate`를 실행한다. launchd에 등록한 `bin/codexm-web` 링크가 앱을 가리키고,
+다음 서비스 시작부터 앱이 `bin/codexm-web-release`에 연결된 버전을 실행한다. 이후
+`install.sh --web`은 버전 링크를 갱신한다. 이 앱에 부여한 파일 권한은 앱 자체를 교체할 때
+다시 확인한다. 화면 기록이나 손쉬운 사용 등은 각각의 macOS 설정에서 승인한다.
+
 기본 주소는 `http://127.0.0.1:4317`이다. 비밀번호가 없으면 일회용 접속 코드로
 브라우저 세션을 발급한다. `--no-open`은 URL과 private 코드 파일 경로만 표시한다.
 이전 tmux 웹 실행 영수증의 상태 조회/중지도 유지한다.

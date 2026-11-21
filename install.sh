@@ -132,6 +132,10 @@ if [ -L "$install_root/bin/codexm" ]; then old_current=$(readlink "$install_root
 if [ -L "$link_dir/codexm" ]; then old_public=$(readlink "$link_dir/codexm"); fi
 web_entry="$install_root/bin/codexm-web"
 if [ -n "$web_bundle" ]; then
+  web_host="$install_root/CodexM Web.app/Contents/MacOS/codexm-web-host"
+  if [ "$target_os" = darwin ] && [ -L "$web_entry" ] && [ "$web_entry" -ef "$web_host" ]; then
+    web_entry="$install_root/bin/codexm-web-release"
+  fi
   if [ -e "$web_entry" ] && [ ! -L "$web_entry" ]; then
     echo "Preserved non-symlink entrypoint: $web_entry" >&2
     exit 1
