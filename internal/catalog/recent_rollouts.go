@@ -25,6 +25,7 @@ func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]boo
 type RecentRollout struct {
 	ID       string
 	Path     string
+	Title    string
 	Archived bool
 }
 
@@ -62,7 +63,15 @@ func RecentLocalRollouts(ctx context.Context, home string, after int64) ([]Recen
 	if columns["attached_thread_parent_id"] {
 		where += ` AND COALESCE(attached_thread_parent_id,'')=''`
 	}
-	rows, err := db.QueryContext(ctx, `SELECT id,rollout_path,`+archived+` FROM threads WHERE `+where+` ORDER BY `+order+` DESC LIMIT 256`, args...)
+	// Prefer a saved rename, then the generated title and the chat preview.
+	// Older indexes omit some of these columns.
+	title := `''`
+	for _, field := range []string{"preview", "title", "name"} {
+		if columns[field] {
+			title = `COALESCE(NULLIF(trim("` + field + `"),''),` + title + `)`
+		}
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id,rollout_path,`+archived+`,substr(`+title+`,1,256) FROM threads WHERE `+where+` ORDER BY `+order+` DESC LIMIT 256`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +79,7 @@ func RecentLocalRollouts(ctx context.Context, home string, after int64) ([]Recen
 	var results []RecentRollout
 	for rows.Next() {
 		var rollout RecentRollout
-		if err := rows.Scan(&rollout.ID, &rollout.Path, &rollout.Archived); err != nil {
+		if err := rows.Scan(&rollout.ID, &rollout.Path, &rollout.Archived, &rollout.Title); err != nil {
 			return nil, err
 		}
 		results = append(results, rollout)

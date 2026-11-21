@@ -12,7 +12,7 @@ import { CacheDatabase } from "./cache-database";
 import { ChatCatalogCache } from "./catalog-cache";
 import { deleteArtifacts, serveArtifact } from "./artifacts";
 import { LocalTerminal } from "./local-terminal";
-import { bridgeContract } from "../imports/contracts/web";
+import { bridgeContract, chatTitle, type ChatThread } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
 const state = process.env.CODEXM_WEB_STATE;
@@ -161,7 +161,12 @@ async function body(req: import("node:http").IncomingMessage) {
         if (req.url === "/auth/push") {
           if (!pushes) throw new LoginError("서버 알림 설정을 읽을 수 없습니다.", 503);
           const data = await body(req);
-          try { res.end(JSON.stringify(await pushes.action(auth.notificationOwner(session), data))); }
+          try {
+            res.end(JSON.stringify(await pushes.action(auth.notificationOwner(session), data, async id => {
+              const thread: ChatThread | null = await bridge.call("web.thread", { thread_id: id });
+              return thread ? chatTitle(thread) : undefined;
+            })));
+          }
           catch (error) {
             if (error instanceof LoginError) throw error;
             throw new LoginError("서버에서 알림 요청을 처리하지 못했습니다.", 503);

@@ -8,10 +8,10 @@ self.addEventListener("push", event => {
   let payload = {};
   try { payload = event.data?.json() ?? {}; } catch { /* Show a generic alert. */ }
   const url = destination(payload?.url);
-  const test = payload?.test === true;
+  const title = typeof payload?.title === "string" && payload.title.trim() ? payload.title :
+    payload?.test === true ? "CodexM [테스트 알림]" : "CodexM";
   const tag = typeof payload?.tag === "string" && /^[a-f0-9]{32}$/.test(payload.tag) ? payload.tag : undefined;
-  event.waitUntil(self.registration.showNotification(test ? "CodexM 테스트 알림" : "CodexM 작업 완료", {
-    body: test ? "이 기기에 알림이 도착했습니다." : "눌러서 채팅을 확인하세요.",
+  event.waitUntil(self.registration.showNotification(title, {
     icon: "/icons/icon-192.png",
     tag,
     data: { url },

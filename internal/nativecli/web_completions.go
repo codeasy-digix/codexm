@@ -24,7 +24,8 @@ type webCompletionID struct {
 
 type webCompletion struct {
 	webCompletionID
-	At int64 `json:"at"`
+	At    int64  `json:"at"`
+	Title string `json:"title,omitempty"`
 }
 
 type projectedCompletion struct {
@@ -60,10 +61,12 @@ func (w *WebChat) readCompletions(ctx context.Context, after int64) ([]webComple
 			}
 		}
 	}
+	titles := make(map[string]string, len(rollouts))
 	for _, rollout := range rollouts {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		titles[rollout.ID] = rollout.Title
 		root := roots[rollout.Archived]
 		if root == nil || rollout.ID == w.c.Runtime.WebGUIRelay || !threadID.MatchString(rollout.ID) {
 			continue
@@ -77,7 +80,7 @@ func (w *WebChat) readCompletions(ctx context.Context, after int64) ([]webComple
 	}
 	for id, row := range projected {
 		if row.Status == "completed" && row.At >= after && row.At <= now.UnixMilli() {
-			result = append(result, webCompletion{id, row.At})
+			result = append(result, webCompletion{webCompletionID: id, At: row.At, Title: titles[id.Thread]})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].At < result[j].At })
@@ -188,7 +191,7 @@ func completionEvents(data []byte, partialHead bool, thread string, after int64)
 			event.Payload.Type == "task_complete" && threadID.MatchString(event.Payload.Turn) &&
 			(event.Payload.Root == "" || event.Payload.Root == event.Payload.Turn) &&
 			event.Payload.Final != "" && event.Timestamp.UnixMilli() >= after {
-			events = append(events, webCompletion{webCompletionID{thread, event.Payload.Turn}, event.Timestamp.UnixMilli()})
+			events = append(events, webCompletion{webCompletionID: webCompletionID{thread, event.Payload.Turn}, At: event.Timestamp.UnixMilli()})
 		}
 	}
 	return events

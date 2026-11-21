@@ -33,7 +33,7 @@ func TestWebCompletionEventsOnlyCompleteRootTurns(t *testing.T) {
 	// A just-written partial line should be picked up on a subsequent read.
 	records = append(records, event("task_complete", turn, turn, "incomplete line", now)...)
 	got := completionEvents(records, false, thread, now.Add(-time.Second).UnixMilli())
-	if len(got) != 1 || got[0] != (webCompletion{webCompletionID{thread, turn}, now.UnixMilli()}) {
+	if len(got) != 1 || got[0] != (webCompletion{webCompletionID: webCompletionID{thread, turn}, At: now.UnixMilli()}) {
 		t.Fatalf("completion events: %+v", got)
 	}
 }
@@ -44,6 +44,10 @@ func TestWebChatOfficialCompletionReadNeedsNoWebWriter(t *testing.T) {
 	after := time.Now().Add(-time.Second).UnixMilli()
 	turn := f.start(chat, "WEB_COMPLETION_FIXTURE")
 	f.completed(chat, 1)
+	const title = "완료 알림에 사용할 채팅 제목"
+	if err := f.client.Call(f.ctx, "thread/name/set", map[string]any{"threadId": chat, "name": title}, nil); err != nil {
+		t.Fatal(err)
+	}
 	w := NewWebChat(f.ctx, f.c)
 	defer w.Close()
 	for until := time.Now().Add(5 * time.Second); time.Now().Before(until); {
@@ -53,6 +57,9 @@ func TestWebChatOfficialCompletionReadNeedsNoWebWriter(t *testing.T) {
 		}
 		for _, event := range found {
 			if event.Thread == chat && event.Turn == turn {
+				if event.Title != title {
+					t.Fatal("completion missed the native rename", event.Title)
+				}
 				if len(w.connections) != 0 {
 					t.Fatal("read created a web app-server")
 				}

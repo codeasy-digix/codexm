@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { generateVAPIDKeys, sendNotification, type PushSubscription, type RequestOptions, type VapidKeys } from "web-push";
 import { LoginError } from "./auth";
 
-export type ChatCompletion = { thread: string; turn: string; at: number };
+export type ChatCompletion = { thread: string; turn: string; at: number; title?: string };
+type PushMessage = { url: string; title: string; test?: boolean; tag?: string };
 type Device = { subscription: PushSubscription; scope: string; owner: string; since: number };
 type State = { devices: Record<string, Device>; sent: Record<string, number> };
 type Deliver = (subscription: PushSubscription, payload: string, options: RequestOptions) => Promise<unknown>;
@@ -13,6 +14,11 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 // Cover a short restart while allowing for the native read's five-minute limit.
 const lookback = 4 * 60_000 + 30_000;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+
+function notificationTitle(name?: string) {
+  const title = typeof name === "string" ? name.replace(/\s+/g, " ").trim() : "";
+  return title ? `CodexM [${Array.from(title).slice(0, 256).join("")}]` : "CodexM";
+}
 
 // Only browser push providers are destinations. Neither an authenticated
 // caller nor a locally restored subscription can turn the server into a proxy.
@@ -95,7 +101,7 @@ export class ChatPush {
     this.state = state;
   }
 
-  async action(owner: string, value: unknown) {
+  async action(owner: string, value: unknown, lookupTitle?: (thread: string) => Promise<string | undefined>) {
     if (!value || typeof value !== "object") throw new LoginError("알림 요청을 확인해 주세요.", 400);
     const input = value as { action?: unknown; endpoint?: unknown; subscription?: unknown; thread?: unknown };
     const scope = this.currentScope();
@@ -124,7 +130,10 @@ export class ChatPush {
       if ((this.tests.get(id) ?? 0) > now - 10_000) throw new LoginError("잠시 뒤에 다시 시험해 주세요.", 429);
       this.tests.set(id, now);
       const thread = typeof input.thread === "string" && uuid.test(input.thread) ? input.thread.toLowerCase() : "";
-      if (!await this.send(id, device, { url: thread ? `/chat/${thread}` : "/", test: true })) throw new LoginError("알림을 보내지 못했습니다. 구독 상태를 확인해 주세요.", 503);
+      const title = thread && lookupTitle ? await lookupTitle(thread).catch(() => undefined) : undefined;
+      if (!await this.send(id, device, { url: thread ? `/chat/${thread}` : "/", title: notificationTitle(title || "테스트 알림"), test: true })) {
+        throw new LoginError("알림을 보내지 못했습니다. 구독 상태를 확인해 주세요.", 503);
+      }
       return { accepted: true };
     }
     throw new LoginError("지원하지 않는 알림 요청입니다.", 400);
@@ -145,7 +154,7 @@ export class ChatPush {
     this.commit({ ...this.state, devices });
   }
 
-  private async send(id: string, device: Device, payload: { url: string; test?: boolean; tag?: string }) {
+  private async send(id: string, device: Device, payload: PushMessage) {
     const subscription = readSubscription(device.subscription);
     if (!subscription || this.state.devices[id] !== device || this.currentScope() !== device.scope) return false;
     try {
@@ -189,7 +198,8 @@ export class ChatPush {
       this.commit({ ...this.state, sent });
       for (const { tag, chat } of deliveries) {
         const devices = Object.entries(this.state.devices).filter(([, device]) => device.scope === scope && device.since <= chat.at);
-        await Promise.allSettled(devices.map(([id, device]) => this.send(id, device, { url: `/chat/${chat.thread.toLowerCase()}`, tag })));
+        const payload = { url: `/chat/${chat.thread.toLowerCase()}`, title: notificationTitle(chat.title), tag };
+        await Promise.allSettled(devices.map(([id, device]) => this.send(id, device, payload)));
       }
     } finally { this.polling = false; }
   }

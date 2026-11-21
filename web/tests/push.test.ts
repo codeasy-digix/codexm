@@ -11,6 +11,8 @@ import { ChatPush, pushEndpoint, type ChatCompletion } from "../server/push";
 const thread = "00000000-0000-4000-8000-000000000001";
 const turn = "00000000-0000-4000-8000-000000000002";
 const chrome = "https://fcm.googleapis.com/fcm/send/synthetic-endpoint";
+const chatName = "배포 검증 채팅";
+const title = `CodexM [${chatName}]`;
 
 function subscription(endpoint = chrome): PushSubscription {
   const keys = createECDH("prime256v1");
@@ -33,7 +35,7 @@ test("background completion alerts use private stable keys, routing and durable 
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   let now = Date.now(), scope = "fixture-credential";
   const completions: ChatCompletion[] = [];
-  const received: { url: string; test?: boolean; tag?: string }[] = [];
+  const received: { url: string; title: string; test?: boolean; tag?: string }[] = [];
   const make = () => new ChatPush(dir, "https://codex.example.invalid", () => scope, async () => completions,
     async (device, payload, options) => {
       const request = generateRequestDetails(device, payload, options);
@@ -51,17 +53,21 @@ test("background completion alerts use private stable keys, routing and durable 
   await service.action("browser", { action: "subscribe", subscription: subscription() });
   completions.push({ thread, turn: "00000000-0000-4000-8000-000000000003", at: now - 30_000 });
   now += 1_000;
-  completions.push({ thread, turn, at: now });
+  completions.push({ thread, turn, at: now, title: " 배포\n검증 채팅 " });
   await service.poll();
   assert.equal(received.length, 1);
   assert.equal(received[0].url, `/chat/${thread}`);
+  assert.equal(received[0].title, title);
   assert.equal(received[0].tag?.length, 32);
   service = make();
   assert.equal((await service.action("another-session", { action: "status", endpoint: chrome })).publicKey, first.publicKey);
   await service.poll();
   assert.equal(received.length, 1, "restarting the web process must not replay completion alerts");
-  await service.action("browser", { action: "test", endpoint: chrome, thread });
-  assert.deepEqual(received[1], { url: `/chat/${thread}`, test: true });
+  await service.action("browser", { action: "test", endpoint: chrome, thread }, async id => {
+    assert.equal(id, thread);
+    return chatName;
+  });
+  assert.deepEqual(received[1], { url: `/chat/${thread}`, title, test: true });
   service.logout("renewed-session", chrome);
   assert.equal((await service.action("browser", { action: "status", endpoint: chrome })).subscribed, false);
   await service.action("new-device", { action: "subscribe", subscription: subscription() });
@@ -88,10 +94,14 @@ test("installed worker displays an alert and opens the selected chat", async () 
     callbacks.get(name)!({ ...event, waitUntil: (promise: Promise<unknown>) => { done = promise; } });
     await done;
   };
-  await dispatch("push", { data: { json: () => ({ url: `/chat/${thread}` }) } });
-  assert.equal(notification.title, "CodexM 작업 완료");
+  await dispatch("push", { data: { json: () => ({ url: `/chat/${thread}`, title }) } });
+  assert.equal(notification.title, title);
+  assert.equal(notification.icon, "/icons/icon-192.png");
+  assert.ok(!Object.hasOwn(notification, "body"));
   await dispatch("notificationclick", { notification: { ...notification, close() {} } });
   assert.equal(opened, `${origin}/chat/${thread}`);
   await dispatch("notificationclick", { notification: { data: { url: "//other.example.invalid" }, close() {} } });
   assert.equal(opened, `${origin}/`);
+  await dispatch("push", { data: { json: () => ({ url: `/chat/${thread}` }) } });
+  assert.equal(notification.title, "CodexM");
 });
