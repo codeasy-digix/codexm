@@ -25,6 +25,7 @@ import "./styles/workspace.css";
 type Dialog = {kind:"new"|"project"|"settings"|"gui-quit"}|{kind:"move"|"archive"|"delete"|"files";chat:ChatThread}
   | {kind:"command"; command:ChatCommand | "fork"; chat:ChatThread; account:string};
 type Section = "chats"|"pinned"|"archived";
+type DockedTerminal = { location: TerminalLocation; visible: boolean };
 const TerminalPanel = lazy(() => import("./TerminalPanel"));
 
 export function App() {
@@ -43,7 +44,9 @@ export function App() {
   const [desktop, setDesktop] = useState(() => matchMedia("(min-width: 980px)").matches);
   const [desktopSidebar, setDesktopSidebar] = useState(true);
   const sidebarOpen = desktop ? desktopSidebar : sidebar;
-  const [terminal, setTerminal] = useState<{ location: TerminalLocation; visible: boolean }>();
+  const [terminals, setTerminals] = useState(() => new Map<string, DockedTerminal>());
+  const terminal = terminals.get(threadId);
+  const canOpenTerminal = !!terminal || access.online && (!threadId || !!selected);
   const terminalButton = useRef<HTMLButtonElement>(null);
   const platformModifier = queueModifierForPlatform(navigator.platform);
   const terminalShortcut = platformModifier === "Meta" ? "⌘J" : "Ctrl+J";
@@ -115,7 +118,7 @@ export function App() {
     if (access.status === "anonymous") {
       setOpened(null);setOpenError(null);setDialog(null);setQuery("");setSidebar(false);setTurnSelections({});setAccount("default");
       setAccountChoice(undefined);
-      setTerminal(undefined);
+      setTerminals(new Map());
     }
     if (!ready) viewed.current.clear();
   },[access.status, ready]);
@@ -188,14 +191,24 @@ export function App() {
     else setSidebar(open => !open);
   }
 
-  function hideTerminal(end = false) {
-    setTerminal(current => end || !current ? undefined : { ...current, visible: false });
-    terminalButton.current?.focus();
+  function dismissTerminal(location: TerminalLocation, end: boolean, restoreFocus = true) {
+    setTerminals(current => {
+      const existing = current.get(location.thread);
+      if (existing?.location !== location) return current;
+      const next = new Map(current);
+      if (end) next.delete(location.thread);
+      else next.set(location.thread, { ...existing, visible: false });
+      return next;
+    });
+    if (restoreFocus && terminal?.visible && terminal.location === location) terminalButton.current?.focus();
   }
 
   function toggleTerminal() {
-    if (terminal?.visible) hideTerminal();
-    else if (access.online && (!threadId || selected)) setTerminal({ location: terminal?.location ?? { thread: threadId, project: terminalProject }, visible: true });
+    if (terminal?.visible) dismissTerminal(terminal.location, false);
+    else if (canOpenTerminal) setTerminals(current => {
+      const location = current.get(threadId)?.location ?? { thread: threadId, project: terminalProject };
+      return new Map(current).set(threadId, { location, visible: true });
+    });
   }
 
   useEffect(() => {
@@ -210,7 +223,7 @@ export function App() {
     };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
-  }, [ready, dialog, terminalEnabled, terminal, platformModifier, access.online, threadId, selected, terminalProject, desktop]);
+  }, [ready, dialog, terminalEnabled, terminal, platformModifier, canOpenTerminal, threadId, terminalProject, desktop]);
 
   function navigate(id: string, replace = false) {
     const next = chatPath(id);
@@ -373,7 +386,7 @@ export function App() {
         </div>
         {terminalEnabled && <button type="button" ref={terminalButton} className="terminal-toggle" aria-label="터미널"
           aria-keyshortcuts={`${platformModifier}+J`} aria-expanded={!!terminal?.visible} title={`터미널 · ${terminalShortcut}`}
-          disabled={(!access.online || !!threadId && !selected) && !terminal?.visible} onClick={toggleTerminal}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" aria-hidden="true">
+          disabled={!canOpenTerminal} onClick={toggleTerminal}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" aria-hidden="true">
             <rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3m5 0h5"/>
           </svg></button>}
         {chat&&<div className="chat-menu"><button aria-label="채팅 메뉴" aria-expanded={menu} onClick={()=>setMenu(!menu)}>···</button>{menu&&<div className="popover" role="menu"><button role="menuitem" onClick={()=>openDialog({kind:"files",chat})}>채팅 파일</button><button role="menuitem" onClick={()=>openDialog({kind:"move",chat:{...chat}})}>프로젝트로 이동</button><button role="menuitem" className="danger" onClick={()=>openDialog({kind:"delete",chat:{...chat}})}>영구 삭제</button></div>}</div>}
@@ -437,9 +450,13 @@ export function App() {
         }}
       />}
       {selected&&isArchived&&<div className="archived-note">보관된 채팅입니다.<button onClick={()=>openDialog({kind:"archive",chat:{...chat!,archived:true}})}>보관 해제</button></div>}
-      {terminal && <Suspense fallback={terminal.visible ? <p className="terminal-loading" role="status">터미널을 여는 중…</p> : null}>
-        <TerminalPanel visible={terminal.visible} location={terminal.location} onHide={() => hideTerminal()} onEnd={() => hideTerminal(true)} />
-      </Suspense>}
+      {Array.from(terminals.values(), ({ location, visible }) => {
+        const show = visible && location.thread === threadId;
+        return <Suspense key={location.thread} fallback={show ? <p className="terminal-loading" role="status">터미널을 여는 중…</p> : null}>
+          <TerminalPanel visible={show} location={location} onHide={() => dismissTerminal(location, false)}
+            onEnd={restoreFocus => dismissTerminal(location, true, restoreFocus)} />
+        </Suspense>;
+      })}
     </main>
     {dialog?.kind === "command" ? (dialog.chat.id === selected?.id || dialog.command === "rename" || dialog.command === "fork") && <ChatCommandDialog
       key={`${dialog.command}:${dialog.chat.id}`} command={dialog.command} chat={dialog.chat} account={dialog.account} history={history} online={access.online}

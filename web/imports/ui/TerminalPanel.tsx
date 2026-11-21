@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -9,8 +9,9 @@ export default function TerminalPanel({ visible, location, onHide, onEnd }: {
   visible: boolean;
   location: TerminalLocation;
   onHide: () => void;
-  onEnd: () => void;
+  onEnd: (restoreFocus: boolean) => void;
 }) {
+  const dock = useRef<HTMLElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const active = useRef<Terminal | undefined>(undefined);
   const isVisible = useRef(visible);
@@ -19,6 +20,7 @@ export default function TerminalPanel({ visible, location, onHide, onEnd }: {
   const [status, setStatus] = useState<"connecting" | "ready" | "closed">("connecting");
   const [cwd, setCwd] = useState("");
   const [error, setError] = useState("");
+  const shellExited = useEffectEvent(() => onEnd(dock.current?.contains(document.activeElement) ?? false));
   useEffect(() => {
     if (visible) active.current?.focus();
   }, [visible]);
@@ -90,6 +92,9 @@ export default function TerminalPanel({ visible, location, onHide, onEnd }: {
           setCwd(message.cwd);
           resize();
           if (isVisible.current) terminal.focus();
+        } else if (message.type === "exit") {
+          ready = false;
+          shellExited();
         } else if (message.type === "error") setError(message.message);
       };
       socket.onerror = () => { if (!controller.signal.aborted) setError("터미널 연결에 실패했습니다."); };
@@ -122,12 +127,12 @@ export default function TerminalPanel({ visible, location, onHide, onEnd }: {
     terminal.focus();
   }
 
-  return <section className="terminal-dock" aria-label="터미널" hidden={!visible}>
+  return <section ref={dock} className="terminal-dock" aria-label="터미널" hidden={!visible}>
     <header className="terminal-toolbar">
       <strong>터미널</strong>
       <small title={cwd} role="status">{status === "connecting" ? "연결 중…" : status === "closed" ? "연결 종료" : cwd}</small>
       {status === "closed" && <button type="button" onClick={() => setAttempt(value => value + 1)}>다시 연결</button>}
-      <button type="button" aria-label="터미널 종료" title="터미널 종료" onClick={onEnd}>종료</button>
+      <button type="button" aria-label="터미널 종료" title="터미널 종료" onClick={() => onEnd(true)}>종료</button>
       <button type="button" aria-label="터미널 접기" title="터미널 접기" onClick={onHide}>▾</button>
     </header>
     {error && <p className="terminal-error" role="alert">{error}</p>}

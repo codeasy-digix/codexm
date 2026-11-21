@@ -53,6 +53,7 @@ export class LocalTerminal {
     const session = this.auth.session(cookie);
     if (!session) throw new LoginError("로그인이 필요합니다.");
     if (!this.available) throw new LoginError("이 웹 설치에 터미널 실행 파일이 없습니다.", 503);
+    if (this.atCapacity(session)) throw new LoginError("열려 있는 터미널을 하나 종료한 뒤 다시 연결해 주세요.", 429);
     const thread = input?.thread ?? "", project = input?.project ?? "";
     if (typeof thread !== "string" || thread && chatIdFromPath(`/chat/${thread}`) !== thread ||
         typeof project !== "string" || project.length > 256) throw new LoginError("작업 폴더를 확인할 수 없습니다.", 400);
@@ -94,8 +95,7 @@ export class LocalTerminal {
     let session: string | null = null;
     try { session = this.auth.session(req.headers.cookie); }
     catch { /* Leave the socket unauthenticated if web login is unavailable. */ }
-    if (!this.available || !session || this.clients.size >= 16 ||
-      [...this.clients.values()].filter(client => client.session === session).length >= 4) {
+    if (!this.available || !session || this.atCapacity(session)) {
       const status = !session ? "401 Unauthorized" : this.available ? "429 Too Many Requests" : "503 Service Unavailable";
       socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
       return;
@@ -106,6 +106,10 @@ export class LocalTerminal {
   closeBrowser(session: string) {
     for (const [ticket, grant] of this.grants) if (grant.session === session) this.grants.delete(ticket);
     for (const [socket, client] of this.clients) if (client.session === session) socket.terminate();
+  }
+
+  private atCapacity(session: string) {
+    return this.clients.size >= 16 || [...this.clients.values()].filter(client => client.session === session).length >= 4;
   }
 
   private pruneGrants() {
@@ -179,7 +183,8 @@ export class LocalTerminal {
       if (/^(PATH|TMPDIR|XDG_(CONFIG|DATA|STATE|CACHE)_HOME|LC_[A-Z_]+)$/.test(key)) env[key] = value;
     }
     const child = spawn(this.helper, [], { env, stdio: ["pipe", "pipe", "pipe"] });
-    let ready = false, stopped = false, status = "", exitCode = 1;
+    let ready = false, stopped = false, status = "";
+    let exitCode: number | undefined;
     const stop = () => {
       if (stopped) return;
       stopped = true;
@@ -221,8 +226,8 @@ export class LocalTerminal {
     });
     child.once("close", () => {
       clearTimeout(deadline);
+      if (!stopped && exitCode !== undefined) output({ type: "exit", exitCode });
       stopped = true;
-      output({ type: "exit", exitCode });
       close();
     });
     send({ type: "spawn", protocol: 1, file: shell, args: ["-l"], cwd, ...size });
