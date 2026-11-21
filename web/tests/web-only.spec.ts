@@ -131,4 +131,22 @@ test("an account change only takes effect when a chat input is submitted", async
   await expect(page.locator(".user-message").getByText(/^이 채팅에서 진행하던 미완료 작업을 계속 진행하세요/)).toHaveCount(1);
   await expect(page.locator(".user-message p").filter({ hasText: /편집 후 대기한 입력|일시 중지 중에 등록한 입력/ }))
     .toHaveText(["편집 후 대기한 입력", later]);
+  await expect(page.getByRole("status", { name: "현재 작업 상태" })).toHaveText("작업 완료");
+  await input.fill("문장 안의 /exit");
+  await expect(page.getByRole("option").filter({ hasText: /^\/exit/ })).toHaveCount(0);
+  await input.fill("/exit");
+  await input.press("Enter");
+  const close = page.getByRole("dialog", { name: "웹 채팅 종료" });
+  await expect(close.getByRole("button", { name: "취소" })).toBeFocused();
+  await close.getByRole("button", { name: "취소" }).click();
+  await expect(page).toHaveURL(draftAddress);
+  await input.fill("/exit");
+  await page.getByRole("button", { name: "보내기", exact: true }).click();
+  await close.getByRole("button", { name: "채팅 종료", exact: true }).click();
+  await expect(page).toHaveURL(new URL("/", url!).href);
+  await expect(page.getByText("웹 실행을 종료했습니다. 데스크톱 앱에서 이 채팅을 이어갈 수 있습니다.")).toBeVisible();
+  await page.locator(`#chat-sidebar a[href="/chat/${thread}"]`).click();
+  await expect(page).toHaveURL(draftAddress);
+  await expect(page.locator(".user-message").getByText(later, { exact: true })).toBeVisible();
+  await expect(page.locator(".user-message").getByText("/exit", { exact: true })).toHaveCount(0);
 });

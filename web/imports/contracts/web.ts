@@ -15,6 +15,7 @@ export const bridgeContract = {
     { name: "web.create", mutation: true, model: false },
     { name: "web.send", mutation: true, model: true },
     { name: "web.interrupt", mutation: true, model: false },
+    { name: "web.exit", mutation: true, model: false },
     { name: "web.queueUpdate", mutation: true, model: false },
     { name: "web.queueCancel", mutation: true, model: false },
     { name: "web.queueResume", mutation: true, model: true },
@@ -96,7 +97,7 @@ export type ChatHistory = ChatHistoryPage & {
 };
 export type ChatHistoryUpdate = Omit<ChatHistory, "turns"> & { turns?: ChatTurn[] };
 export type ChatSkill = { id: string; name: string; description?: string; scope?: string };
-export type ChatCommand = "status" | "rename" | "review" | "compact";
+export type ChatCommand = "status" | "rename" | "review" | "compact" | "exit";
 export type ContextUsage = { tokens: number; window?: number };
 export type ChatArtifact = {
   id: string;

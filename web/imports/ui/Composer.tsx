@@ -111,6 +111,13 @@ export function Composer({ chat, online, account, history, liveTurn, models, sel
     const sent = recalled ?? draftRef.current;
     if (!online || !sent.text.trim() || inFlight.current || uncertain) return "rejected";
     if (relayID && (mode === "immediate" || sent.text === relayText.current)) return "rejected";
+    if (!recalled && sent.text.trim().toLowerCase() === "/exit") {
+      if (mode === "immediate") {
+        save({ ...sent, text: "" });
+        onCommand("exit");
+      } else setError("채팅을 종료하려면 /exit를 보내세요.");
+      return "rejected";
+    }
     const parameters: Record<string, unknown> = { thread_id: chat.id, account, text: sent.text, mode,
       skills: sent.skills.map(skill => skill.id), goal: sent.goal, plan: !!sent.plan, switch_account: switchAccount };
     if (mode === "immediate" && hasOverride) {

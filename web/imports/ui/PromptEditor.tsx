@@ -12,6 +12,7 @@ const commands: Entry[] = [
   { kind: "command", id: "rename", name: "rename", description: "채팅 이름 변경" },
   { kind: "command", id: "review", name: "review", description: "Git 변경사항 리뷰" },
   { kind: "command", id: "compact", name: "compact", description: "채팅 컨텍스트 압축" },
+  { kind: "command", id: "exit", name: "exit", description: "현재 채팅의 웹 실행 연결 종료" },
 ];
 
 export function PromptEditor({ thread, account, draft, disabled, placeholder, suggestion, onChange, onCommand, onKeyDown }: {
@@ -48,9 +49,11 @@ export function PromptEditor({ thread, account, draft, disabled, placeholder, su
   }, [thread, account, requested]);
 
   const showSkills = !!range && (range.prefix === "$" || range.search !== "");
+  const standalone = range && !(draft.text.slice(0, range.start) + draft.text.slice(range.end)).trim();
   const entries: Entry[] = !range ? [] : [
     ...(range.prefix === "/" ? commands.filter(item => item.name.includes(range.search) &&
-      !(item.name === "goal" && draft.goal) && !(item.name === "plan" && draft.plan)) : []),
+      !(item.name === "goal" && draft.goal) && !(item.name === "plan" && draft.plan) &&
+      (item.name !== "exit" || standalone)) : []),
     ...(showSkills ? available.filter(skill => skill.name.toLowerCase().includes(range.search) &&
       !draft.skills.some(selected => selected.id === skill.id)).map(skill => ({ ...skill, kind: "skill" as const })) : []),
   ];

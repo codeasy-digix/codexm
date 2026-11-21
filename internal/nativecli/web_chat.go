@@ -25,7 +25,7 @@ var WebMethods = []Method{
 	{"web.catalog", false, false}, {"web.history", false, false}, {"web.items", false, false}, {"web.item", false, false},
 	{"web.models", false, false}, {"web.activity", false, false},
 	{"web.thread", false, false}, {"web.usage", false, false},
-	{"web.create", true, false}, {"web.send", true, true}, {"web.interrupt", true, false},
+	{"web.create", true, false}, {"web.send", true, true}, {"web.interrupt", true, false}, {"web.exit", true, false},
 	{"web.queueUpdate", true, false}, {"web.queueCancel", true, false},
 	{"web.queueResume", true, true},
 	{"web.pin", true, false}, {"web.move", true, false}, {"web.archive", true, false},
@@ -334,6 +334,8 @@ func (w *WebChat) dispatch(ctx context.Context, r Request, p webParams) (any, er
 		return w.historySources(ctx)
 	case "web.dispatchQueued":
 		return true, w.dispatchQueued(ctx)
+	case "web.exit":
+		return w.exitWebThread(ctx, r.Operation, p)
 	}
 	connection, err := w.connection(ctx, p.Account)
 	if err != nil {

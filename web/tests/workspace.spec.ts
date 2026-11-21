@@ -212,7 +212,7 @@ test("native workspace catalog, selection, drafts and goals survive browser navi
   await expect(input).toHaveCSS("resize", "vertical");
   await input.fill("/");
   const options = page.getByRole("listbox", { name: "명령과 스킬" }).getByRole("option");
-  await expect(options.locator("strong")).toHaveText(["/goal", "/plan", "/status", "/rename", "/review", "/compact"]);
+  await expect(options.locator("strong")).toHaveText(["/goal", "/plan", "/status", "/rename", "/review", "/compact", "/exit"]);
   await input.fill("$");
   const skills = page.getByRole("listbox", { name: "스킬", exact: true });
   await expect(skills.getByRole("option", { name: /^\$fixture-proof/ })).toBeVisible();

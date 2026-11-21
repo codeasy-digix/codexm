@@ -464,8 +464,13 @@ export function App() {
       onDone={(message, name, fork) => {
         if (fork) { filter("chats"); setQuery(""); choose(fork); }
         if (name) setOpened(current => current?.id === dialog.chat.id ? { ...current, name } : current);
+        if (dialog.command === "exit") {
+          navigate("", true);
+          setOpened(null);
+          setAccountChoice(undefined);
+        } else void chatState.refresh();
         setDialog(null); setNotice(message);
-        void chatState.refresh(); void catalogState.refresh();
+        void catalogState.refresh();
       }} />
       : dialog?.kind === "files" ? dialog.chat.id === selected?.id && <ChatFiles
       key={dialog.chat.id} thread={dialog.chat.id} files={fileState.files} loading={fileState.loading}

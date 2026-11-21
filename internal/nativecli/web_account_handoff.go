@@ -433,7 +433,7 @@ func (w *WebChat) settleWebTurn(ctx context.Context, source *webInputOwner, id s
 	for {
 		thread, err := source.client.Read(ctx, id, false)
 		if err != nil || thread.ID != id {
-			return errors.New("계정을 바꾸기 전에 현재 채팅 상태를 확인할 수 없습니다.")
+			return errors.New("현재 채팅의 실행 상태를 확인할 수 없습니다.")
 		}
 		switch thread.Status.Type {
 		case "idle", "notLoaded", "systemError":
