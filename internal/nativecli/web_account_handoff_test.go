@@ -1,0 +1,650 @@
+package nativecli
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/codeasy-digix/codexm/internal/accounts"
+	"github.com/codeasy-digix/codexm/internal/catalog"
+	cr "github.com/codeasy-digix/codexm/internal/runtime"
+)
+
+func TestWebOnlyOfficialAccountHandoff(t *testing.T) {
+	for _, mode := range []string{"immediate", "queue"} {
+		for _, active := range []bool{false, true} {
+			t.Run(mode+map[bool]string{true: "-active", false: "-idle"}[active], func(t *testing.T) {
+				f := webOnlyFixture(t)
+				w := NewWebChat(f.ctx, f.c)
+				defer w.Close()
+				call := webTestCall(t, w, f.ctx)
+				newChat := func() string {
+					result, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+					if err != nil {
+						t.Fatal(err)
+					}
+					return result["thread"].(map[string]any)["id"].(string)
+				}
+				id, other := newChat(), newChat()
+				send := func(id, account, mode, text string) map[string]any {
+					r, err := call("web.send", map[string]any{"thread_id": id, "account": account, "mode": mode, "text": text,
+						"switch_account": account == "beta"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					return r
+				}
+				watch := send(other, "alpha", "immediate", "GUI_FIXTURE_ACTIVE_FOREIGN_BROWSER_NEIGHBOR")
+				firstMessage := "ALPHA_SAVED_HISTORY"
+				if active {
+					firstMessage = "GUI_FIXTURE_ACTIVE_ALPHA"
+				}
+				first := send(id, "alpha", "immediate", firstMessage)
+				orig := w.connections["alpha"]
+				wantFirst := "completed"
+				if active {
+					wantFirst = "inProgress"
+				}
+				waitWebNativeTurn(t, f, orig, id, first["turn_id"].(string), wantFirst)
+				if active {
+					same := send(id, "alpha", "immediate", "STEER_THIS_ALPHA_TURN")
+					if same["mode"] != "steer" || same["turn_id"] != first["turn_id"] {
+						t.Fatal("same account did not steer its own turn", same)
+					}
+				}
+				next := send(id, "beta", mode, "BETA_BOUND_INPUT")
+				if next["thread_id"] != id {
+					t.Fatal("account change altered thread ID", next)
+				}
+				chosen := w.connections["beta"]
+				if mode == "queue" && active {
+					assertFixtureModelLogin(t, f, ContinuePrompt, "beta")
+					chat, _, err := chosen.client.Recent(f.ctx, id, 1, "")
+					if err != nil || len(chat.Turns) != 1 || chat.Turns[0].Status != "inProgress" || chat.Turns[0].ID == first["turn_id"] {
+						t.Fatal("the old work did not start a continuation turn", err)
+					}
+					if err := w.advanceOwnedQueue(f.ctx, id); err != nil {
+						t.Fatal(err)
+					}
+					pending, err := w.readOwnedQueue(id)
+					if err != nil || !slices.ContainsFunc(pending, func(input webQueuedInput) bool { return input.ID == next["queued_id"] && input.State == "pending" }) {
+						t.Fatal("the new command left the queue before the continuation completed", err)
+					}
+					f.once.Do(func() { close(f.release) })
+					waitWebNativeTurn(t, f, chosen, id, chat.Turns[0].ID, "completed")
+					for range 2 {
+						if err := w.advanceOwnedQueue(f.ctx, id); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				assertFixtureModelLogin(t, f, "BETA_BOUND_INPUT", "beta")
+				if err := w.verifyOwner(f.ctx, chosen, id, true); err != nil {
+					t.Fatal("selected login did not gain the writer", err)
+				}
+				if err := w.verifyLogin(f.ctx, chosen); err != nil {
+					t.Fatal("selected identity did not match the new writer", err)
+				}
+				if active {
+					wantFirst = "interrupted"
+				}
+				waitWebNativeTurn(t, f, chosen, id, first["turn_id"].(string), wantFirst)
+				waitWebNativeTurn(t, f, orig, other, watch["turn_id"].(string), "inProgress")
+				if err := w.verifyOwner(f.ctx, orig, other, true); err != nil {
+					t.Fatal("the neighboring chat lost its owner", err)
+				}
+				history, err := call("web.history", map[string]any{"thread_id": id, "account": "alpha"})
+				if err != nil || history["executionAccount"] != "beta" || history["thread"].(map[string]any)["id"] != id {
+					t.Fatal("browser history did not report the actual writer and ID", history, err)
+				}
+			})
+		}
+	}
+}
+
+func TestWebOnlyOfficialQueueSurvivesBridgeRestart(t *testing.T) {
+	f := webOnlyFixture(t)
+	w := NewWebChat(f.ctx, f.c)
+	call := webTestCall(t, w, f.ctx)
+	beta := map[string]any{"account": "beta", "cwd": f.cmd.Dir}
+	created, err := call("web.create", beta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	_, err = call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": "immediate", "text": "GUI_FIXTURE_ACTIVE_RESTART"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-f.active:
+	case <-time.After(10 * time.Second):
+		t.Fatal("fixture did not start")
+	}
+	input := map[string]any{"thread_id": id, "account": "beta", "mode": "queue", "text": "EDIT_BOUND_INPUT"}
+	q, err := call("web.send", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call("web.queueUpdate", map[string]any{"thread_id": id, "account": "alpha", "queued_id": q["queued_id"], "expected_text": input["text"], "text": "DURABLE_BETA_INPUT"}); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	f.once.Do(func() { close(f.release) })
+	reopened := NewWebChat(f.ctx, f.c)
+	defer reopened.Close()
+	if err := reopened.dispatchQueued(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, "DURABLE_BETA_INPUT", "beta")
+	if q, err := reopened.readOwnedQueue(id); err != nil || len(q) != 0 {
+		t.Fatal("delivered request was retained or replayed", err)
+	}
+	if err := reopened.dispatchQueued(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, "DURABLE_BETA_INPUT", "beta")
+}
+
+func TestWebQueueRetainsInputIfContinuationStops(t *testing.T) {
+	f := webOnlyFixture(t)
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	if _, err := call("web.send", map[string]any{"thread_id": id, "account": "alpha", "mode": "immediate", "text": "GUI_FIXTURE_ACTIVE_INTERRUPTED_CONTINUATION"}); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, "GUI_FIXTURE_ACTIVE_INTERRUPTED_CONTINUATION", "alpha")
+	queued, err := call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": "queue",
+		"text": "WAIT_AFTER_CONTINUATION", "switch_account": true})
+	if err != nil || queued["continuationStarted"] != true {
+		t.Fatal("the continuation did not start", queued, err)
+	}
+	q, err := w.readOwnedQueue(id)
+	if err != nil || len(q) != 2 || q[0].State != "running" || q[0].ResumedTurn == "" {
+		t.Fatal("the running continuation was not recorded", err)
+	}
+	stopped, err := call("web.interrupt", map[string]any{"thread_id": id, "account": "beta", "turn_id": q[0].ResumedTurn})
+	if err != nil || stopped["interrupted"] != true {
+		t.Fatal(err)
+	}
+	waitWebNativeTurn(t, f, w.connections["beta"], id, q[0].ResumedTurn, "interrupted")
+	for range 2 {
+		if err := w.advanceOwnedQueue(f.ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q, err = w.readOwnedQueue(id)
+	if err != nil || len(q) != 2 || q[0].State != "held" || q[1].ID != queued["queued_id"] || q[1].State != "pending" {
+		t.Fatal("the follow-up must stay queued after the continuation stops", q, err)
+	}
+	w.Close()
+	reopened := NewWebChat(f.ctx, f.c)
+	defer reopened.Close()
+	if err := reopened.dispatchQueued(f.ctx); err != nil || len(reopened.connections) != 0 {
+		t.Fatal("restart dispatched or opened the paused chat", err)
+	}
+	params := map[string]any{"thread_id": id, "account": "beta"}
+	afterRestart := webTestCall(t, reopened, f.ctx)
+	history, err := afterRestart("web.history", params)
+	if err != nil || history["queuePause"] == "" || history["queuePause"] != stopped["queue_pause"] {
+		t.Fatal("pause revision did not survive restart", err)
+	}
+	params["queue_pause"] = "stale"
+	encoded, _ := json.Marshal(params)
+	if _, err := reopened.Dispatch(f.ctx, Request{Version: 1, Owner: "isolated-web-resume-test", Operation: "10000000-0000-4000-8000-000000000070", Method: "web.queueResume", Params: encoded}); err == nil || !strings.Contains(err.Error(), "대기열 상태가 바뀌었습니다") {
+		t.Fatal("stale browser resumed the queue")
+	}
+	// Use a different operation owner from the first bridge fixture.
+	params["queue_pause"] = stopped["queue_pause"]
+	encoded, _ = json.Marshal(params)
+	if _, err := reopened.Dispatch(f.ctx, Request{Version: 1, Owner: "isolated-web-resume-test", Operation: "10000000-0000-4000-8000-000000000071", Method: "web.queueResume", Params: encoded}); err != nil {
+		t.Fatal("explicit queue resume failed", err)
+	}
+	f.once.Do(func() { close(f.release) })
+	if err := reopened.dispatchQueued(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, "WAIT_AFTER_CONTINUATION", "beta")
+}
+
+func TestWebStopPausesGoalAndPreservesNativeQueue(t *testing.T) {
+	f := webOnlyFixture(t)
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	connection := w.connections["alpha"]
+	const objective, budget, waiting = "GUI_FIXTURE_ACTIVE_PAUSE_GOAL", 36000, "NATIVE_INPUT_RETAINS_QUEUE_POSITION"
+	if err := connection.client.Call(f.ctx, "thread/goal/set", map[string]any{
+		"threadId": id, "objective": objective, "status": "active", "origin": "user", "tokenBudget": budget,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, objective, "alpha")
+	turns, err := recentWebTurns(f.ctx, connection.client, id, 1)
+	if err != nil || len(turns) != 1 || turns[0].Status != "inProgress" {
+		t.Fatal("goal did not start", err)
+	}
+	if err := connection.client.Call(f.ctx, "thread/queue/add", map[string]any{
+		"threadId": id, "input": cr.TextInput(waiting), "clientUserMessageId": "10000000-0000-4000-8000-000000000601",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := call("web.interrupt", map[string]any{"thread_id": id, "account": "alpha", "turn_id": turns[0].ID})
+	if err != nil || stopped["interrupted"] != true {
+		t.Fatal("the active goal turn was not stopped", stopped, err)
+	}
+	waitWebNativeTurn(t, f, connection, id, turns[0].ID, "interrupted")
+	goal, err := connection.client.Goal(f.ctx, id)
+	if err != nil || goal == nil || goal.Status != "paused" || goal.TokenBudget == nil || *goal.TokenBudget != budget || goal.Objective != objective {
+		t.Fatal("the paused goal or its budget changed", goal, err)
+	}
+	if queue, err := readWebQueue(f.ctx, connection.client, id); err != nil || len(queue.Data) != 1 || f.requests() != 1 {
+		t.Fatal("native queue was altered by Stop", len(queue.Data), err)
+	}
+	f.once.Do(func() { close(f.release) })
+	if _, err := call("web.queueResume", map[string]any{"thread_id": id, "account": "alpha", "queue_pause": stopped["queue_pause"]}); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, waiting, "alpha")
+}
+
+func TestWebQueueWaitsForTransferredNativeGoal(t *testing.T) {
+	f := webOnlyFixture(t)
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	source := w.connections["alpha"]
+	const objective, budget = "GUI_FIXTURE_ACTIVE_QUEUE_GOAL", 35000
+	if err := source.client.Call(f.ctx, "thread/goal/set", map[string]any{
+		"threadId": id, "objective": objective, "status": "active", "origin": "user", "tokenBudget": budget,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, objective, "alpha")
+	goal, err := source.client.Goal(f.ctx, id)
+	if err != nil || goal == nil || goal.Status != "active" {
+		t.Fatal("the source goal was not active", goal, err)
+	}
+	const followup = "ADDITIONAL_REQUEST_AFTER_GOAL"
+	queued, err := call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": "queue",
+		"text": followup, "switch_account": true})
+	if err != nil || queued["continuationStarted"] != true {
+		t.Fatal("the active goal did not transfer", queued, err)
+	}
+	target := w.connections["beta"]
+	resumed, err := target.client.Goal(f.ctx, id)
+	if err != nil || resumed == nil || resumed.TokenBudget == nil || *resumed.TokenBudget != budget ||
+		resumed.Objective != objective || resumed.CreatedAt != goal.CreatedAt || resumed.Status != "active" {
+		t.Fatal("the native goal or its budget changed", resumed, err)
+	}
+	if err := w.advanceOwnedQueue(f.ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	q, err := w.readOwnedQueue(id)
+	if err != nil || len(q) != 2 || q[0].ResumeGoal == nil || q[0].State != "running" ||
+		q[1].ID != queued["queued_id"] || q[1].State != "pending" {
+		t.Fatal("the queue advanced before the goal completed", q, err)
+	}
+	if err := target.client.SetGoalStatus(f.ctx, id, "complete", "user"); err != nil {
+		t.Fatal(err)
+	}
+	f.once.Do(func() { close(f.release) })
+	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); time.Sleep(80 * time.Millisecond) {
+		if err := w.advanceOwnedQueue(f.ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		q, err := w.readOwnedQueue(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(q) == 0 {
+			break
+		}
+	}
+	assertFixtureModelLogin(t, f, followup, "beta")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, body := range f.bodies {
+		if strings.Contains(body, ContinuePrompt) {
+			t.Fatal("an automatic native goal received a duplicate continuation prompt")
+		}
+	}
+}
+
+func TestWebOnlyExhaustedAccountHandoffPreservesPendingInput(t *testing.T) {
+	f := webOnlyFixture(t)
+	f.mu.Lock()
+	quota := make(chan struct{})
+	f.quotaFailure = quota
+	f.quotaAccount = "alpha"
+	f.mu.Unlock()
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	send := func(account, mode, content string, change bool) map[string]any {
+		t.Helper()
+		result, err := call("web.send", map[string]any{"thread_id": id, "account": account,
+			"mode": mode, "text": content, "switch_account": change})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	first := send("alpha", "immediate", "WEB_FIXTURE_QUOTA_429", false)
+	assertFixtureModelLogin(t, f, "WEB_FIXTURE_QUOTA_429", "alpha")
+	queued := send("alpha", "queue", "FIXTURE_PRESERVED_OLD_INPUT", false)
+	close(quota)
+	source := w.connections["alpha"]
+	waitWebNativeTurn(t, f, source, id, first["turn_id"].(string), "failed")
+	if err := w.verifyOwner(f.ctx, source, id, true); err != nil {
+		t.Fatal("the failing login must still own the chat for this test", err)
+	}
+	next := send("beta", "queue", "FIXTURE_NEW_ACCOUNT_AFTER_LIMIT", true)
+	if next["thread_id"] != id || next["handoffError"] != "" {
+		t.Fatal("queue did not release the limited session on the same thread", next)
+	}
+	assertFixtureModelLogin(t, f, "FIXTURE_NEW_ACCOUNT_AFTER_LIMIT", "beta")
+	if err := w.dispatchQueued(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := w.readOwnedQueue(id)
+	if err != nil || len(pending) != 1 || pending[0].ID != queued["queued_id"] || pending[0].State != "held" ||
+		pending[0].Account != "alpha" || pending[0].Text != "FIXTURE_PRESERVED_OLD_INPUT" {
+		t.Fatal("the original account's queued input was lost, rebound or replayed", pending, err)
+	}
+	waitWebNativeTurn(t, f, w.connections["beta"], id, first["turn_id"].(string), "failed")
+}
+
+func TestWebOnlyExplicitHandoffFromOfficialSocket(t *testing.T) {
+	for _, mode := range []string{"immediate", "queue"} {
+		t.Run(mode, func(t *testing.T) { checkWebHandoffFromOfficialSocket(t, mode) })
+	}
+}
+
+func checkWebHandoffFromOfficialSocket(t *testing.T, mode string) {
+	t.Helper()
+	f := webOnlyFixtureTransport(t, "unix")
+	id, neighbor := f.thread(), f.thread()
+	oldTurn := f.start(id, "GUI_FIXTURE_ACTIVE_OTHER_CLIENT")
+	neighborTurn := f.start(neighbor, "GUI_FIXTURE_ACTIVE_EXTERNAL_NEIGHBOR")
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	result, err := call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": mode,
+		"text": "EXPLICIT_WEB_HANDOFF_INPUT", "switch_account": true})
+	if err != nil || result["thread_id"] != id {
+		t.Fatal("verified external owner did not release the requested thread", result, err)
+	}
+	if mode == "immediate" {
+		assertFixtureModelLogin(t, f, "EXPLICIT_WEB_HANDOFF_INPUT", "beta")
+	} else {
+		if result["continuationStarted"] != true {
+			t.Fatal("the previous turn from the official socket did not continue", result)
+		}
+		assertFixtureModelLogin(t, f, ContinuePrompt, "beta")
+		q, err := w.readOwnedQueue(id)
+		if err != nil || len(q) != 2 || q[1].State != "pending" {
+			t.Fatal("the external handoff did not keep the new input queued", q, err)
+		}
+	}
+	waitWebNativeTurn(t, f, w.connections["beta"], id, oldTurn, "interrupted")
+	if entry, err := catalog.Lookup(f.ctx, f.c.Runtime.SharedCodexHome, id); err != nil || entry.Archived {
+		t.Fatal("transferred chat was left archived", err)
+	}
+	current, _, err := f.client.Recent(f.ctx, neighbor, 1, "")
+	if err != nil || len(current.Turns) != 1 || current.Turns[0].ID != neighborTurn || current.Turns[0].Status != "inProgress" {
+		t.Fatal("external server or neighboring turn was changed", err)
+	}
+}
+
+func TestWebOnlyExplicitHandoffFromTrackedCLI(t *testing.T) {
+	product := os.Getenv("CODEXM_HANDOFF_TEST_BINARY")
+	if !filepath.IsAbs(product) {
+		t.Skip("requires an isolated CodexM binary and tmux")
+	}
+	if _, err := tmux(context.Background(), CodexTmuxServer, "has-session", "-t", "="+WorkspaceSession); err != nil {
+		t.Skip("run the tracked CLI fixture from the default codexm workspace")
+	}
+	for _, mode := range []string{"immediate", "queue"} {
+		t.Run(mode, func(t *testing.T) { checkWebHandoffFromTrackedCLI(t, product, mode) })
+	}
+}
+
+func checkWebHandoffFromTrackedCLI(t *testing.T, product, mode string) {
+	t.Helper()
+	f := webOnlyFixture(t)
+	id := f.thread()
+	f.start(id, "INITIAL_TRUSTED_CLI_HISTORY")
+	f.completed(id, 1)
+	for _, method := range []string{"thread/archive", "thread/unarchive"} {
+		if err := f.client.Call(f.ctx, method, map[string]any{"threadId": id}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.c.Path = filepath.Join(f.cmd.Dir, "fixture.toml")
+	if err := f.c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	launch, err := OpenContinuation(f.ctx, f.c, product, id, "alpha", mode == "immediate", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = removeTerminal(f.ctx, launch) })
+	for until := time.Now().Add(15 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		source, err := readLast(f.c, id)
+		if err == nil {
+			err = verifyOwnedCLI(f.ctx, f.c, source)
+		}
+		if err == nil {
+			break
+		}
+		if time.Now().After(until) {
+			screen, _ := Screen(f.ctx, f.c, launch.Session)
+			t.Fatalf("launch did not record an owned CLI writer: %v\n%s", err, screen.Text)
+		}
+	}
+	if mode == "queue" {
+		if err := Input(f.ctx, f.c, launch.Session, "GUI_FIXTURE_ACTIVE_TRACKED_CLI", ""); err != nil {
+			t.Fatal(err)
+		}
+		assertFixtureModelLogin(t, f, "GUI_FIXTURE_ACTIVE_TRACKED_CLI", "alpha")
+	}
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	result, err := call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": mode,
+		"text": "WEB_FROM_TRACKED_CLI_FIXTURE", "switch_account": true})
+	if err != nil || result["thread_id"] != id {
+		t.Fatal("verified CLI did not release the selected chat", result, err)
+	}
+	if mode == "queue" {
+		if result["continuationStarted"] != true {
+			t.Fatal("the previous CLI turn did not continue", result)
+		}
+		assertFixtureModelLogin(t, f, ContinuePrompt, "beta")
+		q, err := w.readOwnedQueue(id)
+		if err != nil || len(q) != 2 || q[0].ResumedTurn == "" || q[1].State != "pending" {
+			t.Fatal("the new input did not wait behind the CLI continuation", q, err)
+		}
+		f.once.Do(func() { close(f.release) })
+		waitWebNativeTurn(t, f, w.connections["beta"], id, q[0].ResumedTurn, "completed")
+		for range 2 {
+			if err := w.advanceOwnedQueue(f.ctx, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	assertFixtureModelLogin(t, f, "WEB_FROM_TRACKED_CLI_FIXTURE", "beta")
+	if err := w.verifyOwner(f.ctx, w.connections["beta"], id, true); err != nil {
+		t.Fatal("the selected account is not the new writer", err)
+	}
+}
+
+func TestWebOnlyUnsentDraftUsesSelectedAccount(t *testing.T) {
+	f := webOnlyFixture(t)
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	created, err := call("web.create", map[string]any{"account": "alpha", "cwd": f.cmd.Dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created["thread"].(map[string]any)["id"].(string)
+	if _, err := call("web.history", map[string]any{"thread_id": id, "account": "beta"}); err != nil {
+		t.Fatal("changing the selected account hid the empty draft", err)
+	}
+	result, err := call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": "immediate", "text": "BETA_FIRST_INPUT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newID, _ := result["thread_id"].(string)
+	if newID == "" {
+		t.Fatal("first input did not return its official address")
+	}
+	assertFixtureModelLogin(t, f, "BETA_FIRST_INPUT", "beta")
+}
+
+func TestWebOnlyWaitsForForeignOwner(t *testing.T) {
+	f := webOnlyFixture(t)
+	id := f.thread()
+	turn := f.start(id, "GUI_FIXTURE_ACTIVE_FOREIGN")
+	w := NewWebChat(f.ctx, f.c)
+	defer w.Close()
+	call := webTestCall(t, w, f.ctx)
+	if _, err := call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": "immediate", "text": "IMMEDIATE_BLOCKED",
+		"switch_account": true}); !errors.Is(err, errWebOtherOwner) {
+		t.Fatal("foreign writer received direct input or was interrupted", err)
+	}
+	if _, err := call("web.send", map[string]any{"thread_id": id, "account": "beta", "mode": "queue", "text": "BETA_AFTER_RELEASE"}); err != nil {
+		t.Fatal(err)
+	}
+	if q, err := readWebQueue(f.ctx, f.client, id); err != nil || len(q.Data) != 0 {
+		t.Fatal("another app could consume the web-bound queue", err)
+	}
+	current, _, err := f.client.Recent(f.ctx, id, 1, "")
+	if err != nil || len(current.Turns) != 1 || current.Turns[0].ID != turn || current.Turns[0].Status != "inProgress" {
+		t.Fatal("foreign turn was altered", err)
+	}
+	f.once.Do(func() { close(f.release) })
+	f.completed(id, 1)
+	// Simulate the original window closing, without a GUI or process takeover.
+	f.client.Close()
+	select {
+	case <-f.client.ProcessDone:
+	case <-f.ctx.Done():
+		t.Fatal("fixture did not release its writer")
+	}
+	if err := w.dispatchQueued(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureModelLogin(t, f, "BETA_AFTER_RELEASE", "beta")
+}
+
+func webOnlyFixture(t *testing.T) *guiControlFixture {
+	t.Helper()
+	return webOnlyFixtureTransport(t, "stdio")
+}
+
+func webOnlyFixtureTransport(t *testing.T, transport string) *guiControlFixture {
+	t.Helper()
+	t.Setenv("CODEXM_WEB_ONLY", "true")
+	// The first fixture process is used as a passive reader or foreign writer.
+	// Only the later web-owned connections need distinct synthetic logins.
+	t.Setenv("CODEXM_GUI_FIXTURE_KEY", "fixture-original")
+	f := newGUIControlFixtureDuration(t, transport, 60*time.Second, func(f *guiControlFixture) {
+		setupWebFixtureLogins(t, f, "alpha", "beta")
+		if transport == "unix" {
+			if _, err := accounts.SetNativeDefault(f.c, "alpha"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	path := filepath.Join(f.c.Runtime.SharedCodexHome, "config.toml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The local fake model records which file-backed account made each request.
+	if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(b), "env_key='CODEXM_GUI_FIXTURE_KEY'\n", "")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func waitWebNativeTurn(t *testing.T, f *guiControlFixture, c *webConnection, id, turn, state string) {
+	t.Helper()
+	for until := time.Now().Add(12 * time.Second); time.Now().Before(until); {
+		chat, _, err := c.client.Recent(f.ctx, id, 10, "")
+		if err == nil {
+			for _, got := range chat.Turns {
+				if got.ID == turn && got.Status == state {
+					return
+				}
+			}
+		}
+		time.Sleep(60 * time.Millisecond)
+	}
+	t.Fatalf("turn did not reach %s", state)
+}
+
+func assertFixtureModelLogin(t *testing.T, f *guiControlFixture, marker, login string) {
+	t.Helper()
+	for until := time.Now().Add(12 * time.Second); time.Now().Before(until); {
+		f.mu.Lock()
+		matches := 0
+		for i, body := range f.bodies {
+			if !strings.Contains(body, marker) {
+				continue
+			}
+			matches++
+			if actual := fixtureLoginName(f.keys[i]); actual != login {
+				f.mu.Unlock()
+				t.Fatalf("model input %s was sent under %q, expected %q", marker, actual, login)
+			}
+		}
+		f.mu.Unlock()
+		if matches != 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("no model request received %s", marker)
+}
+
+func fixtureLoginName(header string) string {
+	parts := strings.Split(strings.TrimPrefix(header, "Bearer "), ".")
+	var claims struct{ Sub string }
+	if len(parts) == 3 {
+		b, _ := base64.RawURLEncoding.DecodeString(parts[1])
+		_ = json.Unmarshal(b, &claims)
+	}
+	return claims.Sub
+}

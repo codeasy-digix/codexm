@@ -164,10 +164,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else {
         match app.view {
             View::Chats => {
-                "↑↓ 이동 · Enter 연결/재개 · → 상세/계정 · / 검색 · A 보관 · R 갱신 · Q 종료"
+                "↑↓/ik 이동 · Enter 연결/재개 · →/l 상세/계정 · / 검색 · A 보관 · R 갱신 · Q 종료"
             }
-            View::Detail => "↑↓ 이번 계정 선택 · Enter 적용 후 목록 · → 채팅 관리 · ←/Esc 목록",
-            View::ChatManage => "↑↓ 메뉴 · Enter 선택 · ←/Esc 계정 선택 · F2 설정",
+            View::Detail => "↑↓/ik 계정 · Enter 적용 후 목록 · →/l 채팅 관리 · ←/j/Esc 목록",
+            View::ChatManage => "↑↓/ik 메뉴 · Enter 선택 · ←/j/Esc 계정 선택 · F2 설정",
             View::ChatConfirm => "←→ 선택 · Enter 확인 · Esc 취소",
             View::Settings => "↑↓ 이동 · Enter 설정/변경 · ←/Esc 목록 · F2 목록",
             View::Accounts => {

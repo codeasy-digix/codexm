@@ -45,9 +45,9 @@
   replay uncertain archive requests. Never delete native writer locks, edit native
   SQLite/rollouts, kill an unverified external CLI, silently fork, or assume unarchive
   guarantees takeover of a live writer. Preserve IDs, credentials, goals and budgets.
-- A verified macOS GUI writer may be stopped with SIGTERM only after an explicit
-  foreground terminal confirmation for that execution. Show that all GUI jobs
-  stop and do not auto-continue. Never persist consent, accept piped confirmation,
+- A native CLI handoff may stop a verified macOS GUI writer with SIGTERM only
+  after an explicit foreground terminal confirmation for that execution. Show that
+  all GUI jobs stop and do not auto-continue. Never persist consent, accept piped confirmation,
   SIGKILL the GUI, or retry uncertain archive mutations via process termination.
   Arm the bounded GUI-reopen helper before stopping it, reopen after the selected
   CLI owns its writer or on failure, and preserve unrelated CLI/daemon processes.
@@ -68,6 +68,13 @@
   and TUI account management may use a temporary isolated official auth server for
   add/re-login; never start conversation workers or restore retired policy.
   Keep login URLs/codes owner-scoped and out of logs/durable receipts.
+- The optional web catalog shares the desktop's native index, sections and
+  read-only legacy GUI project metadata. Preserve GUI project aliases, explicit
+  assignments/projectless choices and section order; never repair/import the
+  original data while listing it. Use keyset pagination over the read-only index,
+  independent of the selected login. Keep native-only projects separately visible.
+  Pin mutations use official section APIs, not a second web pin registry. Polling
+  must refresh all visible pages so moved/archived/deleted rows do not linger.
 - The Rust TUI owns one serial local stdio bridge to validated Go account/catalog
   code. No HTTP listener or per-keystroke subprocess. Restore terminal state and
   reap the owned bridge/auth helpers before exec into the official-CLI launcher.
@@ -77,9 +84,12 @@
   its own temporary grouped viewer, with an independent current window. Reap
   only that viewer when it disconnects; the workspace and jobs must survive.
   Never persist a viewer as a chat's durable location or retarget other clients.
-  The web reads the same terminals,
-  and forwards literal input. It does not interpret chat turns or run model logic.
-  Closing a web viewer must not stop the CLI. Never replay uncertain input.
+  Compatibility terminal endpoints still forward literal input. The optional
+  Meteor web frontend uses `bridge --stdio --web` for official app-server chat
+  pages, project metadata, queued input and expected-turn steer. It does not run
+  model logic or restore the old manager. Keep this bridge separate from the
+  normal TUI/menu bridge. Browsers do not own its process lifetime. Never replay
+  uncertain input or take over an unrelated GUI/CLI writer.
 - Before a fresh resume, find an existing interactive CLI by its writer file,
   process incarnation and pane ancestry, including ordinary codex launches.
   Connecting preserves the running authentication and submits no continuation.
@@ -95,6 +105,10 @@
   never expose the native listener or retain plaintext passwords. Its bridge methods
   are an explicit allowlist. Render user/native output as text. No shell evaluation
   of thread IDs, account names, input, directory names or terminal keys.
+- The web sidebar's manual GUI quit requires fresh browser confirmation for each
+  request. Default to cancel and explain that all GUI jobs stop. Bind confirmation
+  to the authenticated browser and verified signed app process. Send one SIGTERM
+  to that app only. A later web resume uses the existing writer checks.
 - Keep running work and old metadata. During migration retire only verified idle
   legacy product services; do not stop official Codex, GUI or unrelated tmux jobs.
   All new jobs use named windows in the default server’s single `codexm` session.
@@ -107,7 +121,8 @@
   an isolated tmux PTY. Use synthetic accounts/chats for handoff tests.
   Report unsupported ownership cases instead of hiding failures.
 - This repository alone owns source, builds, installation, updates and product docs.
-  `.home` only registers an installed command and loads personal shell settings.
+  `.home` registers installed commands, personal shell settings and host-specific
+  OS service definitions for the installed foreground web command.
   Never restore product cloning/pins/build/install/update helpers there.
 - Prefer Rust for new native modules and standalone data/file processing tools.
   Reuse the root Cargo workspace, locked dependencies, and `crates/` libraries.

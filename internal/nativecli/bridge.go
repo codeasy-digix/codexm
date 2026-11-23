@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/codeasy-digix/codexm/internal/accounts"
@@ -228,6 +229,16 @@ func mutate(c config.Config, r Request, call func() (any, error), persistResult 
 }
 
 func Serve(ctx context.Context, c config.Config, self string, in io.Reader, out io.Writer) error {
+	return serve(ctx, c, self, in, out, nil)
+}
+
+func ServeWeb(ctx context.Context, c config.Config, self string, in io.Reader, out io.Writer) error {
+	web := NewWebChat(ctx, c)
+	defer web.Close()
+	return serve(ctx, c, self, in, out, web)
+}
+
+func serve(ctx context.Context, c config.Config, self string, in io.Reader, out io.Writer, web *WebChat) error {
 	logins := newLoginSession(ctx)
 	defer logins.Close()
 	s := bufio.NewScanner(in)
@@ -246,8 +257,26 @@ func Serve(ctx context.Context, c config.Config, self string, in io.Reader, out 
 			e = statErr
 		}
 		var result any
+		if e == nil && r.Version != 1 {
+			e = errors.New("unsupported bridge protocol")
+		}
 		if e == nil {
-			if r.Method == "login.start" || r.Method == "login.status" || r.Method == "login.cancel" {
+			if web != nil && r.Method == "capabilities" {
+				result = map[string]any{"protocolVersion": 1, "generation": "native-web-chat-v1", "methods": webBridgeMethods()}
+			} else if web != nil && !webSharedMethod(r.Method) {
+				e = errors.New("terminal control and menu activation are not available in the chat web bridge")
+			} else if web != nil && r.Method == "snapshot" {
+				var accounts []Account
+				accounts, e = Accounts(current)
+				result = map[string]any{"accounts": accounts, "mode": "native-web-chat"}
+			} else if web != nil && strings.HasPrefix(r.Method, "web.") {
+				if current.Runtime.SharedCodexHome != web.c.Runtime.SharedCodexHome || current.Runtime.AccountsDir != web.c.Runtime.AccountsDir || current.Runtime.CodexBinary != web.c.Runtime.CodexBinary || current.Runtime.WebGUIRelay != web.c.Runtime.WebGUIRelay || current.StateDir() != web.c.StateDir() {
+					e = errors.New("web runtime paths changed; finish its work before restarting the web service")
+				} else {
+					web.c.AccountRegistry = current.AccountRegistry
+					result, e = web.Dispatch(ctx, r)
+				}
+			} else if r.Method == "login.start" || r.Method == "login.status" || r.Method == "login.cancel" {
 				result, e = logins.Dispatch(current, r)
 			} else {
 				result, e = Dispatch(ctx, current, self, r)

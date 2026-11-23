@@ -107,6 +107,9 @@ func accountCommand(ctx context.Context, c config.Config, args []string) error {
 		fmt.Printf("Removed registration: %s. Login files, native default, conversations and historical job records were preserved.\n", name)
 		return nil
 	}
+	if _, err := accounts.NativeStoragePinned(c); err != nil {
+		return err
+	}
 	var result *os.File
 	if !positionalDefault && !*nativeDefault {
 		var err error

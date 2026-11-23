@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/codeasy-digix/codexm/internal/accounts"
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
 	"github.com/codeasy-digix/codexm/internal/nativecli"
@@ -41,6 +42,7 @@ codexm web [status|stop|logs]                 Optional compatibility web (separa
 codexm web user --username NAME              Configure the independent web login
 codexm web --public-origin https://HOST      Use an authenticated HTTPS reverse proxy
 codexm doctor                               Check native CLI and local paths
+codexm doctor --pin-shared-storage          Configure one local SQLite home for Codex
 codexm shell-init zsh                        Shell integration
 
 Unlocked chats resume directly; archived chats are unarchived first.
@@ -106,7 +108,7 @@ func Main(args []string) error {
 		fmt.Print(compactHelp)
 		return nil
 	}
-	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "migrate-toolbar": true, "terminal": true, "web": true, "__web": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}
+	allowed := map[string]bool{"": true, "list": true, "status": true, "resume": true, "open": true, "account": true, "accounts": true, "migrate-toolbar": true, "terminal": true, "web": true, "__web": true, "__web-gui-relay": true, "__native-run": true, "__gui-reopen": true, "__handoff": true, "handoff": true, "handoff-status": true, "usage": true, "bridge": true, "doctor": true}
 	if !allowed[command] {
 		return fmt.Errorf("%q is excluded from compact codexm; use list, resume, account or web (existing work is preserved)", command)
 	}
@@ -214,7 +216,11 @@ func Main(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(r)
 	case "web":
-		return webhost.Command(ctx, c, self, args, os.Stdout)
+		webctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+		return webhost.Command(webctx, c, self, args, os.Stdout)
+	case "__web-gui-relay":
+		return nativecli.RunWebGUIRelay(ctx, c, args, os.Stdout)
 	case "__web":
 		if len(args) != 1 {
 			return errors.New("missing web launch spec")
@@ -235,20 +241,42 @@ func Main(args []string) error {
 		}
 		return nativecli.RunSession(ctx, c, args[0])
 	case "bridge":
-		if len(args) != 1 || args[0] != "--stdio" {
-			return errors.New("usage: codexm bridge --stdio")
+		if (len(args) != 1 && len(args) != 2) || args[0] != "--stdio" || (len(args) == 2 && args[1] != "--web") {
+			return errors.New("usage: codexm bridge --stdio [--web]")
 		}
 		bridgectx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
+		if len(args) == 2 {
+			return nativecli.ServeWeb(bridgectx, c, self, os.Stdin, os.Stdout)
+		}
 		return nativecli.Serve(bridgectx, c, self, os.Stdin, os.Stdout)
 	case "doctor", "status":
 		f := flag.NewFlagSet(command, flag.ContinueOnError)
 		jsonOutput := f.Bool("json", false, "JSON summary")
+		var pinStorage bool
+		if command == "doctor" {
+			f.BoolVar(&pinStorage, "pin-shared-storage", false, "set native sqlite_home to the shared Codex home")
+		}
 		if err := f.Parse(args); err != nil {
 			return err
 		}
 		if f.NArg() != 0 {
 			return errors.New("unexpected status argument")
+		}
+		if pinStorage {
+			backup, err := accounts.PinNativeStorage(c)
+			if err != nil {
+				return err
+			}
+			home := config.Expand(c.Runtime.SharedCodexHome)
+			if *jsonOutput {
+				return json.NewEncoder(os.Stdout).Encode(map[string]string{"sqlite_home": home, "configuration_backup": backup})
+			}
+			fmt.Printf("Shared Codex SQLite home: %s\n", home)
+			if backup != "" {
+				fmt.Printf("Configuration backup: %s\n", backup)
+			}
+			return nil
 		}
 		r, e := nativecli.Resolver(c)
 		if e != nil {
@@ -264,10 +292,16 @@ func Main(args []string) error {
 				archived++
 			}
 		}
-		if *jsonOutput {
-			return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "native-cli", "codex": r.Binary, "chats": len(list.Sessions), "archived": archived, "history": config.Expand(c.Runtime.SharedCodexHome), "manager": false, "scheduler": false, "history_sync": false, "tmux_server": nativecli.CodexTmuxServer, "tmux_session": nativecli.WorkspaceSession, "gui_restart": "confirm-each-time"})
+		storage := "CODEX_HOME fallback"
+		if pinned, err := accounts.NativeStoragePinned(c); err != nil {
+			storage = err.Error()
+		} else if pinned {
+			storage = "shared path configured"
 		}
-		fmt.Printf("Mode: official CLI handoff\nCodex: %s\nLocal chats: %d (%d archived)\nHistory: %s\nTmux: %s / session %s; GUI restart: confirm each time\nManager/scheduler/history-sync: excluded\n", r.Binary, len(list.Sessions), archived, config.Expand(c.Runtime.SharedCodexHome), nativecli.CodexTmuxServer, nativecli.WorkspaceSession)
+		if *jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "native-cli", "codex": r.Binary, "chats": len(list.Sessions), "archived": archived, "history": config.Expand(c.Runtime.SharedCodexHome), "sqlite_storage": storage, "manager": false, "scheduler": false, "history_sync": false, "tmux_server": nativecli.CodexTmuxServer, "tmux_session": nativecli.WorkspaceSession, "gui_restart": "confirm-each-time"})
+		}
+		fmt.Printf("Mode: official CLI handoff\nCodex: %s\nLocal chats: %d (%d archived)\nHistory: %s\nSQLite storage: %s\nTmux: %s / session %s; GUI restart: confirm each time\nManager/scheduler/history-sync: excluded\n", r.Binary, len(list.Sessions), archived, config.Expand(c.Runtime.SharedCodexHome), storage, nativecli.CodexTmuxServer, nativecli.WorkspaceSession)
 		return nil
 	case "terminal":
 		if len(args) != 1 {

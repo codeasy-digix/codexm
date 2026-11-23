@@ -55,6 +55,26 @@ func TestServiceKeepsRecordedDomainAcrossSessionChanges(t *testing.T) {
 	}
 }
 
+func TestWebServiceRunsOnlyItsForegroundWebHost(t *testing.T) {
+	c := config.Defaults()
+	c.Path = "/home/test/web config.toml"
+	c.Storage.StateDir = "/home/test/web state"
+	m := Manager{Config: c, Self: "/opt/codexm/codexm", Kind: "web"}
+	for _, platform := range []string{"darwin", "linux"} {
+		b, err := m.Definition(platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(b)
+		if !strings.Contains(text, "__web") || !strings.Contains(text, "launch.json") || strings.Contains(text, "__service") || strings.Contains(text, "tmux") {
+			t.Fatalf("web definition started the wrong host: %s", text)
+		}
+	}
+	if !strings.HasPrefix(m.Label(), "org.codeasy.codexm.web") {
+		t.Fatal(m.Label())
+	}
+}
+
 func TestStoppedServiceDoesNotAutostart(t *testing.T) {
 	c := config.Defaults()
 	c.Storage.StateDir = t.TempDir()

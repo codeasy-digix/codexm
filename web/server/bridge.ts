@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 export type BridgeError = Error & { code?: string; retryable?: boolean };
 type Pending = {
+  message: string;
   resolve: (value: any) => void;
   reject: (reason: Error) => void;
   timer: NodeJS.Timeout;
@@ -13,9 +14,11 @@ type Pending = {
 export class BridgeClient extends EventEmitter {
   private child?: ChildProcessWithoutNullStreams;
   private pending = new Map<string, Pending>();
+  private active?: string;
   private closing = false;
   private buffer = "";
   private restart?: NodeJS.Timeout;
+  get busy() { return this.active !== undefined || this.pending.size !== 0; }
   constructor(
     readonly binary: string,
     readonly config: string,
@@ -28,7 +31,7 @@ export class BridgeClient extends EventEmitter {
     if (this.child || this.closing) return;
     const child = spawn(
       this.binary,
-      ["--config", this.config, "bridge", "--stdio"],
+      ["--config", this.config, "bridge", "--stdio", "--web"],
       { shell: false, stdio: "pipe" },
     );
     this.child = child;
@@ -53,15 +56,17 @@ export class BridgeClient extends EventEmitter {
             this.emit("notification", reply);
             continue;
           }
+          if (reply.id !== this.active) continue;
+          this.active = undefined;
           const pending = this.pending.get(reply.id);
-          if (!pending) continue;
-          clearTimeout(pending.timer);
-          this.pending.delete(reply.id);
-          if (reply.error)
-            pending.reject(
-              Object.assign(new Error(reply.error.message), reply.error),
-            );
-          else pending.resolve(reply.result);
+          if (pending) {
+            clearTimeout(pending.timer);
+            this.pending.delete(reply.id);
+            if (reply.error)
+              pending.reject(Object.assign(new Error(reply.error.message), reply.error));
+            else pending.resolve(reply.result);
+          }
+          this.sendNext();
         } catch {
           child.kill();
         }
@@ -71,19 +76,21 @@ export class BridgeClient extends EventEmitter {
     child.on("close", () => {
       if (this.child !== child) return;
       this.child = undefined;
-      for (const p of this.pending.values()) {
+      for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
+        const unknown = p.mutation && id === this.active;
         p.reject(
           Object.assign(
             new Error(
-              p.mutation
+              unknown
                 ? "응답을 확인하지 못했습니다. 작업 상태를 확인한 뒤 진행하세요."
-                : "관리 연결이 끊어졌습니다.",
+                : "관리 연결이 준비되지 않았습니다. 다시 시도해 주세요.",
             ),
-            { code: p.mutation ? "outcome_unknown" : "service_unavailable" },
+            { code: unknown ? "outcome_unknown" : "service_unavailable" },
           ),
         );
       }
+      this.active = undefined;
       this.pending.clear();
       this.emit("notification", { method: "resync" });
       if (!this.closing)
@@ -91,6 +98,23 @@ export class BridgeClient extends EventEmitter {
           this.start();
           this.emit("notification", { method: "resync" });
         }, 1000);
+    });
+  }
+  private sendNext() {
+    const child = this.child;
+    if (!child || this.active !== undefined || this.closing) return;
+    let next: [string, Pending] | undefined;
+    // The native bridge is serial. Keep queued reads here so user mutations
+    // can overtake them while preserving the order of those mutations.
+    for (const entry of this.pending) {
+      next ??= entry;
+      if (entry[1].mutation) { next = entry; break; }
+    }
+    if (!next) return;
+    const [id, request] = next;
+    this.active = id;
+    child.stdin.write(request.message, (error) => {
+      if (error) child.kill();
     });
   }
   call(
@@ -120,20 +144,19 @@ export class BridgeClient extends EventEmitter {
       return Promise.reject(new Error("요청이 너무 큽니다."));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        const sent = id === this.active;
         this.pending.delete(id);
         reject(
           Object.assign(
-            new Error(
-              "응답 대기 시간이 초과되었습니다. 작업 상태를 확인하세요.",
-            ),
-            { code: mutation ? "outcome_unknown" : "timeout" },
+            new Error(sent
+              ? "응답 대기 시간이 초과되었습니다. 작업 상태를 확인하세요."
+              : "서버가 바빠 요청을 보내지 못했습니다. 다시 시도해 주세요."),
+            { code: sent && mutation ? "outcome_unknown" : "timeout" },
           ),
         );
       }, 125_000);
-      this.pending.set(id, { resolve, reject, timer, mutation });
-      this.child!.stdin.write(message + "\n", (error) => {
-        if (error) this.child?.kill();
-      });
+      this.pending.set(id, { message: message + "\n", resolve, reject, timer, mutation });
+      this.sendNext();
     });
   }
   close() {

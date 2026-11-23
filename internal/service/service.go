@@ -48,6 +48,9 @@ type Status struct {
 }
 
 func (m Manager) kind() string {
+	if m.Kind == "web" {
+		return "web"
+	}
 	if m.Kind == "watchdog" {
 		return "watchdog"
 	}
@@ -131,10 +134,21 @@ func (m Manager) Definition(platform string) ([]byte, error) {
 		mode = "__daemon-watchdog"
 	}
 	args := []string{m.Self, "--config", m.Config.Path, mode}
+	if m.kind() == "web" {
+		args = []string{m.Self, "--config", m.Config.Path, "__web", filepath.Join(m.Config.StateDir(), "web", "launch.json")}
+	}
 	if platform == "darwin" {
 		var a strings.Builder
 		for _, v := range args {
 			fmt.Fprintf(&a, "<string>%s</string>", xmlText(v))
+		}
+		webHome := ""
+		if m.kind() == "web" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, err
+			}
+			webHome = "<key>HOME</key><string>" + xmlText(home) + "</string>"
 		}
 		return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -142,20 +156,28 @@ func (m Manager) Definition(platform string) ([]byte, error) {
 <key>Label</key><string>%s</string><key>ProgramArguments</key><array>%s</array>
 <key>LimitLoadToSessionType</key><array><string>Aqua</string><string>Background</string></array>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-<key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string></dict>
+<key>EnvironmentVariables</key><dict><key>PATH</key><string>%s</string>%s</dict>
 <key>ThrottleInterval</key><integer>5</integer><key>ExitTimeOut</key><integer>30</integer>
 <key>AbandonProcessGroup</key><true/><key>ProcessType</key><string>Background</string>
 <key>Umask</key><integer>63</integer>
 <key>StandardOutPath</key><string>%s</string><key>StandardErrorPath</key><string>%s</string>
 </dict></plist>
-`, xmlText(m.Label()), a.String(), xmlText(servicePath()), xmlText(m.LogPath()), xmlText(m.LogPath()))), nil
+`, xmlText(m.Label()), a.String(), xmlText(servicePath()), webHome, xmlText(m.LogPath()), xmlText(m.LogPath()))), nil
 	}
 	if platform == "linux" {
 		quoted := make([]string, len(args))
 		for i, v := range args {
 			quoted[i] = unitText(v)
 		}
-		return []byte(fmt.Sprintf("[Unit]\nDescription=codexm %s\nStartLimitIntervalSec=60\nStartLimitBurst=10\n\n[Service]\nType=simple\nExecStart=:%s\nEnvironment=%s\nRestart=on-failure\nRestartSec=5\nKillMode=process\nTimeoutStopSec=30\nUMask=0077\nStandardOutput=append:%s\nStandardError=append:%s\n\n[Install]\nWantedBy=default.target\n", m.kind(), strings.Join(quoted, " "), unitText("PATH="+servicePath()), unitText(m.LogPath()), unitText(m.LogPath()))), nil
+		webHome := ""
+		if m.kind() == "web" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, err
+			}
+			webHome = "Environment=" + unitText("HOME="+home) + "\n"
+		}
+		return []byte(fmt.Sprintf("[Unit]\nDescription=codexm %s\nStartLimitIntervalSec=60\nStartLimitBurst=10\n\n[Service]\nType=simple\nExecStart=:%s\nEnvironment=%s\n%sRestart=on-failure\nRestartSec=5\nKillMode=process\nTimeoutStopSec=30\nUMask=0077\nStandardOutput=append:%s\nStandardError=append:%s\n\n[Install]\nWantedBy=default.target\n", m.kind(), strings.Join(quoted, " "), unitText("PATH="+servicePath()), webHome, unitText(m.LogPath()), unitText(m.LogPath()))), nil
 	}
 	return nil, errors.New("user services are supported on macOS and Linux")
 }

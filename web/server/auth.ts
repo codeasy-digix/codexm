@@ -14,6 +14,8 @@ const digest = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 const secret = () => randomBytes(32).toString("base64url");
 const derive = promisify(pbkdf2);
+const day = 24 * 60 * 60 * 1000;
+const sessionLifetime = 90 * day;
 type Login = { username: string; algorithm: string; iterations: number; salt: string; hash: string };
 type Session = { owner: string; expires: number; credential?: string };
 export class LoginError extends Error {
@@ -78,6 +80,12 @@ export class LocalAuth {
     if (this.secure && !row) throw new Error("web login is unavailable");
     return row ? digest(JSON.stringify(row)) : "";
   }
+  notificationScope() { return digest(this.origin + "\0" + this.credential()); }
+  notificationOwner(session: string) {
+    const row = this.sessions.get(session);
+    if (!this.validSession(row)) throw new LoginError("로그인이 필요합니다.");
+    return row!.owner;
+  }
   private validSession(session: Session | undefined) {
     return !!session && session.expires > this.now() && (session.credential || "") === this.credential();
   }
@@ -105,7 +113,7 @@ export class LocalAuth {
     } finally { this.inFlight--; }
   }
   cookie(token: string, expire = false) {
-    return `codexm_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${expire ? 0 : 28800}${this.secure ? "; Secure" : ""}`;
+    return `codexm_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${expire ? 0 : sessionLifetime / 1000}${this.secure ? "; Secure" : ""}`;
   }
   private save() {
     const path = join(this.dir, "sessions.json");
@@ -161,13 +169,13 @@ export class LocalAuth {
       throw new Error("브라우저 세션 한도를 초과했습니다.");
     this.sessions.set(digest(cookie), {
       owner: secret(),
-      expires: now + 8 * 60 * 60 * 1000,
+      expires: now + sessionLifetime,
       credential: this.credential(),
     });
     this.save();
     return cookie;
   }
-  session(cookieHeader: string | undefined) {
+  private activeSession(cookieHeader: string | undefined) {
     const token = cookieHeader
       ?.split(";")
       .map((v) => v.trim())
@@ -176,13 +184,33 @@ export class LocalAuth {
     if (!token || token.length > 128) return null;
     const key = digest(token),
       s = this.sessions.get(key);
-    return this.validSession(s) ? key : null;
+    return s && this.validSession(s) ? { key, token, row: s } : null;
+  }
+  session(cookieHeader: string | undefined) {
+    return this.activeSession(cookieHeader)?.key ?? null;
+  }
+  resume(cookieHeader: string | undefined) {
+    const current = this.activeSession(cookieHeader);
+    if (!current) throw new LoginError("로그인이 필요합니다.");
+    const { key, token, row } = current;
+    const expires = this.now() + sessionLifetime;
+    if (row.expires > expires - day) return { session: key };
+    // Keep the same browser owner and token while extending both server and
+    // cookie expiry. A legacy session that is still valid is renewed here too.
+    this.sessions.set(key, { ...row, expires });
+    try {
+      this.save();
+    } catch {
+      this.sessions.set(key, row);
+      throw new LoginError("로그인 유지 상태를 저장하지 못했습니다.", 503);
+    }
+    return { session: key, cookie: this.cookie(token) };
   }
   ticket(session: string) {
-    if (!this.validSession(this.sessions.get(session))) throw new Error("인증이 필요합니다.");
+    if (!this.validSession(this.sessions.get(session))) throw new LoginError("인증이 필요합니다.");
     for (const [key, value] of this.tickets)
       if (value.expires <= this.now()) this.tickets.delete(key);
-    if (this.tickets.size >= 128) throw new Error("접속 요청이 너무 많습니다.");
+    if (this.tickets.size >= 128) throw new LoginError("접속 요청이 너무 많습니다.", 429);
     const token = secret();
     this.tickets.set(digest(token), { session, expires: this.now() + 30_000 });
     return token;

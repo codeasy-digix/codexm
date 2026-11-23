@@ -1,4 +1,26 @@
-# Local bridge v1
+# Local bridges
+
+The active compact bridge is `codexm bridge --stdio`, with the account/catalog/
+terminal allowlist in `internal/nativecli/bridge.go` and the Rust/Swift frontend
+contract. It does not start the historical supervisor described below.
+
+The optional Meteor client explicitly uses `bridge --stdio --web`. Its methods
+are the shared account/login methods plus `WebMethods` in
+`internal/nativecli/web_chat.go`. It excludes terminal controls, the old archive
+endpoints and menu usage activation. `snapshot` returns only account display
+metadata; it never scans all conversations once a second. Chat pages use
+`web.catalog/history/items/item/models`, and writes use create/send/interrupt/pin/move/
+archive/delete/projectCreate/respond. `web.pending` reads pending native requests.
+Mutations require the authenticated browser owner and an operation ID. Native
+ChatGPT identity, writer ownership and expected active turn are validated where
+needed. No native DB/history/lock writes or automatic input replay are allowed.
+
+`web/imports/contracts/web.ts` declares that exact optional surface. Meteor
+compares it with live capabilities before enabling requests. Normal TUI/menu
+capabilities remain unchanged. See [web usage](../docs/local-web.md) and the
+[verification record](../docs/web-chat-core-progress.md).
+
+## Historical supervisor bridge (legacy builds only)
 
 `codexm --config PATH bridge --stdio` exchanges one UTF-8 JSON message per line.
 Stdout contains only protocol messages. The caller owns this child, not workers.

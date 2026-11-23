@@ -94,6 +94,31 @@ INSERT INTO threads VALUES('cli-old','old title','saved title','/work','cli',1,1
 	}
 }
 
+func TestArchivedReadsOnlySelectedRowAndSeesWALUpdates(t *testing.T) {
+	home := t.TempDir()
+	filename := filepath.Join(home, "state_5.sqlite")
+	db := writer(t, filename, `CREATE TABLE threads(id TEXT PRIMARY KEY,archived INTEGER);INSERT INTO threads VALUES('selected',0),('another',1);`)
+	before, _ := os.ReadFile(filename + "-wal")
+	value, err := Archived(context.Background(), home, "selected")
+	if err != nil || value {
+		t.Fatal(value, err)
+	}
+	after, _ := os.ReadFile(filename + "-wal")
+	if sha256.Sum256(before) != sha256.Sum256(after) {
+		t.Fatal("archive read changed native WAL")
+	}
+	if _, err = db.Exec(`UPDATE threads SET archived=1 WHERE id='selected'`); err != nil {
+		t.Fatal(err)
+	}
+	value, err = Archived(context.Background(), home, "selected")
+	if err != nil || !value {
+		t.Fatal("missed committed WAL", value, err)
+	}
+	if _, err = Archived(context.Background(), home, "missing"); err != sql.ErrNoRows {
+		t.Fatal("missing chat became unarchived", err)
+	}
+}
+
 func TestNativeSchemaVersionsAndMissingIndexAreSafe(t *testing.T) {
 	home := t.TempDir()
 	list, err := Read(context.Background(), home)
@@ -108,10 +133,14 @@ func TestNativeSchemaVersionsAndMissingIndexAreSafe(t *testing.T) {
 		t.Fatal("read-only open created database")
 	}
 	writer(t, filepath.Join(home, "state_9.sqlite"), `CREATE TABLE threads(id TEXT,title TEXT,updated_at INTEGER); INSERT INTO threads VALUES('older','older',1);`)
-	writer(t, filepath.Join(home, "state_10.sqlite"), `CREATE TABLE threads(id TEXT,title TEXT,updated_at INTEGER,new_optional_column TEXT); INSERT INTO threads VALUES('newer','newer',3,'ignored');`)
+	writer(t, filepath.Join(home, "state_10.sqlite"), `CREATE TABLE threads(id TEXT,title TEXT,updated_at INTEGER,rollout_path TEXT,new_optional_column TEXT); INSERT INTO threads VALUES('newer','older schema title',3,'/rollout.jsonl','ignored');`)
 	list, err = Read(context.Background(), home)
 	if err != nil || len(list.Sessions) != 1 || list.Sessions[0].ID != "newer" || list.Sessions[0].UpdatedAt != 3000 {
 		t.Fatal("schema version/optional fields", err, list)
+	}
+	rollouts, err := RecentLocalRollouts(context.Background(), home, 2000)
+	if err != nil || len(rollouts) != 1 || rollouts[0].Title != "older schema title" {
+		t.Fatal("recent rollout title in an older schema", err, rollouts)
 	}
 	writer(t, filepath.Join(home, "state_11.sqlite"), `CREATE TABLE threads(renamed_id TEXT);`)
 	_, err = Read(context.Background(), home)

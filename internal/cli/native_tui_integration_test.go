@@ -66,6 +66,10 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	if _, err = db.Exec(`INSERT INTO threads VALUES('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee','보관 작업',?,10,1);`, root); err != nil {
 		t.Fatal(err)
 	}
+	secondID := "99999999-8888-4777-8666-555555555555"
+	if _, err = db.Exec(`INSERT INTO threads VALUES(?,?,?,15,0);`, secondID, "다른 진행 작업", root); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 	last := filepath.Join(c.StateDir(), "native-cli", "last")
 	os.MkdirAll(last, 0700)
@@ -141,10 +145,24 @@ func TestNativeTUIThroughOwnedTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal("expected one owned bridge", err)
 	}
-	send("Right")
+	waitText(id)
+	send("k")
+	waitText(secondID)
+	send("i")
+	waitText(id)
+	send("l")
 	waitText("Enter 적용 후 목록")
-	send("Left")
+	send("l")
+	waitText("↑↓/ik 메뉴")
+	send("j")
+	waitText("Enter 적용 후 목록")
+	send("j")
 	waitText("Enter 연결/재개")
+	send("/", "ijkl")
+	waitText("/ijkl_")
+	waitText("검색 입력")
+	send("Enter", "Escape")
+	waitText(id)
 	send("F2")
 	waitText("전역 설정")
 	send("Down", "Enter")

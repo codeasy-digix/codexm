@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>org.codeasy.codexm.https</string>
+  <key>ProgramArguments</key><array>
+    <string>{{CADDY_BINARY}}</string>
+    <string>run</string>
+    <string>--config</string><string>{{CADDY_CONFIG}}</string>
+    <string>--adapter</string><string>caddyfile</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>HOME</key><string>{{HOME}}</string>
+    <key>CODEXM_PUBLIC_HOST</key><string>{{PUBLIC_HOST}}</string>
+    <key>CODEXM_CERT_EMAIL</key><string>{{CERT_EMAIL}}</string>
+    <key>CODEXM_TLS_STORAGE</key><string>{{TLS_STORAGE}}</string>
+    <key>CODEXM_HTTPS_LOG</key><string>{{HTTPS_LOG}}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ExitTimeOut</key><integer>30</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>LimitLoadToSessionType</key><array><string>Aqua</string><string>Background</string></array>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>{{SERVICE_LOG}}</string>
+  <key>StandardErrorPath</key><string>{{SERVICE_LOG}}</string>
+</dict></plist>

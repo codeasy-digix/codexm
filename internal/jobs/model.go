@@ -82,6 +82,7 @@ type Goal struct {
 	TokenBudget     *int64 `json:"tokenBudget,omitempty"`
 	TokensUsed      int64  `json:"tokensUsed"`
 	TimeUsedSeconds int64  `json:"timeUsedSeconds"`
+	CreatedAt       int64  `json:"createdAt,omitempty"`
 }
 type Request struct {
 	ID     json.RawMessage `json:"id"`

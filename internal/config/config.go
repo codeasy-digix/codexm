@@ -77,6 +77,7 @@ type Config struct {
 		Controller      string `toml:"controller,omitempty"`
 		CodexBinary     string `toml:"codex_binary,omitempty"`
 		WebNodeBinary   string `toml:"web_node_binary,omitempty"`
+		WebGUIRelay     string `toml:"web_gui_relay,omitempty"`
 		EnginesDir      string `toml:"engines_dir"`
 	} `toml:"runtime"`
 	Storage struct {

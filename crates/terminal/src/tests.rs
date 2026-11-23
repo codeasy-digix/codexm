@@ -43,6 +43,84 @@ fn enter_directly_hands_off_last_registered_account_or_default() {
         matches!(key(&mut app,KeyCode::Enter),Action::Resume{thread,account} if thread=="three"&&account=="default")
     );
 }
+
+#[test]
+fn ijkl_navigates_chats_and_panels_and_preserves_pending_account() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char('i'));
+    assert_eq!(app.selected, 0);
+    key(&mut app, KeyCode::Char('k'));
+    key(&mut app, KeyCode::Char('k'));
+    assert!(
+        matches!(key(&mut app, KeyCode::Enter), Action::Resume { thread, account } if thread == "two" && account == "default")
+    );
+    key(&mut app, KeyCode::Char('i'));
+    key(&mut app, KeyCode::Char('j'));
+    assert!(app.view == View::Chats);
+    key(&mut app, KeyCode::Char('l'));
+    assert!(app.view == View::Detail);
+    assert_eq!(app.detail_account, 2);
+    key(&mut app, KeyCode::Char('i'));
+    key(&mut app, KeyCode::Char('l'));
+    assert!(app.view == View::ChatManage);
+    assert_eq!(app.managed_chat.as_ref().unwrap().id, "one");
+    key(&mut app, KeyCode::Char('k'));
+    assert_eq!(app.chat_action, 1);
+    key(&mut app, KeyCode::Char('i'));
+    assert_eq!(app.chat_action, 0);
+    key(&mut app, KeyCode::Char('j'));
+    assert!(app.view == View::Detail);
+    assert_eq!(app.detail_account, 1);
+    assert_eq!(app.preferred(app.chat().unwrap()), "beta");
+    key(&mut app, KeyCode::Enter);
+    assert!(app.view == View::Chats);
+    assert!(
+        matches!(key(&mut app, KeyCode::Enter), Action::Resume { thread, account } if thread == "one" && account == "alpha")
+    );
+}
+
+#[test]
+fn ijkl_preserves_text_entry_modifiers_confirmation_and_login_shortcut() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char('/'));
+    for ch in "ijkl".chars() {
+        key(&mut app, KeyCode::Char(ch));
+    }
+    assert_eq!(app.query, "ijkl");
+    assert!(app.searching && app.view == View::Chats);
+    key(&mut app, KeyCode::Enter);
+    key(&mut app, KeyCode::Esc);
+    for modifier in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::SHIFT,
+    ] {
+        app.key(KeyEvent::new(KeyCode::Char('k'), modifier));
+        app.key(KeyEvent::new(KeyCode::Char('l'), modifier));
+        assert_eq!(app.selected, 0);
+        assert!(app.view == View::Chats);
+    }
+    key(&mut app, KeyCode::Char('l'));
+    key(&mut app, KeyCode::Char('l'));
+    key(&mut app, KeyCode::Enter);
+    assert!(app.view == View::ChatConfirm);
+    key(&mut app, KeyCode::Char('l'));
+    assert!(!app.confirm_yes);
+    assert!(matches!(key(&mut app, KeyCode::Enter), Action::None));
+    key(&mut app, KeyCode::F(2));
+    key(&mut app, KeyCode::Enter);
+    assert!(app.view == View::Accounts);
+    key(&mut app, KeyCode::Char('l'));
+    assert!(app.view == View::AuthMode);
+    assert_eq!(app.nickname, "alpha");
+    key(&mut app, KeyCode::Esc);
+    key(&mut app, KeyCode::Char('a'));
+    for ch in "ijkl".chars() {
+        key(&mut app, KeyCode::Char(ch));
+    }
+    assert!(app.view == View::Nickname);
+    assert_eq!(app.nickname, "ijkl");
+}
 #[test]
 fn right_changes_only_this_launch_left_cancels_and_refresh_keeps_choice() {
     let mut app = app();

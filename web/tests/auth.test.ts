@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalAuth } from "../server/auth.ts";
@@ -53,8 +53,41 @@ test("one-time local access, origin checks, ticket replay, owner continuity and 
     assert.throws(() => auth.authenticate("late", late, () => {}));
     assert.equal(auth.logout(session), first);
     assert.throws(() => auth.require("reconnected"));
-    now += 8 * 3600000;
-    assert.equal(restored.session("codexm_session=" + cookie), null);
+    assert.equal(new LocalAuth(dir, "http://127.0.0.1:4317", () => now).session("codexm_session=" + cookie), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("a valid legacy cookie renews across restarts with the same browser owner", () => {
+  const dir = mkdtempSync(join(tmpdir(), "codexm-resume-"));
+  const origin = "http://127.0.0.1:4317", day = 24 * 3600000;
+  let now = 1000;
+  try {
+    const auth = new LocalAuth(dir, origin, () => now);
+    const token = auth.exchange(readFileSync(join(dir, "access"), "utf8").trim(), "fixture");
+    const cookie = "codexm_session=" + token;
+    const session = auth.session(cookie)!;
+    const owner = auth.authenticate("initial", auth.ticket(session), () => {});
+    const filename = join(dir, "sessions.json");
+    const stored = JSON.parse(readFileSync(filename, "utf8"));
+    stored[0][1].expires = now + 8 * 3600000;
+    writeFileSync(filename, JSON.stringify(stored));
+
+    now += 7 * 3600000;
+    const updated = new LocalAuth(dir, origin, () => now);
+    const renewed = updated.resume(cookie);
+    assert.equal(renewed.session, session);
+    assert.match(renewed.cookie!, /Max-Age=7776000$/);
+    assert.equal(updated.resume(cookie).cookie, undefined);
+    assert.ok(!readFileSync(filename, "utf8").includes(token));
+
+    now += 89 * day;
+    const reopened = new LocalAuth(dir, origin, () => now);
+    assert.equal(reopened.authenticate("reopened", reopened.ticket(reopened.resume(cookie).session), () => {}), owner);
+    now += 2 * day;
+    assert.equal(reopened.session(cookie), session);
+    now += 89 * day;
+    assert.throws(() => reopened.resume(cookie), { status: 401 });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

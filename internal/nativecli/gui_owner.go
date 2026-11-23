@@ -65,6 +65,9 @@ func writerProcesses(ctx context.Context, shared, id string) ([]int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	b, err := exec.CommandContext(ctx, "lsof", "-nP", "-t", "--", file).Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("cannot verify writer: %w", ctx.Err())
+	}
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
@@ -85,6 +88,9 @@ func writerProcesses(ctx context.Context, shared, id string) ([]int, error) {
 	}
 	return out, nil
 }
+
+const guiSigningRequirement = `=anchor apple generic and identifier "com.openai.codex" and certificate leaf[subject.OU] = "2DC432GLL2"`
+
 func verifyGUIApp(ctx context.Context, app string) error {
 	if runtime.GOOS != "darwin" || !filepath.IsAbs(app) || !strings.HasSuffix(app, ".app") {
 		return errors.New("GUI restart is supported only for the signed macOS Codex app")
@@ -92,8 +98,7 @@ func verifyGUIApp(ctx context.Context, app string) error {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	// Validate the installed app's identity, never its private IPC or UI surface.
-	requirement := `=anchor apple generic and identifier "com.openai.codex" and certificate leaf[subject.OU] = "2DC432GLL2"`
-	if err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "-R", requirement, app).Run(); err != nil {
+	if err := exec.CommandContext(ctx, "/usr/bin/codesign", "--verify", "-R", guiSigningRequirement, app).Run(); err != nil {
 		return errors.New("the writer's app is not a verified OpenAI Codex desktop app")
 	}
 	return nil
@@ -107,7 +112,12 @@ func findGUIOwner(ctx context.Context, c config.Config, id string) (guiOwner, er
 	if err != nil || len(pids) != 1 {
 		return owner, errors.New("cannot identify one GUI writer safely")
 	}
-	writer, err := inspectProcess(ctx, pids[0])
+	return guiOwnerForPID(ctx, pids[0])
+}
+
+func guiOwnerForPID(ctx context.Context, pid int) (guiOwner, error) {
+	var owner guiOwner
+	writer, err := inspectProcess(ctx, pid)
 	if err != nil {
 		return owner, err
 	}

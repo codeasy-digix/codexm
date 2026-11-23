@@ -39,6 +39,7 @@ func Load(filename string) (config.Config, error) {
 			Accounts string `toml:"accounts_dir"`
 			Binary   string `toml:"codex_binary"`
 			Node     string `toml:"web_node_binary"`
+			GUIRelay string `toml:"web_gui_relay"`
 		} `toml:"runtime"`
 		Storage struct {
 			State string `toml:"state_dir"`
@@ -64,6 +65,10 @@ func Load(filename string) (config.Config, error) {
 			*dst = value
 		}
 	}
+	if selected.Runtime.GUIRelay != "" && !threadID.MatchString(selected.Runtime.GUIRelay) {
+		return c, errors.New("web_gui_relay must be a complete local chat UUID")
+	}
+	c.Runtime.WebGUIRelay = strings.ToLower(selected.Runtime.GUIRelay)
 	c.AccountRegistry.Removed = selected.Registry.Removed
 	return c, nil
 }
@@ -150,6 +155,11 @@ func List(ctx context.Context, c config.Config) (catalog.List, error) {
 	if err != nil {
 		return list, err
 	}
+	fillCatalogAccounts(c, list.Sessions)
+	return list, nil
+}
+
+func fillCatalogAccounts(c config.Config, entries []catalog.Entry) {
 	prior := map[string]string{}
 	if db, e := store.ReadOnly(c.StateDir()); e == nil {
 		defer db.DB.Close()
@@ -159,8 +169,8 @@ func List(ctx context.Context, c config.Config) (catalog.List, error) {
 			}
 		}
 	}
-	for i := range list.Sessions {
-		e := &list.Sessions[i]
+	for i := range entries {
+		e := &entries[i]
 		e.Account = prior[e.ID]
 		if !threadID.MatchString(e.ID) {
 			continue
@@ -170,7 +180,6 @@ func List(ctx context.Context, c config.Config) (catalog.List, error) {
 			e.Account = l.Account
 		}
 	}
-	return list, nil
 }
 
 func Plan(ctx context.Context, c config.Config, id, account string) (Launch, error) {

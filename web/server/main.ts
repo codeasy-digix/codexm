@@ -6,7 +6,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { LocalAuth, LoginError } from "./auth";
 import { BridgeClient, type BridgeError } from "./bridge";
-import { bridgeContract } from "../imports/contracts/native";
+import { ChatPush } from "./push";
+import { ChatHistoryCache } from "./history-cache";
+import { CacheDatabase } from "./cache-database";
+import { ChatCatalogCache } from "./catalog-cache";
+import { deleteArtifacts, serveArtifact } from "./artifacts";
+import { LocalTerminal } from "./local-terminal";
+import { bridgeContract, chatTitle, type ChatThread } from "../imports/contracts/web";
 
 const origin = new URL(process.env.ROOT_URL || "http://127.0.0.1:4317").origin;
 const state = process.env.CODEXM_WEB_STATE;
@@ -20,8 +26,33 @@ const bridge = new BridgeClient(
   process.env.CODEXM_BINARY || "",
   process.env.CODEXM_CONFIG || "",
 );
+const database = new CacheDatabase(state);
+const historyCache = new ChatHistoryCache(database);
+const catalogCache = new ChatCatalogCache(database, cursor => bridge.call("web.catalogIndex", { cursor }));
+const terminal = new LocalTerminal(process.env.CODEXM_WEB_TERMINAL_PTY || "", auth,
+  thread => bridge.call("web.thread", { thread_id: thread }), async () => {
+    const catalog = await catalogCache.read({ limit: 1 });
+    return [...catalog.projects, ...(catalog.otherProjects ?? [])];
+  });
+const pushes = (() => {
+  try {
+    return new ChatPush(state, auth.secure ? origin : "mailto:support@digix.kr", () => auth.notificationScope(),
+      after => bridge.call("web.completions", { after_ms: after }));
+  } catch {
+    console.error("CodexM push storage or keys could not be loaded");
+    return undefined;
+  }
+})();
 const connections = new Map<string, Meteor.Connection>();
 const methods = new Map<string, { mutation: boolean; model: boolean }>();
+const internalMethods = new Set(["web.completions", "web.historyVersion", "web.historySources", "web.historyPage",
+  "web.dispatchQueued", "web.catalogIndex", "web.artifact"]);
+const catalogMutations = new Set(["web.pin", "web.move", "web.archive", "web.delete", "web.projectCreate", "web.rename", "web.fork",
+  "accounts.remove", "accounts.setDefault"]);
+// The bridge bounds sign-in attempts. Keep a matching in-memory record so
+// polling the same completed login invalidates the catalog only once.
+const catalogLogins = new Set<string>();
+let catalogAfterSend: ReturnType<typeof setTimeout> | undefined;
 let capabilities: any;
 const owner = (id?: string) => {
   try {
@@ -80,6 +111,11 @@ async function body(req: import("node:http").IncomingMessage) {
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("X-Frame-Options", "DENY");
     if (auth.secure) res.setHeader("Strict-Transport-Security", "max-age=86400");
+    if (req.url === "/sw.js") res.setHeader("Cache-Control", "no-cache");
+    if (req.url?.startsWith("/artifacts/")) {
+      await serveArtifact(req, res, state!, auth, bridge);
+      return;
+    }
     if (!isAuth) {
       next();
       return;
@@ -112,13 +148,36 @@ async function body(req: import("node:http").IncomingMessage) {
           auth.cookie(cookie),
         );
         res.end("{}");
+      } else if (req.url === "/auth/ticket" || req.url === "/auth/renew") {
+        const { session, cookie } = auth.resume(req.headers.cookie);
+        const result = req.url === "/auth/ticket" ? { ticket: auth.ticket(session) } : {};
+        if (cookie) res.setHeader("Set-Cookie", cookie);
+        res.end(JSON.stringify(result));
+      } else if (req.url === "/auth/terminal-ticket") {
+        res.end(JSON.stringify(await terminal.ticket(req.headers.cookie, await body(req))));
       } else {
         const session = auth.session(req.headers.cookie);
         if (!session) throw new Error("로그인이 필요합니다.");
-        if (req.url === "/auth/ticket")
-          res.end(JSON.stringify({ ticket: auth.ticket(session) }));
+        if (req.url === "/auth/push") {
+          if (!pushes) throw new LoginError("서버 알림 설정을 읽을 수 없습니다.", 503);
+          const data = await body(req);
+          try {
+            res.end(JSON.stringify(await pushes.action(auth.notificationOwner(session), data, async id => {
+              const thread: ChatThread | null = await bridge.call("web.thread", { thread_id: id });
+              return thread ? chatTitle(thread) : undefined;
+            })));
+          }
+          catch (error) {
+            if (error instanceof LoginError) throw error;
+            throw new LoginError("서버에서 알림 요청을 처리하지 못했습니다.", 503);
+          }
+        }
         else if (req.url === "/auth/logout") {
+          const data = await body(req);
           const browser = auth.logout(session);
+          terminal.closeBrowser(session);
+          try { pushes?.logout(browser, data?.endpoint); }
+          catch { console.error("CodexM push subscription could not be removed"); }
           // Revoke web access immediately; cancel only this browser's owned
           // pending auth helper, never a conversation or another browser's login.
           if (browser) void bridge.call("login.status", {}, browser).then(result => {
@@ -143,9 +202,10 @@ async function body(req: import("node:http").IncomingMessage) {
     }
   },
 );
-WebApp.httpServer.prependListener("upgrade", (req, socket) => {
+WebApp.httpServer.prependListener("upgrade", (req, socket, head) => {
   if (!auth.validRequest(req.headers.host, req.headers.origin, true))
     socket.destroy();
+  else terminal.upgrade(req, socket, head);
 });
 // SockJS filters Origin out of httpHeaders. It was validated on the HTTP
 // upgrade/request; DDP still requires its own single-use ticket below.
@@ -178,6 +238,20 @@ Meteor.methods({
       throw new Meteor.Error("authentication_required");
     }
   },
+  "codexm.refreshCatalog"() {
+    owner(this.connection?.id);
+    this.unblock();
+    return catalogCache.refresh().catch(() => {});
+  },
+  async "codexm.cachedHistory"(params: Record<string, unknown>) {
+    const browser = owner(this.connection?.id);
+    if (!params || typeof params !== "object" || Array.isArray(params))
+      throw new Meteor.Error("invalid_input");
+    this.unblock();
+    const page = await historyCache.peek(params, thread => bridge.call("web.historyVersion", { thread_id: thread }, browser));
+    owner(this.connection?.id);
+    return page;
+  },
   async "codexm.call"(
     method: string,
     params: Record<string, unknown>,
@@ -195,17 +269,46 @@ Meteor.methods({
       throw new Meteor.Error("invalid_input");
     if (!capabilities) await bootstrap();
     const spec = methods.get(method);
-    if (!spec) throw new Meteor.Error("unsupported");
+    if (!spec || internalMethods.has(method)) throw new Meteor.Error("unsupported");
     if (spec.mutation && !/^[A-Za-z0-9_-]{16,128}$/.test(operation))
       throw new Meteor.Error("invalid_input", "요청 ID가 필요합니다.");
+    if (!spec.mutation && method.startsWith("web.")) this.unblock();
     try {
-      return await bridge.call(
+      if (method === "web.catalog") {
+        const result = await catalogCache.read(params);
+        owner(this.connection?.id);
+        return result;
+      }
+      if (method === "web.history") {
+        const result = await historyCache.read(params, revision => bridge.call(method, { ...params, history_revision: revision }, browser));
+        owner(this.connection?.id);
+        return result;
+      }
+      const result = await bridge.call(
         method,
         params,
         browser,
         operation,
         spec.mutation,
       );
+      if (!spec.mutation && method.startsWith("web.")) owner(this.connection?.id);
+      if (method === "web.delete" && result?.deleted === true && typeof result.thread_id === "string") {
+        await Promise.all([historyCache.deleted(result.thread_id), deleteArtifacts(state!, result.thread_id)]);
+      }
+      if (catalogMutations.has(method)) await catalogCache.refresh(true).catch(() => {});
+      else if (method === "login.status" && result?.status === "succeeded" && typeof result.login_id === "string" &&
+          !catalogLogins.has(result.login_id)) {
+        catalogLogins.add(result.login_id);
+        void catalogCache.refresh(true).catch(() => catalogLogins.delete(result.login_id));
+      } else if (method === "web.send" && !catalogAfterSend) {
+        // New chats enter the native index after the first turn is persisted.
+        // Coalesce sends and leave that write off the request's critical path.
+        catalogAfterSend = setTimeout(() => {
+          catalogAfterSend = undefined;
+          void catalogCache.refresh(true).catch(() => {});
+        }, 1000).unref();
+      }
+      return result;
     } catch (error) {
       throw bridgeError(error);
     }
@@ -230,7 +333,7 @@ Meteor.publish("codexm.state", function () {
       const caps = await bootstrap(),
         snapshot = await bridge.call("snapshot");
       if (stopped) return;
-      const doc = { capabilities: caps, snapshot, connectionError: "" },
+      const doc = { capabilities: caps, snapshot, terminalAvailable: terminal.available, connectionError: "" },
         serialized = JSON.stringify(doc, (key, value) =>
           key === "observed_at" ? undefined : value,
         );
@@ -265,7 +368,7 @@ Meteor.publish("codexm.state", function () {
     void refresh();
   };
   bridge.on("notification", notify);
-  const timer = setInterval(notify, 1000);
+  const timer = setInterval(notify, 5000);
   void refresh();
   this.onStop(() => {
     stopped = true;
@@ -285,10 +388,37 @@ Meteor.startup(async () => {
   } catch {
     /* State publication reports reconnects. */
   }
+  if (pushes) setInterval(() => {
+    void pushes.poll().catch(() => { /* Poll again after a temporary read failure. */ });
+  }, 5000).unref();
+  const refreshCatalog = () => { void catalogCache.refresh().catch(() => {}); };
+  refreshCatalog();
+  setInterval(refreshCatalog, 60_000).unref();
+  if (process.env.CODEXM_WEB_ONLY === "true") {
+    const deliverQueuedInput = async () => {
+      await bridge.call("web.dispatchQueued").catch(() => { /* Pending requests remain durable. */ });
+      setTimeout(deliverQueuedInput, 1100).unref();
+    };
+    void deliverQueuedInput();
+  }
+  // Reconcile native CLI/GUI writes even when every browser is closed.
+  const refreshHistory = async () => {
+    if (bridge.busy) {
+      setTimeout(refreshHistory, 750).unref();
+      return;
+    }
+    await historyCache.refresh(
+      () => bridge.call("web.historySources"),
+      (source, cursor) => bridge.call("web.historyPage", { thread_id: source.thread, history_revision: source.revision, cursor }),
+      () => bridge.busy,
+    ).catch(() => { /* The next scan resumes from its last durable cursor. */ });
+    setTimeout(refreshHistory, 5000).unref();
+  };
+  void refreshHistory();
 });
 process.on("exit", () => bridge.close());
 for (const signal of ["SIGTERM", "SIGINT"] as const)
-  process.once(signal, () => {
+  process.once(signal, async () => {
     bridge.close();
-    process.exit(0);
+    await database.close().finally(() => process.exit(0));
   });

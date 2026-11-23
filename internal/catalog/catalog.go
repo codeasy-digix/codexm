@@ -22,25 +22,33 @@ import (
 
 // Entry contains list metadata, never conversation turns or goal objectives.
 type Entry struct {
-	ID             string `json:"id"`
-	ThreadID       string `json:"thread_id,omitempty"`
-	JobID          string `json:"job_id,omitempty"`
-	Title          string `json:"title"`
-	Cwd            string `json:"cwd"`
-	Account        string `json:"account,omitempty"`
-	State          string `json:"state"`
-	Kind           string `json:"kind"`
-	Managed        bool   `json:"managed"`
-	Archived       bool   `json:"archived"`
-	Source         string `json:"source,omitempty"`
-	ParentThreadID string `json:"parent_thread_id,omitempty"`
-	AgentNickname  string `json:"agent_nickname,omitempty"`
-	AgentRole      string `json:"agent_role,omitempty"`
-	AgentPath      string `json:"agent_path,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Effort         string `json:"effort,omitempty"`
-	Tokens         int64  `json:"tokens_used"`
-	UpdatedAt      int64  `json:"updated_at_ms"`
+	ID              string `json:"id"`
+	ThreadID        string `json:"thread_id,omitempty"`
+	JobID           string `json:"job_id,omitempty"`
+	Title           string `json:"title"`
+	Cwd             string `json:"cwd"`
+	Account         string `json:"account,omitempty"`
+	State           string `json:"state"`
+	Kind            string `json:"kind"`
+	Managed         bool   `json:"managed"`
+	Archived        bool   `json:"archived"`
+	Source          string `json:"source,omitempty"`
+	ParentThreadID  string `json:"parent_thread_id,omitempty"`
+	AgentNickname   string `json:"agent_nickname,omitempty"`
+	AgentRole       string `json:"agent_role,omitempty"`
+	AgentPath       string `json:"agent_path,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Effort          string `json:"effort,omitempty"`
+	Tokens          int64  `json:"tokens_used"`
+	UpdatedAt       int64  `json:"updated_at_ms"`
+	ModifiedAt      int64  `json:"modified_at_ms,omitempty"`
+	CreatedAt       int64  `json:"created_at_ms,omitempty"`
+	ProjectID       string `json:"project_id,omitempty"`
+	SectionID       string `json:"section_id,omitempty"`
+	SectionPosition int64  `json:"section_position,omitempty"`
+	AttachedParent  string `json:"attached_parent,omitempty"`
+	Preview         string `json:"preview,omitempty"`
+	RolloutPath     string `json:"-"`
 	// Preserve whether the native row had a title when decorating cached entries.
 	nativeUntitled bool
 }
@@ -50,6 +58,10 @@ type List struct {
 	Database string  `json:"database,omitempty"`
 	Warning  string  `json:"warning,omitempty"`
 }
+
+// Empty drafts are retained in storage/TUI diagnostics, but the desktop's
+// ordinary sidebar omits them until there is a name or user content.
+func (e Entry) EmptyDraft() bool { return e.nativeUntitled && strings.TrimSpace(e.Preview) == "" }
 
 // OpenReadOnly is also used to read codexm metadata when its supervisor is off.
 // mode=ro forbids creation and writes; query_only is applied to every connection.
@@ -95,7 +107,62 @@ func database(home string) (string, error) {
 	return found[0].name, nil
 }
 
+// Archived reads one current row, including committed WAL changes. Web polling
+// must not scan and decorate the complete catalog for every selected chat.
+func Archived(ctx context.Context, home, id string) (bool, error) {
+	filename, err := database(home)
+	if err != nil {
+		return false, err
+	}
+	if filename == "" {
+		return false, sql.ErrNoRows
+	}
+	db, err := OpenReadOnly(filename)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+	var archived bool
+	err = db.QueryRowContext(ctx, `SELECT COALESCE(archived,0) FROM threads WHERE id=?`, id).Scan(&archived)
+	return archived, err
+}
+
 func Read(ctx context.Context, home string) (List, error) {
+	return read(ctx, home, "")
+}
+
+// RolloutPath locates the current active log for a known native writer.
+// Callers constrain subsequent file reads to the native sessions directory.
+func RolloutPath(ctx context.Context, home, id string) (string, error) {
+	filename, err := database(home)
+	if err != nil {
+		return "", err
+	}
+	if filename == "" {
+		return "", sql.ErrNoRows
+	}
+	db, err := OpenReadOnly(filename)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var path string
+	err = db.QueryRowContext(ctx, `SELECT rollout_path FROM threads WHERE id=? AND archived=0`, id).Scan(&path)
+	return path, err
+}
+
+func Lookup(ctx context.Context, home, id string) (Entry, error) {
+	l, err := read(ctx, home, id)
+	if err != nil {
+		return Entry{}, err
+	}
+	if len(l.Sessions) != 1 {
+		return Entry{}, sql.ErrNoRows
+	}
+	return l.Sessions[0], nil
+}
+
+func read(ctx context.Context, home, id string) (List, error) {
 	list := List{Sessions: []Entry{}}
 	filename, err := database(home)
 	if err != nil || filename == "" {
@@ -107,23 +174,7 @@ func Read(ctx context.Context, home string) (List, error) {
 		return list, err
 	}
 	defer db.Close()
-	rows, err := db.QueryContext(ctx, "PRAGMA table_info(threads)")
-	if err != nil {
-		return list, err
-	}
-	columns := map[string]bool{}
-	for rows.Next() {
-		var cid, notNull, primary int
-		var name, kind string
-		var fallback any
-		if err = rows.Scan(&cid, &name, &kind, &notNull, &fallback, &primary); err != nil {
-			rows.Close()
-			return list, err
-		}
-		columns[name] = true
-	}
-	err = rows.Err()
-	rows.Close()
+	columns, err := tableColumns(ctx, db, "threads")
 	if err != nil {
 		return list, err
 	}
@@ -142,15 +193,27 @@ func Read(ctx context.Context, home string) (List, error) {
 		}
 		return `0`
 	}
-	updated := number("updated_at") + ` * 1000`
-	if columns["updated_at_ms"] {
-		updated = `COALESCE(NULLIF("updated_at_ms", 0), ` + updated + `)`
+	timestamp := func(name string) string {
+		seconds := number(name)
+		value := `CASE WHEN ` + seconds + ` > 100000000000 THEN ` + seconds + ` ELSE ` + seconds + ` * 1000 END`
+		if columns[name+"_ms"] {
+			value = `COALESCE(NULLIF("` + name + `_ms", 0), ` + value + `)`
+		}
+		return value
 	}
+	modified, created := timestamp("updated_at"), timestamp("created_at")
+	updated := modified
 	if columns["recency_at_ms"] {
 		updated = `COALESCE(NULLIF("recency_at_ms", 0), ` + updated + `)`
 	}
-	query := `SELECT "id", ` + text("name") + `, ` + text("title") + `, ` + text("cwd") + `, ` + text("source") + `, ` + text("model") + `, ` + text("reasoning_effort") + `, ` + number("tokens_used") + `, ` + number("archived") + `, ` + updated + `, ` + text("agent_nickname") + `, ` + text("agent_role") + `, ` + text("agent_path") + ` FROM threads ORDER BY 10 DESC, id`
-	rows, err = db.QueryContext(ctx, query)
+	query := `SELECT "id", ` + text("name") + `, ` + text("title") + `, ` + text("cwd") + `, ` + text("source") + `, ` + text("model") + `, ` + text("reasoning_effort") + `, ` + number("tokens_used") + `, ` + number("archived") + `, ` + updated + `, ` + text("agent_nickname") + `, ` + text("agent_role") + `, ` + text("agent_path") + `, ` + modified + `, ` + created + `, ` + text("project_id") + `, ` + text("thread_section_id") + `, ` + number("section_position") + `, ` + text("attached_thread_parent_id") + `, ` + text("preview") + `, ` + text("rollout_path") + ` FROM threads`
+	args := []any{}
+	if id != "" {
+		query += ` WHERE id=?`
+		args = append(args, id)
+	}
+	query += ` ORDER BY 10 DESC, id`
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return list, err
 	}
@@ -158,7 +221,7 @@ func Read(ctx context.Context, home string) (List, error) {
 	for rows.Next() {
 		var e Entry
 		var name string
-		if err = rows.Scan(&e.ID, &name, &e.Title, &e.Cwd, &e.Source, &e.Model, &e.Effort, &e.Tokens, &e.Archived, &e.UpdatedAt, &e.AgentNickname, &e.AgentRole, &e.AgentPath); err != nil {
+		if err = rows.Scan(&e.ID, &name, &e.Title, &e.Cwd, &e.Source, &e.Model, &e.Effort, &e.Tokens, &e.Archived, &e.UpdatedAt, &e.AgentNickname, &e.AgentRole, &e.AgentPath, &e.ModifiedAt, &e.CreatedAt, &e.ProjectID, &e.SectionID, &e.SectionPosition, &e.AttachedParent, &e.Preview, &e.RolloutPath); err != nil {
 			return list, err
 		}
 		if strings.TrimSpace(name) != "" {
