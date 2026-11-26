@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/codeasy-digix/codexm/internal/catalog"
 	"github.com/codeasy-digix/codexm/internal/config"
@@ -24,13 +25,15 @@ type webCompletionID struct {
 
 type webCompletion struct {
 	webCompletionID
-	At    int64  `json:"at"`
-	Title string `json:"title,omitempty"`
+	At      int64  `json:"at"`
+	Title   string `json:"title,omitempty"`
+	Preview string `json:"preview,omitempty"`
 }
 
 type projectedCompletion struct {
-	At     int64
-	Status string
+	At      int64
+	Status  string
+	Preview string
 }
 
 func (w *WebChat) readCompletions(ctx context.Context, after int64) ([]webCompletion, error) {
@@ -74,13 +77,13 @@ func (w *WebChat) readCompletions(ctx context.Context, after int64) ([]webComple
 		for _, event := range rolloutCompletions(root, rollout, after) {
 			status, known := projected[event.webCompletionID]
 			if !known || status.Status == "completed" {
-				projected[event.webCompletionID] = projectedCompletion{event.At, "completed"}
+				projected[event.webCompletionID] = projectedCompletion{event.At, "completed", event.Preview}
 			}
 		}
 	}
 	for id, row := range projected {
 		if row.Status == "completed" && row.At >= after && row.At <= now.UnixMilli() {
-			result = append(result, webCompletion{webCompletionID: id, At: row.At, Title: titles[id.Thread]})
+			result = append(result, webCompletion{webCompletionID: id, At: row.At, Title: titles[id.Thread], Preview: row.Preview})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].At < result[j].At })
@@ -191,8 +194,25 @@ func completionEvents(data []byte, partialHead bool, thread string, after int64)
 			event.Payload.Type == "task_complete" && threadID.MatchString(event.Payload.Turn) &&
 			(event.Payload.Root == "" || event.Payload.Root == event.Payload.Turn) &&
 			event.Payload.Final != "" && event.Timestamp.UnixMilli() >= after {
-			events = append(events, webCompletion{webCompletionID: webCompletionID{thread, event.Payload.Turn}, At: event.Timestamp.UnixMilli()})
+			events = append(events, webCompletion{
+				webCompletionID: webCompletionID{thread, event.Payload.Turn},
+				At:              event.Timestamp.UnixMilli(),
+				Preview:         completionPreview(event.Payload.Final),
+			})
 		}
 	}
 	return events
+}
+
+func completionPreview(final string) string {
+	const maxPreviewBytes = 8 << 10
+	final = strings.TrimSpace(final)
+	if len(final) <= maxPreviewBytes {
+		return final
+	}
+	end := maxPreviewBytes
+	for !utf8.RuneStart(final[end]) {
+		end--
+	}
+	return strings.Clone(final[:end])
 }

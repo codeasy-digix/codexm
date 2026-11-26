@@ -203,6 +203,9 @@ test("mobile PWA loads icons and registers completion alerts for this browser", 
     headers: { Origin: url, "Content-Type": "application/json" }, data: { action: "status" },
   });
   expect(request.status()).toBe(401);
+  const script = await page.request.get(`${url}/sw.js`);
+  expect(script.ok()).toBe(true);
+  expect(script.headers()["content-type"]).toMatch(/javascript/);
   const manifest = await (await page.request.get(`${url}/manifest.webmanifest`)).json();
   expect(manifest.display).toBe("standalone");
   for (const icon of manifest.icons) {
@@ -245,6 +248,30 @@ test("mobile PWA loads icons and registers completion alerts for this browser", 
   expect(requestedTest).toBe(true);
   await dialog.getByRole("button", { name: "알림 끄기" }).click();
   await expect(dialog.getByRole("status")).toHaveText("이 기기의 완료 알림을 껐습니다.");
+
+  const thread = fixture().thread;
+  const chatPath = `/chat/${thread}`;
+  const serviceWorker = page.context().serviceWorkers().find(service => service.url() === worker)!;
+  const acknowledged = await serviceWorker.evaluate(async path => {
+    const clients = (self as unknown as { clients: { matchAll(options: object): Promise<{
+      postMessage(message: object, transfer: MessagePort[]): void;
+    }[]> } }).clients;
+    const [client] = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    if (!client) return false;
+    return new Promise(resolve => {
+      const { port1, port2 } = new MessageChannel();
+      const timeout = setTimeout(() => { port1.close(); resolve(false); }, 3000);
+      port1.onmessage = event => { clearTimeout(timeout); port1.close(); resolve(event.data); };
+      client.postMessage({ type: "codexm:notification", path }, [port2]);
+    });
+  }, chatPath);
+  expect(acknowledged).toBe(true);
+  await expect(page).toHaveURL(`${url}${chatPath}`);
+  await expect(page.getByText("페이지 이력 26", { exact: true })).toBeVisible();
+  const newPage = await page.context().newPage();
+  await newPage.goto(`${url}${chatPath}`);
+  await expect(newPage.getByText("페이지 이력 26", { exact: true })).toBeVisible();
+  await newPage.close();
 });
 
 test("recent-only history, anchored upward pagination, safe Markdown and lazy details",async({page})=>{

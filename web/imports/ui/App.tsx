@@ -134,8 +134,27 @@ export function App() {
       setError("");
       setNotice("");
     };
+    const onNotification = (event: MessageEvent) => {
+      if (event.origin !== location.origin || event.data?.type !== "codexm:notification" ||
+          typeof event.data.path !== "string" || !event.ports[0]) return;
+      const id = chatIdFromPath(event.data.path);
+      if (!id && event.data.path !== "/") return;
+      const next = chatPath(id);
+      if (location.pathname !== next) {
+        window.history.pushState(null, "", next);
+        onPopState();
+      }
+      setDialog(null);
+      setMenu(false);
+      event.ports[0].postMessage(true);
+    };
+    const worker = navigator.serviceWorker;
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    worker?.addEventListener("message", onNotification);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      worker?.removeEventListener("message", onNotification);
+    };
   }, []);
   useEffect(() => {
     if (!access.online || !threadId || selected) return;

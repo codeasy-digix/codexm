@@ -1,7 +1,7 @@
 let worker: Promise<ServiceWorkerRegistration> | undefined;
 
 export function pushWorker() {
-  worker ??= navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready).catch(error => {
+  worker ??= navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then(() => navigator.serviceWorker.ready).catch(error => {
     worker = undefined;
     throw error;
   });

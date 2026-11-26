@@ -36,7 +36,7 @@ const terminal = new LocalTerminal(process.env.CODEXM_WEB_TERMINAL_PTY || "", au
   });
 const pushes = (() => {
   try {
-    return new ChatPush(state, auth.secure ? origin : "mailto:support@digix.kr", () => auth.notificationScope(),
+    return new ChatPush(state, origin, () => auth.notificationScope(),
       after => bridge.call("web.completions", { after_ms: after }));
   } catch {
     console.error("CodexM push storage or keys could not be loaded");

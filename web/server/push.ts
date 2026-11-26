@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { generateVAPIDKeys, sendNotification, type PushSubscription, type RequestOptions, type VapidKeys } from "web-push";
 import { LoginError } from "./auth";
 
-export type ChatCompletion = { thread: string; turn: string; at: number; title?: string };
-type PushMessage = { url: string; title: string; test?: boolean; tag?: string };
+export type ChatCompletion = { thread: string; turn: string; at: number; title?: string; preview?: string };
+type PushMessage = { url: string; title: string; body?: string; test?: boolean; tag?: string };
 type Device = { subscription: PushSubscription; scope: string; owner: string; since: number };
 type State = { devices: Record<string, Device>; sent: Record<string, number> };
 type Deliver = (subscription: PushSubscription, payload: string, options: RequestOptions) => Promise<unknown>;
@@ -15,9 +15,30 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const lookback = 4 * 60_000 + 30_000;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
-function notificationTitle(name?: string) {
-  const title = typeof name === "string" ? name.replace(/\s+/g, " ").trim() : "";
-  return title ? `CodexM [${Array.from(title).slice(0, 256).join("")}]` : "CodexM";
+function notificationText(value: string, limit: number) {
+  const text = value.replace(/\s+/g, " ").trim();
+  const chars = Array.from(text);
+  return chars.length > limit ? chars.slice(0, limit - 1).join("").trimEnd() + "…" : text;
+}
+
+function notificationBody(preview?: string) {
+  if (typeof preview !== "string") return undefined;
+  let fence = "";
+  const lines: string[] = [];
+  for (const line of preview.split(/\r?\n/)) {
+    const marker = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (marker?.[1].startsWith(fence) && !marker[2].trim()) fence = "";
+    } else if (marker) {
+      fence = marker[1];
+    } else {
+      lines.push(line.replace(/^[ \t]*(?:#{1,6}|>|[-+*]|\d+\.)[ \t]+/, ""));
+    }
+  }
+  const plain = lines.join(" ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|`)(.+?)\1/g, "$2");
+  return notificationText(plain, 340) || undefined;
 }
 
 // Only browser push providers are destinations. Neither an authenticated
@@ -78,7 +99,7 @@ export class ChatPush {
 
   constructor(
     dir: string,
-    private readonly subject: string,
+    private readonly origin: string,
     private readonly currentScope: () => string,
     private readonly completions: (after: number) => Promise<ChatCompletion[]>,
     private readonly deliver: Deliver = sendNotification,
@@ -131,7 +152,12 @@ export class ChatPush {
       this.tests.set(id, now);
       const thread = typeof input.thread === "string" && uuid.test(input.thread) ? input.thread.toLowerCase() : "";
       const title = thread && lookupTitle ? await lookupTitle(thread).catch(() => undefined) : undefined;
-      if (!await this.send(id, device, { url: thread ? `/chat/${thread}` : "/", title: notificationTitle(title || "테스트 알림"), test: true })) {
+      if (!await this.send(id, device, {
+        url: thread ? `/chat/${thread}` : "/",
+        title: notificationText(title || "", 96) || "테스트 알림",
+        body: thread ? "누르면 이 채팅이 열립니다." : "이 기기에서 완료 알림을 받을 수 있습니다.",
+        test: true,
+      })) {
         throw new LoginError("알림을 보내지 못했습니다. 구독 상태를 확인해 주세요.", 503);
       }
       return { accepted: true };
@@ -158,8 +184,21 @@ export class ChatPush {
     const subscription = readSubscription(device.subscription);
     if (!subscription || this.state.devices[id] !== device || this.currentScope() !== device.scope) return false;
     try {
-      await this.deliver(subscription, JSON.stringify(payload), {
-        vapidDetails: { subject: this.subject, ...this.keys },
+      const { url, title, body, tag } = payload;
+      // Older workers still read the top-level route and title. Browsers with
+      // declarative push can open the chat directly, even during a cold launch.
+      const data = {
+        url, title, tag,
+        web_push: 8030, mutable: false,
+        notification: {
+          title, body, tag,
+          navigate: new URL(url, this.origin).href,
+          icon: new URL("/icons/icon-192.png", this.origin).href,
+        },
+      };
+      const subject = this.origin.startsWith("https:") ? this.origin : "mailto:support@digix.kr";
+      await this.deliver(subscription, JSON.stringify(data), {
+        vapidDetails: { subject, ...this.keys },
         contentEncoding: "aes128gcm", TTL: payload.test ? 120 : 86_400, timeout: 8000,
         urgency: "normal", topic: payload.tag,
       });
@@ -198,7 +237,12 @@ export class ChatPush {
       this.commit({ ...this.state, sent });
       for (const { tag, chat } of deliveries) {
         const devices = Object.entries(this.state.devices).filter(([, device]) => device.scope === scope && device.since <= chat.at);
-        const payload = { url: `/chat/${chat.thread.toLowerCase()}`, title: notificationTitle(chat.title), tag };
+        const payload = {
+          url: `/chat/${chat.thread.toLowerCase()}`,
+          title: notificationText(chat.title || "", 96) || "작업 완료",
+          body: notificationBody(chat.preview),
+          tag,
+        };
         await Promise.allSettled(devices.map(([id, device]) => this.send(id, device, payload)));
       }
     } finally { this.polling = false; }

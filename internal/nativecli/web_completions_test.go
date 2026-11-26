@@ -33,7 +33,7 @@ func TestWebCompletionEventsOnlyCompleteRootTurns(t *testing.T) {
 	// A just-written partial line should be picked up on a subsequent read.
 	records = append(records, event("task_complete", turn, turn, "incomplete line", now)...)
 	got := completionEvents(records, false, thread, now.Add(-time.Second).UnixMilli())
-	if len(got) != 1 || got[0] != (webCompletion{webCompletionID: webCompletionID{thread, turn}, At: now.UnixMilli()}) {
+	if len(got) != 1 || got[0] != (webCompletion{webCompletionID: webCompletionID{thread, turn}, At: now.UnixMilli(), Preview: "complete"}) {
 		t.Fatalf("completion events: %+v", got)
 	}
 }
@@ -57,8 +57,8 @@ func TestWebChatOfficialCompletionReadNeedsNoWebWriter(t *testing.T) {
 		}
 		for _, event := range found {
 			if event.Thread == chat && event.Turn == turn {
-				if event.Title != title {
-					t.Fatal("completion missed the native rename", event.Title)
+				if event.Title != title || event.Preview != "fixture complete" {
+					t.Fatal("completion missed the native title or final message", event)
 				}
 				if len(w.connections) != 0 {
 					t.Fatal("read created a web app-server")
@@ -100,7 +100,8 @@ func TestWebChatOfficialExecCompletionSurvivesArchive(t *testing.T) {
 	w := NewWebChat(f.ctx, f.c)
 	defer w.Close()
 	rows, err := w.readCompletions(f.ctx, after)
-	if err != nil || len(rows) != 1 || rows[0].Thread != id || !threadID.MatchString(rows[0].Turn) || len(w.connections) != 0 {
+	if err != nil || len(rows) != 1 || rows[0].Thread != id || !threadID.MatchString(rows[0].Turn) ||
+		rows[0].Preview != "fixture complete" || len(w.connections) != 0 {
 		t.Fatalf("archived exec completion was not read passively: %+v (%v)", rows, err)
 	}
 }
